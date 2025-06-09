@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { FilterQuery, Model } from "mongoose";
+import { FilterQuery, Model, UpdateQuery } from "mongoose";
 import { User } from "./users.schema";
 import { CreateUserDto } from "./dtos/create-user.dto";
 import { hash } from "bcryptjs";
@@ -28,5 +28,9 @@ export class UsersService {
 
 	async getAllUsers() {
 		return this.userModel.find({});
+	}
+
+	async updateUser(query: FilterQuery<User>, data: UpdateQuery<User>) {
+		return this.userModel.findOneAndUpdate(query, data);
 	}
 }
