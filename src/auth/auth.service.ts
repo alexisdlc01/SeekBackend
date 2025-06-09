@@ -88,8 +88,11 @@ export class AuthService {
 	async verifyUserRefreshToken(refreshToken: string, userId: string) {
 		try {
 			const user = await this.usersService.getUser({ _id: userId });
-			// @ts-ignore
-			const authenticated = await compare(refreshToken, user.refreshToken);
+			const authenticated = compare(
+				refreshToken,
+				// @ts-ignore
+				user.refreshToken
+			);
 			if (!authenticated) {
 				throw new UnauthorizedException();
 			}
@@ -97,5 +100,12 @@ export class AuthService {
 		} catch (err) {
 			throw new UnauthorizedException("Refresh token is not valid.");
 		}
+	}
+
+	async invalidateRefreshToken(user: User) {
+		await this.usersService.updateUser(
+			{ _id: user._id },
+			{ $unset: { refreshToken: 1 } }
+		);
 	}
 }

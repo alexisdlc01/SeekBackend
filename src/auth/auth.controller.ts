@@ -1,10 +1,11 @@
-import { Controller, Post, Res, UseGuards } from "@nestjs/common";
+import { Controller, Post, Req, Res, UseGuards } from "@nestjs/common";
 import { Response } from "express";
 import { LocalAuthGuard } from "./guards/local-auth.guard";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { User } from "../users/users.schema";
 import { AuthService } from "./auth.service";
 import { JwtRefreshGuard } from "./guards/jwt-refresh.guard";
+import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 
 @Controller("auth")
 export class AuthController {
@@ -21,7 +22,30 @@ export class AuthController {
 
 	@Post("/refresh")
 	@UseGuards(JwtRefreshGuard)
-	async refreshToken(@CurrentUser() user: User, @Res({passthrough: true}) response: Response) {
+	async refreshToken(
+		@CurrentUser() user: User,
+		@Res({ passthrough: true }) response: Response
+	) {
 		await this.authService.login(user, response);
+	}
+
+	@Post("logout")
+	@UseGuards(JwtAuthGuard)
+	async logout(
+		@CurrentUser() user: User,
+		@Res({ passthrough: true }) res: Response
+	) {
+		await this.authService.invalidateRefreshToken(user);
+
+		res.clearCookie("Authentication", {
+			httpOnly: true,
+			secure: true,
+			sameSite: "strict"
+		});
+		res.clearCookie("Refresh", {
+			httpOnly: true,
+			secure: true,
+			sameSite: "strict"
+		});
 	}
 }
