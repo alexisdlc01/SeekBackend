@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { FilterQuery, Model, UpdateQuery } from "mongoose";
 import { User } from "./users.schema";
@@ -12,10 +12,16 @@ export class UsersService {
 	) {}
 
 	async create(data: CreateUserDto) {
-		await new this.userModel({
-			...data,
-			password: await hash(data.password, 10)
-		}).save();
+		try {
+			await new this.userModel({
+				...data,
+				password: await hash(data.password, 10)
+			}).save();
+		} catch (err) {
+			if (err.code === 11000 && err.keyPattern?.email) {
+				throw new ConflictException("Email already in use.")
+			}
+		}
 	}
 
 	async getUser(query: FilterQuery<User>) {
