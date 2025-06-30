@@ -4,8 +4,11 @@ import { UsersService } from "./users.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "./users.schema";
+import { Serialize } from "../interceptors/serialize.interceptor";
+import { UserDto } from "./dtos/user.dto";
 
 @Controller("users")
+@Serialize(UserDto)
 export class UsersController {
 	constructor(private readonly usersService: UsersService) {}
 
