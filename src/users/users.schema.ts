@@ -14,6 +14,15 @@ export class User {
 
 	@Prop()
 	password: string;
+
+	@Prop({ default: true })
+	isStudent: boolean;
+
+	@Prop({ default: false })
+	isLandlordOrAgency: boolean;
+
+	@Prop({ default: false })
+	isSuperUser: boolean;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
