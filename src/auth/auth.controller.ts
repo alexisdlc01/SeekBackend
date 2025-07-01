@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post, Res, UseGuards } from "@nestjs/common";
 import { Response } from "express";
 import { LocalAuthGuard } from "./guards/local-auth.guard";
 import { CurrentUser } from "./decorators/current-user.decorator";
@@ -8,6 +8,8 @@ import { JwtRefreshGuard } from "./guards/jwt-refresh.guard";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { CreateUserDto } from "../users/dtos/create-user.dto";
 import { UsersService } from "../users/users.service";
+import { Serialize } from "../interceptors/serialize.interceptor";
+import { UserDto } from "../users/dtos/user.dto";
 
 @Controller("auth")
 export class AuthController {
@@ -28,6 +30,13 @@ export class AuthController {
 	@Post("/signup")
 	async signup(@Body() body: CreateUserDto) {
 		await this.usersService.create(body);
+	}
+
+	@Get("/currentUser")
+	@UseGuards(JwtAuthGuard)
+	@Serialize(UserDto)
+	async currentUser(@CurrentUser() user: User) {
+		return user;
 	}
 
 	@Post("/refresh")
