@@ -14,13 +14,27 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 	) {
 		super({
 			jwtFromRequest: ExtractJwt.fromExtractors([
-				(req: Request) => req.cookies?.Authentication
+				(req: Request) => {
+					if (!req) return null;
+
+					const platform = req.headers['platform'];
+
+					if (platform === 'mobile') {
+						const authHeader = req.headers['authorization'];
+						if (authHeader && authHeader.startsWith('Bearer ')) {
+							return authHeader.slice(7);
+						}
+					} else {
+						return req.cookies?.Authentication || null;
+					}
+				}
 			]),
 			secretOrKey: configService.getOrThrow("JWT_ACCESS_TOKEN_SECRET")
 		});
 	}
 
 	async validate(payload: TokenPayload) {
+		console.log("Token data from jwt strat", payload);
 		return this.usersService.getUser({ _id: payload.userId });
 	}
 }
