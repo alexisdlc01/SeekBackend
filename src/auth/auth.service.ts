@@ -107,21 +107,23 @@ export class AuthService {
 		}
 	}
 
-	async logout(user: User, response: Response) {
+	async logout(user: User, response: Response, isMobile: boolean) {
 		await this.usersService.updateUser(
 			{ _id: user._id },
 			{ $unset: { refreshToken: 1 } }
 		);
 
-		response.clearCookie("Authentication", {
-			httpOnly: true,
-			secure: this.configService.get("NODE_ENV") === "production",
-			sameSite: "strict"
-		});
-		response.clearCookie("Refresh", {
-			httpOnly: true,
-			secure: this.configService.get("NODE_ENV") === "production",
-			sameSite: "strict"
-		});
+		if (!isMobile) {
+			response.clearCookie("Authentication", {
+				httpOnly: true,
+				secure: this.configService.get("NODE_ENV") === "production",
+				sameSite: "strict"
+			});
+			response.clearCookie("Refresh", {
+				httpOnly: true,
+				secure: this.configService.get("NODE_ENV") === "production",
+				sameSite: "strict"
+			});
+		}
 	}
 }

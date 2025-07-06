@@ -68,8 +68,10 @@ export class AuthController {
 	@UseGuards(JwtAuthGuard)
 	async logout(
 		@CurrentUser() user: User,
+		@Req() request: Request,
 		@Res({ passthrough: true }) response: Response
 	) {
-		await this.authService.logout(user, response);
+		const isMobile = request.headers.platform === "mobile";
+		await this.authService.logout(user, response, isMobile);
 	}
 }
