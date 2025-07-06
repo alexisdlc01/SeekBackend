@@ -15,7 +15,7 @@ export class AuthService {
 		private readonly jwtService: JwtService
 	) {}
 
-	async login(user: User, response: Response) {
+	async login(user: User, response: Response, isMobile: boolean) {
 		const expiresAccessToken = new Date();
 		expiresAccessToken.setMilliseconds(
 			expiresAccessToken.getTime() +
@@ -57,17 +57,24 @@ export class AuthService {
 			{ $set: { refreshToken: await hash(refreshToken, 10) } }
 		);
 
-		response.cookie("Authentication", accessToken, {
-			httpOnly: true,
-			secure: this.configService.get("NODE_ENV") === "production",
-			expires: expiresAccessToken
-		});
+		if (!isMobile) {
+			response.cookie("Authentication", accessToken, {
+				httpOnly: true,
+				secure: this.configService.get("NODE_ENV") === "production",
+				expires: expiresAccessToken
+			});
 
-		response.cookie("Refresh", refreshToken, {
-			httpOnly: true,
-			secure: this.configService.get("NODE_ENV") === "production",
-			expires: expiresRefreshToken
-		});
+			response.cookie("Refresh", refreshToken, {
+				httpOnly: true,
+				secure: this.configService.get("NODE_ENV") === "production",
+				expires: expiresRefreshToken
+			});
+		} else {
+			response.send({
+				access_token: accessToken,
+				refresh_token: refreshToken
+			})
+		}
 	}
 
 	async verifyUser(email: string, password: string) {

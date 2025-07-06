@@ -1,5 +1,13 @@
-import { Body, Controller, Get, Post, Res, UseGuards } from "@nestjs/common";
-import { Response } from "express";
+import {
+	Body,
+	Controller,
+	Get,
+	Post,
+	Req,
+	Res,
+	UseGuards
+} from "@nestjs/common";
+import { Response, Request } from "express";
 import { LocalAuthGuard } from "./guards/local-auth.guard";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { User } from "../users/users.schema";
@@ -22,9 +30,17 @@ export class AuthController {
 	@UseGuards(LocalAuthGuard)
 	async login(
 		@CurrentUser() user: User,
+		@Req() request: Request,
 		@Res({ passthrough: true }) response: Response
 	) {
-		await this.authService.login(user, response);
+		switch (request.headers.platform) {
+			case "mobile":
+				await this.authService.login(user, response, true);
+				break;
+			default:
+				await this.authService.login(user, response, false);
+				break;
+		}
 	}
 
 	@Post("/signup")
@@ -43,9 +59,17 @@ export class AuthController {
 	@UseGuards(JwtRefreshGuard)
 	async refreshToken(
 		@CurrentUser() user: User,
+		@Req() request: Request,
 		@Res({ passthrough: true }) response: Response
 	) {
-		await this.authService.login(user, response);
+		switch (request.headers.platform) {
+			case "mobile":
+				await this.authService.login(user, response, true);
+				break;
+			default:
+				await this.authService.login(user, response, false);
+				break;
+		}
 	}
 
 	@Post("logout")
@@ -55,5 +79,10 @@ export class AuthController {
 		@Res({ passthrough: true }) response: Response
 	) {
 		await this.authService.logout(user, response);
+	}
+
+	@Get("/")
+	dummy(@Req() request: Request) {
+		console.log(request.headers);
 	}
 }
