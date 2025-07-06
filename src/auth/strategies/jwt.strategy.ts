@@ -17,11 +17,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 				(req: Request) => {
 					if (!req) return null;
 
-					const platform = req.headers['platform'];
+					const platform = req.headers["platform"];
 
-					if (platform === 'mobile') {
-						const authHeader = req.headers['authorization'];
-						if (authHeader && authHeader.startsWith('Bearer ')) {
+					if (platform === "mobile") {
+						const authHeader = req.headers["authorization"];
+						if (authHeader && authHeader.startsWith("Bearer ")) {
 							return authHeader.slice(7);
 						}
 					} else {
@@ -34,7 +34,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 	}
 
 	async validate(payload: TokenPayload) {
-		console.log("Token data from jwt strat", payload);
 		return this.usersService.getUser({ _id: payload.userId });
 	}
 }

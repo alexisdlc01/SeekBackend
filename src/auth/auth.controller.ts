@@ -35,11 +35,9 @@ export class AuthController {
 	) {
 		switch (request.headers.platform) {
 			case "mobile":
-				await this.authService.login(user, response, true);
-				break;
+				return await this.authService.login(user, response, true);
 			default:
-				await this.authService.login(user, response, false);
-				break;
+				return await this.authService.login(user, response, false);
 		}
 	}
 
@@ -62,14 +60,8 @@ export class AuthController {
 		@Req() request: Request,
 		@Res({ passthrough: true }) response: Response
 	) {
-		switch (request.headers.platform) {
-			case "mobile":
-				await this.authService.login(user, response, true);
-				break;
-			default:
-				await this.authService.login(user, response, false);
-				break;
-		}
+		const isMobile = request.headers.platform === "mobile";
+		return this.authService.login(user, response, isMobile);
 	}
 
 	@Post("logout")
@@ -79,10 +71,5 @@ export class AuthController {
 		@Res({ passthrough: true }) response: Response
 	) {
 		await this.authService.logout(user, response);
-	}
-
-	@Get("/")
-	dummy(@Req() request: Request) {
-		console.log(request.headers);
 	}
 }

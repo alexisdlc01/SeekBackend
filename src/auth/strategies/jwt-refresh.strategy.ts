@@ -20,9 +20,18 @@ export class JwtRefreshStrategy extends PassportStrategy(
 		super({
 			jwtFromRequest: ExtractJwt.fromExtractors([
 				(req: Request) => {
-					return req.headers.platform === "mobile"
-						? req.body?.refreshToken
-						: req.cookies?.Refresh;
+					if (!req) return null;
+
+					const platform = req.headers['platform'];
+
+					if (platform === 'mobile') {
+						const authHeader = req.headers['authorization'];
+						if (authHeader && authHeader.startsWith('Bearer ')) {
+							return authHeader.slice(7);
+						}
+					}
+
+					return req.cookies?.Refresh || null;
 				}
 			]),
 			secretOrKey: configService.getOrThrow("JWT_REFRESH_TOKEN_SECRET"),
@@ -31,14 +40,12 @@ export class JwtRefreshStrategy extends PassportStrategy(
 	}
 
 	async validate(req: Request, payload: TokenPayload) {
-		return req.headers.platform === "mobile"
-			? await this.authService.verifyUserRefreshToken(
-					req.body?.refreshToken,
-					payload.userId
-				)
-			: await this.authService.verifyUserRefreshToken(
-					req.cookies?.Refresh,
-					payload.userId
-				);
+		const platform = req.headers['platform'];
+		const token =
+			platform === 'mobile'
+				? req.headers['authorization']?.toString().replace(/^Bearer\s/, '')
+				: req.cookies?.Refresh;
+
+		return this.authService.verifyUserRefreshToken(token, payload.userId);
 	}
 }
