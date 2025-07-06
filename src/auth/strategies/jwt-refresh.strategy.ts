@@ -15,11 +15,15 @@ export class JwtRefreshStrategy extends PassportStrategy(
 	constructor(
 		private readonly configService: ConfigService,
 		private readonly usersService: UsersService,
-		private readonly authServics: AuthService
+		private readonly authService: AuthService
 	) {
 		super({
 			jwtFromRequest: ExtractJwt.fromExtractors([
-				(req: Request) => req.cookies?.Refresh
+				(req: Request) => {
+					return req.headers.platform === "mobile"
+						? req.body?.refreshToken
+						: req.cookies?.Refresh;
+				}
 			]),
 			secretOrKey: configService.getOrThrow("JWT_REFRESH_TOKEN_SECRET"),
 			passReqToCallback: true
@@ -27,9 +31,14 @@ export class JwtRefreshStrategy extends PassportStrategy(
 	}
 
 	async validate(req: Request, payload: TokenPayload) {
-		return await this.authServics.verifyUserRefreshToken(
-			req.cookies?.Refresh,
-			payload.userId
-		);
+		return req.headers.platform === "mobile"
+			? await this.authService.verifyUserRefreshToken(
+					req.body?.refreshToken,
+					payload.userId
+				)
+			: await this.authService.verifyUserRefreshToken(
+					req.cookies?.Refresh,
+					payload.userId
+				);
 	}
 }
