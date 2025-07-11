@@ -70,7 +70,6 @@ export class AuthService {
 				expires: expiresRefreshToken
 			});
 		} else {
-			console.log("here");
 			return {
 				access_token: accessToken,
 				refresh_token: refreshToken
@@ -96,8 +95,11 @@ export class AuthService {
 	async verifyUserRefreshToken(refreshToken: string, userId: string) {
 		try {
 			const user = await this.usersService.getUser({ _id: userId });
-			// @ts-ignore
-			const authenticated = await compare(refreshToken, user.refreshToken);
+			const authenticated = await compare(
+				refreshToken,
+				// @ts-ignore
+				user.refreshToken
+			);
 			if (!authenticated) {
 				throw new UnauthorizedException();
 			}

@@ -1,19 +1,21 @@
 import { Expose } from "class-transformer";
 import { IsOptional } from "class-validator";
+import { Role } from "../../auth/role.enum";
 
 export class UserDto {
+	@Expose()
+	_id: string;
+
 	@Expose()
 	email: string;
 
 	@Expose()
+	role: Role;
+
 	@IsOptional()
-	isStudent: boolean
+	@Expose()
+	profilePicUrl?: string;
 
 	@Expose()
-	@IsOptional()
-	isLandlordOrAgency: boolean
-
-	@Expose()
-	@IsOptional()
-	isSuperUser: boolean
+	isVerified: string;
 }
