@@ -95,7 +95,7 @@ export class AuthService {
 	async verifyUserRefreshToken(refreshToken: string, userId: string) {
 		try {
 			const user = await this.usersService.getUser({ _id: userId });
-			const authenticated = await compare(
+			const authenticated = compare(
 				refreshToken,
 				// @ts-ignore
 				user.refreshToken
