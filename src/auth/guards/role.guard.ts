@@ -4,7 +4,7 @@ import { Observable } from "rxjs";
 import { ROLE_KEY } from "../decorators/role.decorator";
 import { Role } from "../role.enum";
 import { AccessControlService } from "../../shared/access-control.service";
-import {UserDto} from "../../users/dtos/user.dto";
+import { UserDto } from "../../users/dtos/user.dto";
 
 export class TokenDto {
 	id: number;
@@ -27,7 +27,7 @@ export class RoleGuard implements CanActivate {
 		);
 
 		const request = context.switchToHttp().getRequest();
-        const user = request["user"] as UserDto
+		const user = request["user"] as UserDto;
 		console.log("here in role guard", user);
 
 		for (let role of requiredRoles) {

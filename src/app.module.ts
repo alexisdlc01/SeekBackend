@@ -3,9 +3,9 @@ import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { MongooseModule } from "@nestjs/mongoose";
-import { UsersModule } from './users/users.module';
-import { AuthModule } from './auth/auth.module';
-import { SharedModule } from './shared/shared.module';
+import { UsersModule } from "./users/users.module";
+import { AuthModule } from "./auth/auth.module";
+import { SharedModule } from "./shared/shared.module";
 
 @Module({
 	imports: [

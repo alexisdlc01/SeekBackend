@@ -1,4 +1,8 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+	ConflictException,
+	Injectable,
+	NotFoundException
+} from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { FilterQuery, Model, UpdateQuery } from "mongoose";
 import { User } from "./users.schema";
@@ -19,7 +23,7 @@ export class UsersService {
 			}).save();
 		} catch (err) {
 			if (err.code === 11000 && err.keyPattern?.email) {
-				throw new ConflictException("Email already in use.")
+				throw new ConflictException("Email already in use.");
 			}
 		}
 	}

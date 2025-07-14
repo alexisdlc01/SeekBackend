@@ -22,11 +22,11 @@ export class JwtRefreshStrategy extends PassportStrategy(
 				(req: Request) => {
 					if (!req) return null;
 
-					const platform = req.headers['platform'];
+					const platform = req.headers["platform"];
 
-					if (platform === 'mobile') {
-						const authHeader = req.headers['authorization'];
-						if (authHeader && authHeader.startsWith('Bearer ')) {
+					if (platform === "mobile") {
+						const authHeader = req.headers["authorization"];
+						if (authHeader && authHeader.startsWith("Bearer ")) {
 							return authHeader.slice(7);
 						}
 					}
@@ -40,10 +40,12 @@ export class JwtRefreshStrategy extends PassportStrategy(
 	}
 
 	async validate(req: Request, payload: TokenPayload) {
-		const platform = req.headers['platform'];
+		const platform = req.headers["platform"];
 		const token =
-			platform === 'mobile'
-				? req.headers['authorization']?.toString().replace(/^Bearer\s/, '')
+			platform === "mobile"
+				? req.headers["authorization"]
+						?.toString()
+						.replace(/^Bearer\s/, "")
 				: req.cookies?.Refresh;
 
 		return this.authService.verifyUserRefreshToken(token, payload.userId);

@@ -25,7 +25,7 @@ export class User {
 	@Prop({ enum: Role, default: Role.STUDENT })
 	role: Role;
 
-	@Prop({ default: false})
+	@Prop({ default: false })
 	isVerified: boolean;
 }
 

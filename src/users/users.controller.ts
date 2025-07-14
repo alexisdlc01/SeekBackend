@@ -21,7 +21,7 @@ export class UsersController {
 	@Get()
 	@Roles(Role.SUPERUSER)
 	@UseGuards(JwtAuthGuard, RoleGuard)
-	async getUsers() {
+	async getAllUsers() {
 		return this.usersService.getAllUsers();
 	}
 }
