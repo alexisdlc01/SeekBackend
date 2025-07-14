@@ -6,6 +6,10 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "./users.schema";
 import { Serialize } from "../interceptors/serialize.interceptor";
 import { UserDto } from "./dtos/user.dto";
+import { Roles } from "../auth/decorators/role.decorator";
+import { Role } from "../auth/role.enum";
+import { RoleGuard } from "../auth/guards/role.guard";
+
 
 @Controller("users")
 @Serialize(UserDto)
@@ -18,9 +22,9 @@ export class UsersController {
 	}
 
 	@Get()
-	@UseGuards(JwtAuthGuard)
-	async getUsers(@CurrentUser() user: User) {
-		console.log(user);
+	@Roles(Role.SUPERUSER)
+	@UseGuards(JwtAuthGuard, RoleGuard)
+	async getUsers() {
 		return this.usersService.getAllUsers();
 	}
 }

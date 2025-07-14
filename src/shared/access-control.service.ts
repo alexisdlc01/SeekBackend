@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { Role } from "./role.enum";
+import { Role } from "../auth/role.enum";
 
 interface IsAuthorizedParams {
 	currentRole: Role;
