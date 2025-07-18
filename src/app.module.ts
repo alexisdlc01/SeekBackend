@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
 import { ConfigModule, ConfigService } from "@nestjs/config";
@@ -6,6 +6,7 @@ import { MongooseModule } from "@nestjs/mongoose";
 import { UsersModule } from "./users/users.module";
 import { AuthModule } from "./auth/auth.module";
 import { SharedModule } from "./shared/shared.module";
+import * as morgan from "morgan";
 
 @Module({
 	imports: [
@@ -23,4 +24,11 @@ import { SharedModule } from "./shared/shared.module";
 	controllers: [AppController],
 	providers: [AppService]
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+	configure(consumer: MiddlewareConsumer) {
+		const morganFormat = process.env.MORGAN_FORMAT || "dev";
+		if (process.env.NODE_ENV === "development") {
+			consumer.apply(morgan(morganFormat)).forRoutes("*");
+		}
+	}
+}
