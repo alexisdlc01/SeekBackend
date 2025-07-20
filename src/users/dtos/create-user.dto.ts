@@ -8,6 +8,9 @@ import {
 import { Role } from "../../auth/role.enum";
 
 export class CreateUserDto {
+	@IsString()
+	name: string;
+
 	@IsEmail()
 	email: string;
 

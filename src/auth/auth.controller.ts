@@ -42,8 +42,14 @@ export class AuthController {
 	}
 
 	@Post("/signup")
-	async signup(@Body() body: CreateUserDto) {
-		await this.usersService.create(body);
+	async signup(
+		@Body() body: CreateUserDto,
+		@Req() request: Request,
+		@Res({ passthrough: true }) response: Response
+	) {
+		let newUser = (await this.usersService.create(body)) as User;
+		const isMobile = request.headers.platform === "mobile";
+		await this.authService.login(newUser, response, isMobile);
 	}
 
 	@Get("/currentUser")

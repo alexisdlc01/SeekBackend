@@ -17,10 +17,11 @@ export class UsersService {
 
 	async create(data: CreateUserDto) {
 		try {
-			await new this.userModel({
+			const userDoc = await new this.userModel({
 				...data,
 				password: await hash(data.password, 10)
 			}).save();
+			return userDoc.toObject() as User;
 		} catch (err) {
 			if (err.code === 11000 && err.keyPattern?.email) {
 				throw new ConflictException("Email already in use.");
