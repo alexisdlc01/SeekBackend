@@ -18,12 +18,14 @@ import { CreateUserDto } from "../users/dtos/create-user.dto";
 import { UsersService } from "../users/users.service";
 import { Serialize } from "../interceptors/serialize.interceptor";
 import { UserDto } from "../users/dtos/user.dto";
+import { MailService } from "./mail.service";
 
 @Controller("auth")
 export class AuthController {
 	constructor(
 		private readonly authService: AuthService,
-		private readonly usersService: UsersService
+		private readonly usersService: UsersService,
+		private readonly mailService: MailService
 	) {}
 
 	@Post("/login")
@@ -68,6 +70,14 @@ export class AuthController {
 	) {
 		const isMobile = request.headers.platform === "mobile";
 		return this.authService.login(user, response, isMobile);
+	}
+
+	@Get("testEmail")
+	async sendEmail() {
+		await this.mailService.sendVerificationEmail(
+			"grahamkheathcote@gmail.com",
+			"oisidfjsdoijfsdoijfdsoijf"
+		);
 	}
 
 	@Post("logout")

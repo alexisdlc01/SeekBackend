@@ -94,12 +94,15 @@ export class AuthService {
 
 	async verifyUserRefreshToken(refreshToken: string, userId: string) {
 		try {
-			const user = await this.usersService.getUser({ _id: userId }) as User;
-			const [authenticated] = await Promise.all([compare(
-				refreshToken,
-				// @ts-ignore
-				user.refreshToken
-			)]);
+			const user = (await this.usersService.getUser({
+				_id: userId
+			})) as User;
+			const [authenticated] = await Promise.all([
+				compare(
+					refreshToken,
+					user.refreshToken as string
+				)
+			]);
 			if (!authenticated) {
 				throw new UnauthorizedException();
 			}
