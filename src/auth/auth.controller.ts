@@ -75,7 +75,7 @@ export class AuthController {
 	@Get("testEmail")
 	async sendEmail() {
 		await this.mailService.sendVerificationEmail(
-			"grahamkheathcote@gmail.com",
+			"tomflag85@gmail.com",
 			"oisidfjsdoijfsdoijfdsoijf"
 		);
 	}
