@@ -61,13 +61,21 @@ export class AuthService {
 			response.cookie("Authentication", accessToken, {
 				httpOnly: true,
 				secure: this.configService.get("NODE_ENV") === "production",
-				expires: expiresAccessToken
+				expires: expiresAccessToken,
+				sameSite:
+					this.configService.getOrThrow("NODE_ENV") === "production"
+						? "none"
+						: "lax"
 			});
 
 			response.cookie("Refresh", refreshToken, {
 				httpOnly: true,
 				secure: this.configService.get("NODE_ENV") === "production",
-				expires: expiresRefreshToken
+				expires: expiresRefreshToken,
+				sameSite:
+					this.configService.getOrThrow("NODE_ENV") === "production"
+						? "none"
+						: "lax"
 			});
 		} else {
 			return {
@@ -98,10 +106,7 @@ export class AuthService {
 				_id: userId
 			})) as User;
 			const [authenticated] = await Promise.all([
-				compare(
-					refreshToken,
-					user.refreshToken as string
-				)
+				compare(refreshToken, user.refreshToken as string)
 			]);
 			if (!authenticated) {
 				throw new UnauthorizedException();
