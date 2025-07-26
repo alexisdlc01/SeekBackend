@@ -127,12 +127,18 @@ export class AuthService {
 			response.clearCookie("Authentication", {
 				httpOnly: true,
 				secure: this.configService.get("NODE_ENV") === "production",
-				sameSite: "strict"
+				sameSite:
+					this.configService.getOrThrow("NODE_ENV") === "production"
+						? "none"
+						: "lax"
 			});
 			response.clearCookie("Refresh", {
 				httpOnly: true,
 				secure: this.configService.get("NODE_ENV") === "production",
-				sameSite: "strict"
+				sameSite:
+					this.configService.getOrThrow("NODE_ENV") === "production"
+						? "none"
+						: "lax"
 			});
 		}
 	}
