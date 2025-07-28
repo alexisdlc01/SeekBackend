@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import {
+	BadRequestException,
+	Injectable,
+	UnauthorizedException
+} from "@nestjs/common";
 import { UsersService } from "../users/users.service";
 import { compare, hash } from "bcryptjs";
 import { ConfigService } from "@nestjs/config";
@@ -6,14 +10,32 @@ import { JwtService } from "@nestjs/jwt";
 import { User } from "../users/users.schema";
 import { Response } from "express";
 import { TokenPayload } from "./token-payload.interface";
+import { CreateUserDto } from "../users/dtos/create-user.dto";
+import { randomBytes } from "crypto";
+import { addMinutes } from "date-fns";
+import { MailService } from "./mail.service";
 
 @Injectable()
 export class AuthService {
 	constructor(
 		private readonly usersService: UsersService,
 		private readonly configService: ConfigService,
+		private readonly mailService: MailService,
 		private readonly jwtService: JwtService
 	) {}
+
+	async signup(body: CreateUserDto) {
+		const token = randomBytes(32).toString("hex");
+		const expires = addMinutes(new Date(), 60);
+
+		const newUser = (await this.usersService.create({
+			...body,
+			emailVerificationToken: token,
+			emailVerificationTokenExpires: expires
+		})) as User;
+
+		await this.mailService.sendVerificationEmail(newUser.email, token, newUser._id.toString());
+	}
 
 	async login(user: User, response: Response, isMobile: boolean) {
 		const expiresAccessToken = new Date();
@@ -115,6 +137,30 @@ export class AuthService {
 		} catch (err) {
 			throw new UnauthorizedException("Refresh token is not valid.");
 		}
+	}
+
+	async verifyEmail(user: User, token: string) {
+		const expirationDate = user.emailVerificationTokenExpires as Date;
+		const currentDate = new Date();
+		console.log(expirationDate, currentDate);
+		if (expirationDate < currentDate) {
+			throw new BadRequestException("This token has expired");
+		}
+		if (token === user.emailVerificationToken) {
+			await this.usersService.updateUser(
+				{
+					_id: user._id
+				},
+				{
+					$set: { isVerified: true },
+					$unset: {
+						emailVerificationToken: 1,
+						emailVerificationTokenExpires: 1
+					}
+				}
+			);
+		}
+		return user;
 	}
 
 	async logout(user: User, response: Response, isMobile: boolean) {

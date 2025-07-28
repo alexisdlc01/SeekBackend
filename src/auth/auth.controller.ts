@@ -15,17 +15,17 @@ import { AuthService } from "./auth.service";
 import { JwtRefreshGuard } from "./guards/jwt-refresh.guard";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { CreateUserDto } from "../users/dtos/create-user.dto";
-import { UsersService } from "../users/users.service";
 import { Serialize } from "../interceptors/serialize.interceptor";
 import { UserDto } from "../users/dtos/user.dto";
 import { MailService } from "./mail.service";
+import { VerifyEmailDto } from "./dtos/verify-email.dto";
+import { UsersService } from "../users/users.service";
 
 @Controller("auth")
 export class AuthController {
 	constructor(
 		private readonly authService: AuthService,
-		private readonly usersService: UsersService,
-		private readonly mailService: MailService
+		private readonly usersService: UsersService
 	) {}
 
 	@Post("/login")
@@ -44,14 +44,22 @@ export class AuthController {
 	}
 
 	@Post("/signup")
-	async signup(
-		@Body() body: CreateUserDto,
+	async signup(@Body() body: CreateUserDto) {
+		await this.authService.signup(body);
+	}
+
+	@Post("/verify-email")
+	async verifyEmail(
+		@Body() body: VerifyEmailDto,
 		@Req() request: Request,
 		@Res({ passthrough: true }) response: Response
 	) {
-		let newUser = (await this.usersService.create(body)) as User;
+		let user = (await this.usersService.getUser({
+			_id: body.userId
+		})) as User;
+		user = await this.authService.verifyEmail(user, body.token);
 		const isMobile = request.headers.platform === "mobile";
-		await this.authService.login(newUser, response, isMobile);
+		return this.authService.login(user, response, isMobile);
 	}
 
 	@Get("/currentUser")
@@ -70,14 +78,6 @@ export class AuthController {
 	) {
 		const isMobile = request.headers.platform === "mobile";
 		return this.authService.login(user, response, isMobile);
-	}
-
-	@Get("testEmail")
-	async sendEmail() {
-		await this.mailService.sendVerificationEmail(
-			"tomflag85@gmail.com",
-			"oisidfjsdoijfsdoijfdsoijf"
-		);
 	}
 
 	@Post("logout")

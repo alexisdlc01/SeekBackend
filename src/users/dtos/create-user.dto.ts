@@ -24,4 +24,12 @@ export class CreateUserDto {
 
 	@IsStrongPassword()
 	password: string;
+
+	@IsString()
+	@IsOptional()
+	emailVerificationToken: string;
+
+	@IsString()
+	@IsOptional()
+	emailVerificationTokenExpires: Date;
 }

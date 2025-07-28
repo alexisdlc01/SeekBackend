@@ -27,6 +27,12 @@ export class User {
 
 	@Prop({ default: false })
 	isVerified: boolean;
+
+	@Prop()
+	emailVerificationToken?: string;
+
+	@Prop()
+	emailVerificationTokenExpires?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
