@@ -6,6 +6,7 @@ import { MongooseModule } from "@nestjs/mongoose";
 import { UsersModule } from "./users/users.module";
 import { AuthModule } from "./auth/auth.module";
 import { SharedModule } from "./shared/shared.module";
+import { UploadModule } from './upload/upload.module';
 import * as morgan from "morgan";
 
 @Module({
@@ -19,7 +20,8 @@ import * as morgan from "morgan";
 		}),
 		UsersModule,
 		AuthModule,
-		SharedModule
+		SharedModule,
+		UploadModule
 	],
 	controllers: [AppController],
 	providers: [AppService]
