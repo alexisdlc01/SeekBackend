@@ -17,7 +17,6 @@ import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { CreateUserDto } from "../users/dtos/create-user.dto";
 import { Serialize } from "../interceptors/serialize.interceptor";
 import { UserDto } from "../users/dtos/user.dto";
-import { MailService } from "./mail.service";
 import { VerifyEmailDto } from "./dtos/verify-email.dto";
 import { UsersService } from "../users/users.service";
 

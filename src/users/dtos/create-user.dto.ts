@@ -27,9 +27,9 @@ export class CreateUserDto {
 
 	@IsString()
 	@IsOptional()
-	emailVerificationToken: string;
+	emailVerificationToken?: string;
 
 	@IsString()
 	@IsOptional()
-	emailVerificationTokenExpires: Date;
+	emailVerificationTokenExpires?: Date;
 }
