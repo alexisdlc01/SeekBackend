@@ -5,9 +5,9 @@ import {
 	IsOptional,
 	IsString
 } from "class-validator";
-import { Role } from "../../auth/role.enum";
+import { Role } from "../role.enum";
 
-export class CreateUserDto {
+export class GoogleUserDto {
 	@IsString()
 	name: string;
 
@@ -21,15 +21,4 @@ export class CreateUserDto {
 	@IsString()
 	@IsOptional()
 	imageUrl?: string;
-
-	@IsStrongPassword()
-	password: string;
-
-	@IsString()
-	@IsOptional()
-	emailVerificationToken?: string;
-
-	@IsString()
-	@IsOptional()
-	emailVerificationTokenExpires?: Date;
 }

@@ -33,6 +33,9 @@ export class User {
 
 	@Prop()
 	emailVerificationTokenExpires?: Date;
+
+	@Prop({ default: false })
+	isGoogle: boolean;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

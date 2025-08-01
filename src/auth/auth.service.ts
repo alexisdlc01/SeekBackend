@@ -25,16 +25,22 @@ export class AuthService {
 	) {}
 
 	async signup(body: CreateUserDto) {
-		const token = randomBytes(32).toString("hex");
-		const expires = addMinutes(new Date(), 60);
+		if (body.role === "STUDENT" || body.role === "LANDLORD_AGENCY") {
+			const token = randomBytes(32).toString("hex");
+			const expires = addMinutes(new Date(), 60);
 
-		const newUser = (await this.usersService.create({
-			...body,
-			emailVerificationToken: token,
-			emailVerificationTokenExpires: expires
-		})) as User;
+			const newUser = (await this.usersService.create({
+				...body,
+				emailVerificationToken: token,
+				emailVerificationTokenExpires: expires
+			})) as User;
 
-		await this.mailService.sendVerificationEmail(newUser.email, token, newUser._id.toString());
+			await this.mailService.sendVerificationEmail(
+				newUser.email,
+				token,
+				newUser._id.toString()
+			);
+		}
 	}
 
 	async login(user: User, response: Response, isMobile: boolean) {
@@ -142,7 +148,6 @@ export class AuthService {
 	async verifyEmail(user: User, token: string) {
 		const expirationDate = user.emailVerificationTokenExpires as Date;
 		const currentDate = new Date();
-		console.log(expirationDate, currentDate);
 		if (expirationDate < currentDate) {
 			throw new BadRequestException("This token has expired");
 		}

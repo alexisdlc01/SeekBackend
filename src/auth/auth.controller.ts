@@ -17,15 +17,18 @@ import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { CreateUserDto } from "../users/dtos/create-user.dto";
 import { Serialize } from "../interceptors/serialize.interceptor";
 import { UserDto } from "../users/dtos/user.dto";
-import { MailService } from "./mail.service";
 import { VerifyEmailDto } from "./dtos/verify-email.dto";
 import { UsersService } from "../users/users.service";
+import { GoogleOauthGuard } from "./guards/google-oauth.guard";
+import { ConfigService } from "@nestjs/config";
+import { GoogleUserDto } from "./dtos/google-user.dto";
 
 @Controller("auth")
 export class AuthController {
 	constructor(
 		private readonly authService: AuthService,
-		private readonly usersService: UsersService
+		private readonly usersService: UsersService,
+		private readonly configService: ConfigService
 	) {}
 
 	@Post("/login")
@@ -60,6 +63,37 @@ export class AuthController {
 		user = await this.authService.verifyEmail(user, body.token);
 		const isMobile = request.headers.platform === "mobile";
 		return this.authService.login(user, response, isMobile);
+	}
+
+	@Get("/google")
+	@UseGuards(GoogleOauthGuard)
+	async googleAuth() {}
+
+	@Get("/google/callback")
+	@UseGuards(GoogleOauthGuard)
+	async googleAuthCallback(
+		@Req() request: Request,
+		@Res({ passthrough: true }) response: Response
+	) {
+		const requestUser = request.user as GoogleUserDto;
+		let savedUser: User;
+		try {
+			savedUser = await this.usersService.getUser({
+				email: requestUser.email
+			});
+		} catch {
+			savedUser = (await this.usersService.createGoogleUser({
+				...(request.user as GoogleUserDto)
+			})) as User;
+		}
+
+		const isMobile = request.headers.platform === "mobile";
+		await this.authService.login(savedUser, response, isMobile);
+
+		if (!isMobile) {
+			const baseUrl = this.configService.getOrThrow("FRONTEND_URL");
+			response.redirect(`${baseUrl}/`);
+		}
 	}
 
 	@Get("/currentUser")
