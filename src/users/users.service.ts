@@ -8,6 +8,7 @@ import { FilterQuery, Model, UpdateQuery } from "mongoose";
 import { User } from "./users.schema";
 import { CreateUserDto } from "./dtos/create-user.dto";
 import { hash } from "bcryptjs";
+import { GoogleUserDto } from "../auth/dtos/google-user.dto";
 
 @Injectable()
 export class UsersService {
@@ -26,6 +27,17 @@ export class UsersService {
 			if (err.code === 11000 && err.keyPattern?.email) {
 				throw new ConflictException("Email already in use.");
 			}
+		}
+	}
+
+	async createGoogleUser(data: GoogleUserDto) {
+		try {
+			const userDoc = await new this.userModel({
+				...data
+			}).save();
+			return userDoc.toObject() as User;
+		} catch (err) {
+			console.log("error saving user to db in createGoogleUser", err);
 		}
 	}
 

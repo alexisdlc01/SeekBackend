@@ -8,10 +8,11 @@ import { LocalStrategy } from "./strategies/local.strategy";
 import { JwtStrategy } from "./strategies/jwt.strategy";
 import { JwtRefreshStrategy } from "./strategies/jwt-refresh.strategy";
 import { MailService } from './mail.service';
+import { GoogleStrategy } from "./strategies/google.strategy";
 
 @Module({
 	imports: [UsersModule, PassportModule, JwtModule],
-	providers: [AuthService, LocalStrategy, JwtStrategy, JwtRefreshStrategy, MailService],
+	providers: [AuthService, LocalStrategy, JwtStrategy, JwtRefreshStrategy, GoogleStrategy, MailService],
 	controllers: [AuthController]
 })
 export class AuthModule {}

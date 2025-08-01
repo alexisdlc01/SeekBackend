@@ -148,7 +148,6 @@ export class AuthService {
 	async verifyEmail(user: User, token: string) {
 		const expirationDate = user.emailVerificationTokenExpires as Date;
 		const currentDate = new Date();
-		console.log(expirationDate, currentDate);
 		if (expirationDate < currentDate) {
 			throw new BadRequestException("This token has expired");
 		}
