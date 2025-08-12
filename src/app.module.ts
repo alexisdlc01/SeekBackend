@@ -7,6 +7,7 @@ import { UsersModule } from "./users/users.module";
 import { AuthModule } from "./auth/auth.module";
 import { SharedModule } from "./shared/shared.module";
 import { UploadModule } from './upload/upload.module';
+import { ListingsModule } from './listings/listing.module';
 import * as morgan from "morgan";
 
 @Module({
@@ -21,7 +22,8 @@ import * as morgan from "morgan";
 		UsersModule,
 		AuthModule,
 		SharedModule,
-		UploadModule
+		UploadModule,
+		ListingsModule
 	],
 	controllers: [AppController],
 	providers: [AppService]
