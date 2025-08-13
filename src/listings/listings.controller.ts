@@ -22,8 +22,9 @@ export class ListingsController {
 	@Get("/mine")
 	@Roles(Role.LANDLORD_AGENCY)
 	@UseGuards(JwtAuthGuard, RoleGuard)
-	myListings() {
-		// TODO: Return all of landlords listings.
+	async myListings(@CurrentUser() user: User) {
+		console.log(user._id.toString());
+		return await this.listingsService.findByLandlord(user._id.toString());
 	}
 
 	@Get("/:id")

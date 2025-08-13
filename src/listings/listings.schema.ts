@@ -10,6 +10,9 @@ export class Listing {
 	@Prop({ type: SchemaTypes.ObjectId, auto: true })
 	_id: Types.ObjectId;
 
+	@Prop({ type: SchemaTypes.ObjectId, ref: "User", required: true, index: true })
+	landlord: Types.ObjectId;
+
 	@Prop()
 	propertyTitle: string;
 

@@ -17,4 +17,8 @@ export class ListingsService {
 			landlord: new Types.ObjectId(user._id)
 		});
 	}
+
+	async findByLandlord(id: string) {
+		return await this.listingModel.find({landlord: id}).exec();
+	}
 }
