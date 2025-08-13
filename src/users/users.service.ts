@@ -8,7 +8,7 @@ import { FilterQuery, Model, UpdateQuery } from "mongoose";
 import { User } from "./users.schema";
 import { CreateUserDto } from "./dtos/create-user.dto";
 import { hash } from "bcryptjs";
-import { GoogleUserDto } from "../auth/dtos/google-user.dto";
+import { GoogleUserDto } from "../auth/dto/google-user.dto";
 
 @Injectable()
 export class UsersService {

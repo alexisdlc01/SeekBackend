@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { SchemaTypes, Types } from "mongoose";
 import { Role } from "../auth/role.enum";
+import { Listing } from "../listings/listings.schema";
 
 @Schema()
 export class User {
@@ -39,3 +40,10 @@ export class User {
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
+
+UserSchema.virtual("listings", {
+	ref: Listing.name,
+	localField: "_id",
+	foreignField: "landlord",
+	justOne: false,
+});

@@ -17,11 +17,11 @@ import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { CreateUserDto } from "../users/dtos/create-user.dto";
 import { Serialize } from "../interceptors/serialize.interceptor";
 import { UserDto } from "../users/dtos/user.dto";
-import { VerifyEmailDto } from "./dtos/verify-email.dto";
+import { VerifyEmailDto } from "./dto/verify-email.dto";
 import { UsersService } from "../users/users.service";
 import { GoogleOauthGuard } from "./guards/google-oauth.guard";
 import { ConfigService } from "@nestjs/config";
-import { GoogleUserDto } from "./dtos/google-user.dto";
+import { GoogleUserDto } from "./dto/google-user.dto";
 
 @Controller("auth")
 export class AuthController {
