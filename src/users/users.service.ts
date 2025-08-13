@@ -6,7 +6,7 @@ import {
 import { InjectModel } from "@nestjs/mongoose";
 import { FilterQuery, Model, UpdateQuery } from "mongoose";
 import { User } from "./users.schema";
-import { CreateUserDto } from "./dtos/create-user.dto";
+import { CreateUserDto } from "./dto/create-user.dto";
 import { hash } from "bcryptjs";
 import { GoogleUserDto } from "../auth/dto/google-user.dto";
 

@@ -4,7 +4,7 @@ import { Observable } from "rxjs";
 import { ROLE_KEY } from "../decorators/role.decorator";
 import { Role } from "../role.enum";
 import { AccessControlService } from "../../shared/access-control.service";
-import { UserDto } from "../../users/dtos/user.dto";
+import { UserDto } from "../../users/dto/user.dto";
 
 export class TokenDto {
 	id: number;

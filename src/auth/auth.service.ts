@@ -10,7 +10,7 @@ import { JwtService } from "@nestjs/jwt";
 import { User } from "../users/users.schema";
 import { Response } from "express";
 import { TokenPayload } from "./token-payload.interface";
-import { CreateUserDto } from "../users/dtos/create-user.dto";
+import { CreateUserDto } from "../users/dto/create-user.dto";
 import { randomBytes } from "crypto";
 import { addMinutes } from "date-fns";
 import { MailService } from "./mail.service";
