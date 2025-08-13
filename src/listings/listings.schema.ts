@@ -69,6 +69,9 @@ export class Listing {
 
 	@Prop()
 	floorPlanImage: string;
+
+	@Prop({default: false})
+	isVerified: boolean;
 }
 
 export const ListingSchema = SchemaFactory.createForClass(Listing);
