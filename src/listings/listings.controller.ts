@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
+import {
+	Body,
+	Controller,
+	Get,
+	Param,
+	Patch,
+	Post,
+	UseGuards
+} from "@nestjs/common";
 import { CreateListingDto } from "./dto/create-listing.dto";
 import { Roles } from "../auth/decorators/role.decorator";
 import { Role } from "../auth/role.enum";
@@ -30,5 +38,12 @@ export class ListingsController {
 	@Get("/:id")
 	getById(@Param("id") id: string) {
 		// TODO: Return the listing by the id
+	}
+
+	@Patch("/verify/:id")
+	@Roles(Role.SUPERUSER)
+	@UseGuards(JwtAuthGuard, RoleGuard)
+	async verifyListing(@Param("id") id: string) {
+		await this.listingsService.verifyListing(id);
 	}
 }

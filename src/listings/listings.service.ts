@@ -19,6 +19,16 @@ export class ListingsService {
 	}
 
 	async findByLandlord(id: string) {
-		return await this.listingModel.find({landlord: id}).exec();
+		return await this.listingModel.find({ landlord: id }).exec();
+	}
+
+	async verifyListing(id: string) {
+		if (!Types.ObjectId.isValid(id)) {
+			throw new Error("Invalid listing ID");
+		}
+
+		return await this.listingModel
+			.findByIdAndUpdate(id, { isVerified: true }, { new: true })
+			.exec();
 	}
 }
