@@ -31,4 +31,8 @@ export class ListingsService {
 			.findByIdAndUpdate(id, { isVerified: true }, { new: true })
 			.exec();
 	}
+
+	async findListingById(id: string) {
+		return await this.listingModel.findById(id);
+	}
 }

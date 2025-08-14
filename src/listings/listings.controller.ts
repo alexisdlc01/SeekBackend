@@ -36,8 +36,8 @@ export class ListingsController {
 	}
 
 	@Get("/:id")
-	getById(@Param("id") id: string) {
-		// TODO: Return the listing by the id
+	async getById(@Param("id") id: string) {
+		return await this.listingsService.findListingById(id);
 	}
 
 	@Patch("/verify/:id")
