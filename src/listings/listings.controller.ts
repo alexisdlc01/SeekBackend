@@ -1,47 +1,37 @@
-import {
-	Body,
-	Controller,
-	Get,
-	Param,
-	Patch,
-	Post,
-	UseGuards
-} from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post } from "@nestjs/common";
 import { CreateListingDto } from "./dto/create-listing.dto";
-import { Roles } from "../auth/decorators/role.decorator";
-import { Role } from "../auth/role.enum";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
-import { RoleGuard } from "../auth/guards/role.guard";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "../users/users.schema";
 import { ListingsService } from "./listings.service";
+import {
+	LandlordAgency,
+	Superuser
+} from "../auth/decorators/role-auth.decorator";
 
 @Controller("listings")
 export class ListingsController {
 	constructor(private readonly listingsService: ListingsService) {}
 
 	@Post("/create")
-	@Roles(Role.LANDLORD_AGENCY)
-	@UseGuards(JwtAuthGuard, RoleGuard)
+	@LandlordAgency()
 	async create(@CurrentUser() user: User, @Body() body: CreateListingDto) {
 		await this.listingsService.create(body, user);
 	}
 
 	@Get("/mine")
-	@Roles(Role.LANDLORD_AGENCY)
-	@UseGuards(JwtAuthGuard, RoleGuard)
+	@LandlordAgency()
 	async myListings(@CurrentUser() user: User) {
 		return await this.listingsService.findByLandlord(user._id.toString());
 	}
 
 	@Get("/:id")
+	@Superuser()
 	async getById(@Param("id") id: string) {
 		return await this.listingsService.findListingById(id);
 	}
 
 	@Patch("/verify/:id")
-	@Roles(Role.SUPERUSER)
-	@UseGuards(JwtAuthGuard, RoleGuard)
+	@Superuser()
 	async verifyListing(@Param("id") id: string) {
 		await this.listingsService.verifyListing(id);
 	}

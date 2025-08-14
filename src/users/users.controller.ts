@@ -1,12 +1,9 @@
-import { Body, Controller, Get, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post } from "@nestjs/common";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UsersService } from "./users.service";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { Serialize } from "../interceptors/serialize.interceptor";
 import { UserDto } from "./dto/user.dto";
-import { Roles } from "../auth/decorators/role.decorator";
-import { Role } from "../auth/role.enum";
-import { RoleGuard } from "../auth/guards/role.guard";
+import { Superuser } from "../auth/decorators/role-auth.decorator";
 
 @Controller("users")
 @Serialize(UserDto)
@@ -19,8 +16,7 @@ export class UsersController {
 	}
 
 	@Get()
-	@Roles(Role.SUPERUSER)
-	@UseGuards(JwtAuthGuard, RoleGuard)
+	@Superuser()
 	async getAllUsers() {
 		return this.usersService.getAllUsers();
 	}
