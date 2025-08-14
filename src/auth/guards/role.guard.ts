@@ -6,11 +6,6 @@ import { Role } from "../role.enum";
 import { AccessControlService } from "../../shared/access-control.service";
 import { UserDto } from "../../users/dto/user.dto";
 
-export class TokenDto {
-	id: number;
-	role: Role;
-}
-
 @Injectable()
 export class RoleGuard implements CanActivate {
 	constructor(
