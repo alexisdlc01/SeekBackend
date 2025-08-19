@@ -45,5 +45,5 @@ UserSchema.virtual("listings", {
 	ref: Listing.name,
 	localField: "_id",
 	foreignField: "landlord",
-	justOne: false,
+	justOne: false
 });
