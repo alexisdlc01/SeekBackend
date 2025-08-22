@@ -9,6 +9,7 @@ import { SharedModule } from "./shared/shared.module";
 import { UploadModule } from './upload/upload.module';
 import { ListingsModule } from './listings/listing.module';
 import { ConversationModule } from './conversation/conversation.module';
+import { MessageModule } from './message/message.module';
 import * as morgan from "morgan";
 
 @Module({
@@ -25,7 +26,8 @@ import * as morgan from "morgan";
 		SharedModule,
 		UploadModule,
 		ListingsModule,
-		ConversationModule
+		ConversationModule,
+		MessageModule
 	],
 	controllers: [AppController],
 	providers: [AppService]
