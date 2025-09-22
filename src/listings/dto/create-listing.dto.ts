@@ -33,3 +33,35 @@ export class CreateListingDto {
 	@IsOptional() @IsString() videoTourLink?: string;
 	@IsOptional() @IsString() floorPlanImage?: string;
 }
+
+export class Step1ListingDto {
+	@IsString() propertyTitle: string;
+	@IsNumber() sizeSqMeters: number;
+	@IsEnum(PropertyType) propertyType: PropertyType;
+	@IsNumber() bedroomsCount: number;
+	@IsNumber() enSuiteBedroomCount: number;
+	@IsString() propertyDesc: string;
+	@IsArray() @IsEnum(Amenity, { each: true }) amenities: Amenity[];
+}
+
+export class Step2ListingDto {
+	@IsString() streetAddress: string;
+	@IsString() cityTown: string;
+	@IsString() postcodeZIP: string;
+	@IsString() country: string;
+	@IsNumber() monthlyRent: number;
+	@IsNumber() securityDeposit: number;
+	@IsDateString() availableFrom: string;
+	@IsDateString() availableUntil: string;
+}
+
+export class Step3ListingDto {
+	@IsEnum(FurnishingStatus) furnishingStatus: FurnishingStatus;
+	@IsEnum(EpcRating) epcRating: EpcRating;
+}
+
+export class Step4ListingDto {
+	@IsArray() photos: string[];
+	@IsOptional() @IsString() videoTourLink?: string;
+	@IsOptional() @IsString() floorPlanImage?: string;
+}

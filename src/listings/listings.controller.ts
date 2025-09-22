@@ -1,5 +1,10 @@
 import { Body, Controller, Get, Param, Patch, Post } from "@nestjs/common";
-import { CreateListingDto } from "./dto/create-listing.dto";
+import {
+	CreateListingDto,
+	Step1ListingDto,
+	Step2ListingDto,
+	Step3ListingDto
+} from "./dto/create-listing.dto";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "../users/users.schema";
 import { ListingsService } from "./listings.service";
@@ -12,10 +17,51 @@ import {
 export class ListingsController {
 	constructor(private readonly listingsService: ListingsService) {}
 
-	@Post("/create")
+	@Post("/draft")
 	@LandlordAgency()
-	async create(@CurrentUser() user: User, @Body() body: CreateListingDto) {
-		await this.listingsService.create(body, user);
+	async createDraft(@CurrentUser() user: User) {
+		return this.listingsService.createDraft(user);
+	}
+
+	@Patch(":id/createStep1")
+	@LandlordAgency()
+	async createStep1(
+		@CurrentUser() user: User,
+		@Param("id") listingId: string,
+		@Body() body: Step1ListingDto
+	) {
+		return this.listingsService.updateDraft(listingId, user, body);
+	}
+
+	@Patch(":id/createStep2")
+	@LandlordAgency()
+	async createStep2(
+		@CurrentUser() user: User,
+		@Param("id") listingId: string,
+		@Body() body: Step2ListingDto
+	) {
+		return this.listingsService.updateDraft(listingId, user, body);
+	}
+
+	@Patch(":id/createStep3")
+	@LandlordAgency()
+	async createStep3(
+		@CurrentUser() user: User,
+		@Param("id") listingId: string,
+		@Body() body: Step3ListingDto
+	) {
+		return this.listingsService.updateDraft(listingId, user, body);
+	}
+
+	@Post(":id/publish")
+	@LandlordAgency()
+	async publish(
+		@CurrentUser() user: User,
+		@Param("id") listingId: string,
+		@Body() body: CreateListingDto
+	) {
+		await this.listingsService.updateDraft(listingId, user, body);
+		return this.listingsService.publishDraft(listingId, user);
 	}
 
 	@Get("/mine")

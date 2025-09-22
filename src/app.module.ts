@@ -10,6 +10,7 @@ import { UploadModule } from './upload/upload.module';
 import { ListingsModule } from './listings/listing.module';
 import { ConversationModule } from './conversation/conversation.module';
 import { MessageModule } from './message/message.module';
+import { EventsModule } from './events/events.module';
 import * as morgan from "morgan";
 
 @Module({
@@ -27,7 +28,8 @@ import * as morgan from "morgan";
 		UploadModule,
 		ListingsModule,
 		ConversationModule,
-		MessageModule
+		MessageModule,
+		EventsModule
 	],
 	controllers: [AppController],
 	providers: [AppService]

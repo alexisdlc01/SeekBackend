@@ -13,68 +13,31 @@ export class Listing {
 	@Prop({ type: SchemaTypes.ObjectId, ref: "User", required: true, index: true })
 	landlord: Types.ObjectId;
 
-	@Prop()
-	propertyTitle: string;
+	@Prop() propertyTitle?: string;
+	@Prop() sizeSqMeters?: number;
+	@Prop({ enum: PropertyType }) propertyType?: PropertyType;
+	@Prop() bedroomsCount?: number;
+	@Prop() enSuiteBedroomCount?: number;
+	@Prop() propertyDesc?: string;
+	@Prop({ type: [String], enum: Amenity, default: [] }) amenities?: Amenity[];
+	@Prop() streetAddress?: string;
+	@Prop() cityTown?: string;
+	@Prop() postcodeZIP?: string;
+	@Prop() country?: string;
+	@Prop() monthlyRent?: number;
+	@Prop() securityDeposit?: number;
+	@Prop() availableFrom?: Date;
+	@Prop() availableUntil?: Date;
+	@Prop({ enum: FurnishingStatus }) furnishingStatus?: FurnishingStatus;
+	@Prop({ enum: EpcRating }) epcRating?: EpcRating;
+	@Prop({ type: [String] }) photos?: string[];
+	@Prop() videoTourLink?: string;
+	@Prop() floorPlanImage?: string;
 
-	@Prop()
-	sizeSqMeters: number;
+	@Prop({ default: false }) isVerified: boolean;
 
-	@Prop({ enum: PropertyType })
-	propertyType: PropertyType;
-
-	@Prop()
-	bedroomsCount: number;
-
-	@Prop()
-	enSuiteBedroomCount: number;
-
-	@Prop()
-	propertyDesc: string;
-
-	@Prop({ type: [String], enum: Amenity, default: [] })
-	amenities: Amenity[];
-
-	@Prop()
-	streetAddress: string;
-
-	@Prop()
-	cityTown: string;
-
-	@Prop()
-	postcodeZIP: string;
-
-	@Prop()
-	country: string;
-
-	@Prop()
-	monthlyRent: number;
-
-	@Prop()
-	securityDeposit: number;
-
-	@Prop()
-	availableFrom: Date;
-
-	@Prop()
-	availableUntil: Date;
-
-	@Prop({ enum: FurnishingStatus })
-	furnishingStatus: FurnishingStatus;
-
-	@Prop({ enum: EpcRating })
-	epcRating: EpcRating;
-
-	@Prop({ type: [String] })
-	photos: string[];
-
-	@Prop()
-	videoTourLink: string;
-
-	@Prop()
-	floorPlanImage: string;
-
-	@Prop({default: false})
-	isVerified: boolean;
+	@Prop({ default: true }) isDraft: boolean;
+	@Prop({ default: Date.now }) lastUpdated: Date;
 }
 
 export const ListingSchema = SchemaFactory.createForClass(Listing);

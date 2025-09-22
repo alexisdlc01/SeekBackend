@@ -11,11 +11,31 @@ export class ListingsService {
 		@InjectModel(Listing.name) private readonly listingModel: Model<Listing>
 	) {}
 
-	async create(body: CreateListingDto, user: User) {
-		return await this.listingModel.create({
-			...body,
-			landlord: new Types.ObjectId(user._id)
-		});
+	// async create(body: CreateListingDto, user: User) {
+	// 	return await this.listingModel.create({
+	// 		...body,
+	// 		landlord: new Types.ObjectId(user._id)
+	// 	});
+	// }
+
+	async createDraft(user: User) {
+		return this.listingModel.create({ landlord: new Types.ObjectId(user._id), isDraft: true });
+	}
+
+	async updateDraft(listingId: string, landlord: User, data: Partial<CreateListingDto>) {
+		return this.listingModel.findOneAndUpdate(
+			{ _id: new Types.ObjectId(listingId), landlord: new Types.ObjectId(landlord._id) },
+			{ $set: { ...data, lastUpdated: new Date() } },
+			{ new: true }
+		);
+	}
+
+	async publishDraft(listingId: string, landlord: User) {
+		return this.listingModel.findOneAndUpdate(
+			{ _id: new Types.ObjectId(listingId), landlord: new Types.ObjectId(landlord._id) },
+			{ $set: { isDraft: false, lastUpdated: new Date() } },
+			{ new: true }
+		);
 	}
 
 	async findByLandlord(id: string) {
