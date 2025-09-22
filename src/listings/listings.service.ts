@@ -11,13 +11,6 @@ export class ListingsService {
 		@InjectModel(Listing.name) private readonly listingModel: Model<Listing>
 	) {}
 
-	// async create(body: CreateListingDto, user: User) {
-	// 	return await this.listingModel.create({
-	// 		...body,
-	// 		landlord: new Types.ObjectId(user._id)
-	// 	});
-	// }
-
 	async createDraft(user: User) {
 		return this.listingModel.create({ landlord: new Types.ObjectId(user._id), isDraft: true });
 	}
