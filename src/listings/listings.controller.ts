@@ -40,6 +40,7 @@ export class ListingsController {
 		@Param("id") listingId: string,
 		@Body() body: Step2ListingDto
 	) {
+		console.log(body);
 		return this.listingsService.updateDraft(listingId, user, body);
 	}
 
@@ -50,6 +51,7 @@ export class ListingsController {
 		@Param("id") listingId: string,
 		@Body() body: Step3ListingDto
 	) {
+		console.log("here", body);
 		return this.listingsService.updateDraft(listingId, user, body);
 	}
 
@@ -68,6 +70,17 @@ export class ListingsController {
 	@LandlordAgency()
 	async myListings(@CurrentUser() user: User) {
 		return await this.listingsService.findByLandlord(user._id.toString());
+	}
+
+	@Get("/mine/:id")
+	@LandlordAgency()
+	async getListing(@CurrentUser() user: User, @Param("id") listingId: string) {
+		const foundListing =  await this.listingsService.findListingById(listingId);
+		if (foundListing && foundListing.landlord._id.toString() === user._id.toString()) {
+			return foundListing;
+		} else {
+			return null;
+		}
 	}
 
 	@Get("/:id")

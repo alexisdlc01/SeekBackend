@@ -46,6 +46,6 @@ export class ListingsService {
 	}
 
 	async findListingById(id: string) {
-		return await this.listingModel.findById(id);
+		return await this.listingModel.findById(id) || null;
 	}
 }

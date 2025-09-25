@@ -6,12 +6,13 @@ import { MongooseModule } from "@nestjs/mongoose";
 import { UsersModule } from "./users/users.module";
 import { AuthModule } from "./auth/auth.module";
 import { SharedModule } from "./shared/shared.module";
-import { UploadModule } from './upload/upload.module';
-import { ListingsModule } from './listings/listing.module';
-import { ConversationModule } from './conversation/conversation.module';
-import { MessageModule } from './message/message.module';
-import { EventsModule } from './events/events.module';
+import { UploadModule } from "./upload/upload.module";
+import { ListingsModule } from "./listings/listing.module";
+import { ConversationModule } from "./conversation/conversation.module";
+import { MessageModule } from "./message/message.module";
+import { EventsModule } from "./events/events.module";
 import * as morgan from "morgan";
+import Redis from "ioredis";
 
 @Module({
 	imports: [
@@ -32,7 +33,16 @@ import * as morgan from "morgan";
 		EventsModule
 	],
 	controllers: [AppController],
-	providers: [AppService]
+	providers: [
+		AppService,
+		{
+			provide: "REDIS_CLIENT",
+			inject: [ConfigService],
+			useFactory: (config: ConfigService) =>
+				new Redis(config.getOrThrow("REDIS_URL"))
+		}
+	],
+	exports: ["REDIS_CLIENT"]
 })
 export class AppModule implements NestModule {
 	configure(consumer: MiddlewareConsumer) {
