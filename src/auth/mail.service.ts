@@ -41,4 +41,14 @@ export class MailService {
 			html: `<p>Click <a href="${link}">here</a> to verify your email address.</p>`
 		});
 	}
+
+	async sendContactEmail(name: string, email: string, message: string) {
+		await this.mail.messages.create(this.domain, {
+			from: "Seek <noreply@mail.seekapp.uk>",
+			to: ["kshitijverma197@gmail.com"],
+			subject: "Message from Seek user",
+			text: `Message from ${name} | ${email}: ${message}`,
+			html: `<p>Message from ${name} | ${email}: ${message}</p>`
+		});
+	}
 }

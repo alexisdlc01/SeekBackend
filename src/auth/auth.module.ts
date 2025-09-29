@@ -20,6 +20,7 @@ import { GoogleStrategy } from "./strategies/google.strategy";
 		GoogleStrategy,
 		MailService
 	],
-	controllers: [AuthController]
+	controllers: [AuthController],
+	exports: [MailService]
 })
 export class AuthModule {}
