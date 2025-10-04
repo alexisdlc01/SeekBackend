@@ -10,7 +10,12 @@ export class Listing {
 	@Prop({ type: SchemaTypes.ObjectId, auto: true })
 	_id: Types.ObjectId;
 
-	@Prop({ type: SchemaTypes.ObjectId, ref: "User", required: true, index: true })
+	@Prop({
+		type: SchemaTypes.ObjectId,
+		ref: "User",
+		required: true,
+		index: true
+	})
 	landlord: Types.ObjectId;
 
 	@Prop() propertyTitle?: string;
@@ -18,6 +23,8 @@ export class Listing {
 	@Prop({ enum: PropertyType }) propertyType?: PropertyType;
 	@Prop() bedroomsCount?: number;
 	@Prop() enSuiteBedroomCount?: number;
+	@Prop() bathrooms?: number;
+	@Prop() registerOfTitleUrl?: string;
 	@Prop() propertyDesc?: string;
 	@Prop({ type: [String], enum: Amenity, default: [] }) amenities?: Amenity[];
 	@Prop() streetAddress?: string;

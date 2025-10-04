@@ -20,7 +20,7 @@ export class ListingsController {
 	@Post("/draft")
 	@LandlordAgency()
 	async createDraft(@CurrentUser() user: User) {
-		return this.listingsService.createDraft(user);
+		return await this.listingsService.createDraft(user);
 	}
 
 	@Patch(":id/createStep1")
@@ -30,7 +30,7 @@ export class ListingsController {
 		@Param("id") listingId: string,
 		@Body() body: Step1ListingDto
 	) {
-		return this.listingsService.updateDraft(listingId, user, body);
+		return await this.listingsService.updateDraft(listingId, user, body);
 	}
 
 	@Patch(":id/createStep2")
@@ -74,9 +74,16 @@ export class ListingsController {
 
 	@Get("/mine/:id")
 	@LandlordAgency()
-	async getListing(@CurrentUser() user: User, @Param("id") listingId: string) {
-		const foundListing =  await this.listingsService.findListingById(listingId);
-		if (foundListing && foundListing.landlord._id.toString() === user._id.toString()) {
+	async getListing(
+		@CurrentUser() user: User,
+		@Param("id") listingId: string
+	) {
+		const foundListing =
+			await this.listingsService.findListingById(listingId);
+		if (
+			foundListing &&
+			foundListing.landlord._id.toString() === user._id.toString()
+		) {
 			return foundListing;
 		} else {
 			return null;
