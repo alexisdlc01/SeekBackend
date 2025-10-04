@@ -60,6 +60,15 @@ export class ListingsService {
 	}
 
 	async findListingById(id: string) {
-		return (await this.listingModel.findById(id)) || null;
+		try {
+			if (!Types.ObjectId.isValid(id)) {
+				return null;
+			}
+			const listing = await this.listingModel.findById(id).exec();
+			return listing || null;
+		} catch (err) {
+			console.error("Error fetching listing:", err.message);
+			return null;
+		}
 	}
 }
