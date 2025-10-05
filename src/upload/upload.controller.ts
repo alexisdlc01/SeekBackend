@@ -1,32 +1,32 @@
 import {
 	Controller,
-	FileTypeValidator,
-	MaxFileSizeValidator,
-	ParseFilePipe,
-	Post,
-	UploadedFile,
-	UseInterceptors
+	Get,
+	Query,
 } from "@nestjs/common";
-import { FileInterceptor } from "@nestjs/platform-express";
 import { UploadService } from "./upload.service";
+import { LandlordAgency } from "../auth/decorators/role-auth.decorator";
 
 @Controller("upload")
 export class UploadController {
 	constructor(private readonly uploadService: UploadService) {}
 
-	@Post("")
-	@UseInterceptors(FileInterceptor("file"))
-	async uploadFile(
-		@UploadedFile(
-			new ParseFilePipe({
-				validators: [
-					new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024 }) // 5MB
-					// new FileTypeValidator({ fileType: "application/pdf" })
-				]
-			})
-		)
-		file: Express.Multer.File
+	@Get("presign")
+	@LandlordAgency()
+	async getPresignedUrl(
+		@Query("filename") filename: string,
+		@Query("fileType") fileType: string,
+		@Query("folder") folder: "public" | "private"
 	) {
-		await this.uploadService.upload(file.originalname, file.buffer);
+		return await this.uploadService.getPresignedUploadUrl(
+			filename,
+			fileType,
+			folder
+		);
+	}
+
+	@Get("access")
+	@LandlordAgency()
+	async download(@Query('key') key: string) {
+		return this.uploadService.getPresignedDownloadUrl(key, 'private');
 	}
 }

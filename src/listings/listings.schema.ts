@@ -24,7 +24,7 @@ export class Listing {
 	@Prop() bedroomsCount?: number;
 	@Prop() enSuiteBedroomCount?: number;
 	@Prop() bathrooms?: number;
-	@Prop() registerOfTitleUrl?: string;
+	@Prop() registerOfTitleKey?: string;
 	@Prop() propertyDesc?: string;
 	@Prop({ type: [String], enum: Amenity, default: [] }) amenities?: Amenity[];
 	@Prop() streetAddress?: string;

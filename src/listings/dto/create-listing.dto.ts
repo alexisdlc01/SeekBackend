@@ -29,7 +29,7 @@ export class CreateListingDto {
 	@IsNumber() securityDeposit: number;
 	@IsDateString() availableFrom: string;
 	@IsDateString() availableUntil: string;
-	@IsString() registerOfTitleUrl: string;
+	@IsString() registerOfTitleKey: string;
 	@IsEnum(FurnishingStatus) furnishingStatus: FurnishingStatus;
 	@IsEnum(EpcRating) epcRating: EpcRating;
 	@IsOptional()
@@ -57,7 +57,7 @@ export class Step1ListingDto {
 	@IsNumber() securityDeposit: number;
 	@IsDateString() availableFrom: string;
 	@IsDateString() availableUntil: string;
-	@IsString() registerOfTitleUrl: string;
+	@IsString() registerOfTitleKey: string;
 }
 
 export class Step2ListingDto {

@@ -13,6 +13,7 @@ import {
 	Superuser
 } from "../auth/decorators/role-auth.decorator";
 
+// TODO: Add guard to make sure it's actually the user's listings.
 @Controller("listings")
 export class ListingsController {
 	constructor(private readonly listingsService: ListingsService) {}
