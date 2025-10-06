@@ -38,12 +38,19 @@ export class UploadService {
 
 		const key = `${folder}/${Date.now()}-${fileName}`;
 
-		const command = new PutObjectCommand({
-			Bucket: bucket,
-			Key: key,
-			ContentType: fileType,
-			ACL: folder === "private" ? "private" : "public-read"
-		});
+		const command =
+			folder === "private"
+				? new PutObjectCommand({
+						Bucket: bucket,
+						Key: key,
+						ContentType: fileType,
+						ACL: "private"
+					})
+				: new PutObjectCommand({
+						Bucket: bucket,
+						Key: key,
+						ContentType: fileType
+					});
 
 		const uploadUrl = await getSignedUrl(this.s3Client, command, {
 			expiresIn: 60 // 1 min
