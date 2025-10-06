@@ -22,6 +22,7 @@ import { UsersService } from "../users/users.service";
 import { GoogleOauthGuard } from "./guards/google-oauth.guard";
 import { ConfigService } from "@nestjs/config";
 import { GoogleUserDto } from "./dto/google-user.dto";
+import { Superuser } from "./decorators/role-auth.decorator";
 
 @Controller("auth")
 export class AuthController {

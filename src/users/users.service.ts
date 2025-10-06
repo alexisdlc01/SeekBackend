@@ -49,6 +49,35 @@ export class UsersService {
 		return user;
 	}
 
+	async setProfilePic(url: string, user: User) {
+
+		const updated = await this.userModel.findByIdAndUpdate(
+			user._id,
+			{ $set: { profilePicUrl: url } },
+			{ new: true, upsert: false }
+		);
+
+		if (!updated) {
+			throw new NotFoundException("User not found.");
+		}
+
+		return updated.toObject() as User;
+	}
+
+	async setUsername(newName: string, user: User) {
+		const updated = await this.userModel.findByIdAndUpdate(
+			user._id,
+			{ $set: { name: newName } },
+			{ new: true, upsert: false }
+		);
+
+		if (!updated) {
+			throw new NotFoundException("User not found.");
+		}
+
+		return updated.toObject() as User;
+	}
+
 	async getAllUsers() {
 		return this.userModel.find({});
 	}
