@@ -45,7 +45,7 @@ export class MailService {
 	async sendContactEmail(name: string, email: string, message: string) {
 		await this.mail.messages.create(this.domain, {
 			from: "Seek <noreply@mail.seekapp.uk>",
-			to: ["kshitijverma197@gmail.com"],
+			to: ["admin@seekapp.uk"],
 			subject: "Message from Seek user",
 			text: `Message from ${name} | ${email}: ${message}`,
 			html: `<p>Message from ${name} | ${email}: ${message}</p>`
