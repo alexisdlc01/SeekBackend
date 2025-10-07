@@ -11,8 +11,6 @@ import { Amenity } from "../enums/amenity.enum";
 import { FurnishingStatus } from "../enums/furnishingStatus.enum";
 import { EpcRating } from "../enums/epcRating.enum";
 
-// TODO: setup AWS images and shit.
-
 export class CreateListingDto {
 	@IsString() propertyTitle: string;
 	@IsNumber() sizeSqMeters: number;
@@ -31,7 +29,7 @@ export class CreateListingDto {
 	@IsDateString() availableUntil: string;
 	@IsString() registerOfTitleKey: string;
 	@IsEnum(FurnishingStatus) furnishingStatus: FurnishingStatus;
-	@IsEnum(EpcRating) epcRating: EpcRating;
+	@IsOptional() @IsEnum(EpcRating) epcRating: EpcRating;
 	@IsOptional()
 	@IsArray()
 	@IsEnum(Amenity, { each: true })
@@ -42,27 +40,27 @@ export class CreateListingDto {
 }
 
 export class Step1ListingDto {
-	@IsString() propertyTitle: string;
-	@IsNumber() sizeSqMeters: number;
-	@IsEnum(PropertyType) propertyType: PropertyType;
-	@IsString() streetAddress: string;
-	@IsString() cityTown: string;
-	@IsString() postcodeZIP: string;
-	@IsString() country: string;
-	@IsNumber() bedroomsCount: number;
-	@IsNumber() enSuiteBedroomCount: number;
-	@IsNumber() bathrooms: number;
-	@IsString() propertyDesc: string;
-	@IsNumber() monthlyRent: number;
-	@IsNumber() securityDeposit: number;
-	@IsDateString() availableFrom: string;
-	@IsDateString() availableUntil: string;
-	@IsString() registerOfTitleKey: string;
+	@IsOptional() @IsString() propertyTitle: string;
+	@IsOptional() @IsNumber() sizeSqMeters: number;
+	@IsOptional() @IsEnum(PropertyType) propertyType: PropertyType;
+	@IsOptional() @IsString() streetAddress: string;
+	@IsOptional() @IsString() cityTown: string;
+	@IsOptional() @IsString() postcodeZIP: string;
+	@IsOptional() @IsString() country: string;
+	@IsOptional() @IsNumber() bedroomsCount: number;
+	@IsOptional() @IsNumber() enSuiteBedroomCount: number;
+	@IsOptional() @IsNumber() bathrooms: number;
+	@IsOptional() @IsString() propertyDesc: string;
+	@IsOptional() @IsNumber() monthlyRent: number;
+	@IsOptional() @IsNumber() securityDeposit: number;
+	@IsOptional() @IsDateString() availableFrom: string;
+	@IsOptional() @IsDateString() availableUntil: string;
+	@IsOptional() @IsString() registerOfTitleKey: string;
 }
 
 export class Step2ListingDto {
-	@IsEnum(FurnishingStatus) furnishingStatus: FurnishingStatus;
-	@IsEnum(EpcRating) epcRating: EpcRating;
+	@IsOptional() @IsEnum(FurnishingStatus) furnishingStatus: FurnishingStatus;
+	@IsOptional() @IsEnum(EpcRating) epcRating: EpcRating;
 	@IsOptional()
 	@IsArray()
 	@IsEnum(Amenity, { each: true })
@@ -70,7 +68,7 @@ export class Step2ListingDto {
 }
 
 export class Step3ListingDto {
-	@IsArray() photos: string[];
+	@IsOptional() @IsArray() photos: string[];
 	@IsOptional() @IsString() videoTourLink?: string;
 	@IsOptional() @IsString() floorPlanImage?: string;
 }
