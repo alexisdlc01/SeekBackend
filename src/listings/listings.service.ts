@@ -45,6 +45,25 @@ export class ListingsService {
 		);
 	}
 
+	async deleteListing(listingId: string, landlord: User) {
+		if (!Types.ObjectId.isValid(listingId)) {
+			throw new Error("Invalid listing ID");
+		}
+
+		const listing = await this.listingModel.findById(listingId);
+		if (!listing) {
+			throw new Error("Listing not found");
+		}
+
+		if (listing.landlord.toString() !== landlord._id.toString()) {
+			throw new Error("Unauthorized: You do not own this listing");
+		}
+
+		await this.listingModel.deleteOne({ _id: listingId });
+		return { message: "Listing successfully deleted" };
+	}
+
+
 	async findByLandlord(id: string) {
 		return await this.listingModel.find({ landlord: id }).exec();
 	}

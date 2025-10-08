@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Patch, Post } from "@nestjs/common";
+import {
+	Body,
+	Controller,
+	Delete,
+	Get,
+	Param,
+	Patch,
+	Post
+} from "@nestjs/common";
 import {
 	CreateListingDto,
 	Step1ListingDto,
@@ -65,6 +73,12 @@ export class ListingsController {
 	) {
 		await this.listingsService.updateDraft(listingId, user, body);
 		return this.listingsService.publishDraft(listingId, user);
+	}
+
+	@Delete(":id")
+	@LandlordAgency()
+	async deleteListing(@CurrentUser() user: User, @Param("id") listingId: string) {
+		return await this.listingsService.deleteListing(listingId, user);
 	}
 
 	@Get("/mine")
