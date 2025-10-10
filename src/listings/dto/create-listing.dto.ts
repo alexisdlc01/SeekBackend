@@ -30,13 +30,14 @@ export class CreateListingDto {
 	@IsString() registerOfTitleKey: string;
 	@IsEnum(FurnishingStatus) furnishingStatus: FurnishingStatus;
 	@IsOptional() @IsEnum(EpcRating) epcRating: EpcRating;
-	@IsOptional()
-	@IsArray()
-	@IsEnum(Amenity, { each: true })
-	amenities: Amenity[];
 	@IsArray() photos: string[];
 	@IsOptional() @IsString() videoTourLink?: string;
 	@IsOptional() @IsString() floorPlanImage?: string;
+
+	@IsOptional()
+	@IsArray()
+	@IsString({ each: true })
+	amenities: string[];
 }
 
 export class Step1ListingDto {
@@ -61,10 +62,11 @@ export class Step1ListingDto {
 export class Step2ListingDto {
 	@IsOptional() @IsEnum(FurnishingStatus) furnishingStatus: FurnishingStatus;
 	@IsOptional() @IsEnum(EpcRating) epcRating: EpcRating;
+
 	@IsOptional()
 	@IsArray()
-	@IsEnum(Amenity, { each: true })
-	amenities: Amenity[];
+	@IsString({ each: true })
+	amenities: string[];
 }
 
 export class Step3ListingDto {

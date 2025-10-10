@@ -26,7 +26,7 @@ export class Listing {
 	@Prop() bathrooms?: number;
 	@Prop() registerOfTitleKey?: string;
 	@Prop() propertyDesc?: string;
-	@Prop({ type: [String], enum: Amenity, default: [] }) amenities?: Amenity[];
+	@Prop({ type: [String], default: [] }) amenities?: string[];
 	@Prop() streetAddress?: string;
 	@Prop() cityTown?: string;
 	@Prop() postcodeZIP?: string;
