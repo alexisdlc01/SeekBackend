@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Post, Put, UseGuards } from "@nestjs/common";
+import {
+	Body,
+	Controller,
+	Get,
+	Param,
+	Post,
+	Put,
+	Query,
+	UseGuards
+} from "@nestjs/common";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UsersService } from "./users.service";
 import { Serialize } from "../interceptors/serialize.interceptor";
@@ -12,6 +21,12 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 @Serialize(UserDto)
 export class UsersController {
 	constructor(private readonly usersService: UsersService) {}
+
+	@Get(":id")
+	@Superuser()
+	async getUser(@Param("id") id: string) {
+		return await this.usersService.getUser({_id: id});
+	}
 
 	@Post()
 	async create(@Body() body: CreateUserDto) {

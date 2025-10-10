@@ -63,6 +63,12 @@ export class ListingsService {
 		return { message: "Listing successfully deleted" };
 	}
 
+	async getAllUnverifiedListings() {
+		return await this.listingModel
+			.find({ isVerified: false, isDraft: false })
+			.sort({ createdAt: -1 })
+			.exec();
+	}
 
 	async findByLandlord(id: string) {
 		return await this.listingModel.find({ landlord: id }).exec();

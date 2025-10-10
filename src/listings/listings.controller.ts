@@ -1,25 +1,9 @@
-import {
-	Body,
-	Controller,
-	Delete,
-	Get,
-	Param,
-	Patch,
-	Post
-} from "@nestjs/common";
-import {
-	CreateListingDto,
-	Step1ListingDto,
-	Step2ListingDto,
-	Step3ListingDto
-} from "./dto/create-listing.dto";
+import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
+import { CreateListingDto, Step1ListingDto, Step2ListingDto, Step3ListingDto } from "./dto/create-listing.dto";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "../users/users.schema";
 import { ListingsService } from "./listings.service";
-import {
-	LandlordAgency,
-	Superuser
-} from "../auth/decorators/role-auth.decorator";
+import { LandlordAgency, Superuser } from "../auth/decorators/role-auth.decorator";
 
 // TODO: Add guard to make sure it's actually the user's listings.
 @Controller("listings")
@@ -103,6 +87,12 @@ export class ListingsController {
 		} else {
 			return null;
 		}
+	}
+
+	@Get("allUnverified")
+	@Superuser()
+	async getAllUnverifiedListings() {
+		return await this.listingsService.getAllUnverifiedListings();
 	}
 
 	@Get("/:id")
