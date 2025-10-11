@@ -22,7 +22,7 @@ import { UsersService } from "../users/users.service";
 import { GoogleOauthGuard } from "./guards/google-oauth.guard";
 import { ConfigService } from "@nestjs/config";
 import { GoogleUserDto } from "./dto/google-user.dto";
-import { Superuser } from "./decorators/role-auth.decorator";
+import { ConfirmPasswordResetDto } from "./dto/confirm-password-reset.dto";
 
 @Controller("auth")
 export class AuthController {
@@ -72,9 +72,7 @@ export class AuthController {
 	}
 
 	@Post("/confirmPasswordReset")
-	async confirmPasswordReset(
-		@Body() body: { userId: string; token: string; newPassword: string }
-	) {
+	async confirmPasswordReset(@Body() body: ConfirmPasswordResetDto) {
 		await this.authService.confirmResetPassword(
 			body.userId,
 			body.token,
