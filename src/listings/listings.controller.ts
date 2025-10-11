@@ -53,7 +53,6 @@ export class ListingsController {
 		@Param("id") listingId: string,
 		@Body() body: Step2ListingDto
 	) {
-		console.log(body);
 		return this.listingsService.updateDraft(listingId, user, body);
 	}
 
@@ -97,20 +96,8 @@ export class ListingsController {
 
 	@Get("/mine/:id")
 	@OwnsListing()
-	async getListing(
-		@CurrentUser() user: User,
-		@Param("id") listingId: string
-	) {
-		const foundListing =
-			await this.listingsService.findListingById(listingId);
-		if (
-			foundListing &&
-			foundListing.landlord._id.toString() === user._id.toString()
-		) {
-			return foundListing;
-		} else {
-			return null;
-		}
+	async getListing(@Param("id") listingId: string) {
+		return this.listingsService.findListingById(listingId);
 	}
 
 	@Get("allUnverified")
