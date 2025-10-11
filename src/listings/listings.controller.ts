@@ -21,8 +21,8 @@ import {
 	Superuser
 } from "../auth/decorators/role-auth.decorator";
 import { MailService } from "../auth/mail.service";
+import { OwnsListing } from "./owns-listing.decorator";
 
-// TODO: Add guard to make sure it's actually the user's listings.
 @Controller("listings")
 export class ListingsController {
 	constructor(
@@ -37,7 +37,7 @@ export class ListingsController {
 	}
 
 	@Patch(":id/createStep1")
-	@LandlordAgency()
+	@OwnsListing()
 	async createStep1(
 		@CurrentUser() user: User,
 		@Param("id") listingId: string,
@@ -47,7 +47,7 @@ export class ListingsController {
 	}
 
 	@Patch(":id/createStep2")
-	@LandlordAgency()
+	@OwnsListing()
 	async createStep2(
 		@CurrentUser() user: User,
 		@Param("id") listingId: string,
@@ -58,7 +58,7 @@ export class ListingsController {
 	}
 
 	@Patch(":id/createStep3")
-	@LandlordAgency()
+	@OwnsListing()
 	async createStep3(
 		@CurrentUser() user: User,
 		@Param("id") listingId: string,
@@ -69,7 +69,7 @@ export class ListingsController {
 	}
 
 	@Post(":id/publish")
-	@LandlordAgency()
+	@OwnsListing()
 	async publish(
 		@CurrentUser() user: User,
 		@Param("id") listingId: string,
@@ -81,7 +81,7 @@ export class ListingsController {
 	}
 
 	@Delete(":id")
-	@LandlordAgency()
+	@OwnsListing()
 	async deleteListing(
 		@CurrentUser() user: User,
 		@Param("id") listingId: string
@@ -96,7 +96,7 @@ export class ListingsController {
 	}
 
 	@Get("/mine/:id")
-	@LandlordAgency()
+	@OwnsListing()
 	async getListing(
 		@CurrentUser() user: User,
 		@Param("id") listingId: string
