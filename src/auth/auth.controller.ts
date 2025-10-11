@@ -66,6 +66,22 @@ export class AuthController {
 		return this.authService.login(user, response, isMobile);
 	}
 
+	@Post("/forgot-password")
+	async forgotPassword(@Body() body: { email: string }) {
+		await this.authService.resetPassword(body.email);
+	}
+
+	@Post("/confirmPasswordReset")
+	async confirmPasswordReset(
+		@Body() body: { userId: string; token: string; newPassword: string }
+	) {
+		await this.authService.confirmResetPassword(
+			body.userId,
+			body.token,
+			body.newPassword
+		);
+	}
+
 	@Get("/google")
 	@UseGuards(GoogleOauthGuard)
 	async googleAuth() {}

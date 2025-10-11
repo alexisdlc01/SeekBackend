@@ -37,6 +37,12 @@ export class User {
 
 	@Prop({ default: false })
 	isGoogle: boolean;
+
+	@Prop()
+	resetPasswordToken?: string;
+
+	@Prop()
+	resetPasswordExpires?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

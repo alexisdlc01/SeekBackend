@@ -7,7 +7,7 @@ const formData = require("form-data");
 
 @Injectable()
 export class MailService {
-	private mail;
+	private mail: any;
 	private readonly domain: string;
 
 	constructor(private readonly configService: ConfigService) {
@@ -42,9 +42,7 @@ export class MailService {
 		});
 	}
 
-	async sendResetPasswordEmail(email: string, token: string) {
-		const link: string = `${this.configService.getOrThrow("FRONTEND_URL")}/reset-password?token=${token}`;
-
+	async sendResetPasswordEmail(email: string, link: string) {
 		await this.mail.messages.create(this.domain, {
 			from: "Seek <noreply@mail.seekapp.uk>",
 			to: [email],

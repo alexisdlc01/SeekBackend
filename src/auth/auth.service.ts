@@ -168,6 +168,66 @@ export class AuthService {
 		return user;
 	}
 
+	async resetPassword(email: string) {
+		const user = await this.usersService.getUser({ email });
+		if (!user) throw new BadRequestException("User not found");
+		if (user.isGoogle)
+			throw new BadRequestException(
+				"This account uses Google login. Please sign in with Google."
+			);
+
+		const rawToken = randomBytes(32).toString("hex");
+		const hashedToken = await hash(rawToken, 10);
+
+		const expires = addMinutes(new Date(), 5);
+
+		await this.usersService.updateUser(
+			{ _id: user._id },
+			{
+				$set: {
+					resetPasswordToken: hashedToken,
+					resetPasswordExpires: expires
+				}
+			}
+		);
+
+		const resetLink = `${this.configService.getOrThrow("FRONTEND_URL")}/confirmResetPassword?token=${rawToken}&id=${user._id}`;
+		await this.mailService.sendResetPasswordEmail(user.email, resetLink);
+
+		return { message: "Password reset link sent." };
+	}
+
+	async confirmResetPassword(
+		userId: string,
+		token: string,
+		newPassword: string
+	) {
+		const user = await this.usersService.getUser({ _id: userId });
+
+		if (!user || !user.resetPasswordToken)
+			throw new BadRequestException("Invalid or expired reset request.");
+		if (user.resetPasswordExpires && user.resetPasswordExpires < new Date())
+			throw new BadRequestException("Invalid reset token");
+
+		const isValid = await compare(token, user.resetPasswordToken);
+		if (!isValid) throw new BadRequestException("Invalid reset token");
+
+		const hashedPassword = await hash(newPassword, 10);
+
+		await this.usersService.updateUser(
+			{ _id: user._id },
+			{
+				$set: { password: hashedPassword },
+				$unset: {
+					resetPasswordToken: 1,
+					resetPasswordExpires: 1
+				}
+			}
+		);
+
+		return { message: "Password successfully reset." };
+	}
+
 	async logout(user: User, response: Response, isMobile: boolean) {
 		await this.usersService.updateUser(
 			{ _id: user._id },
