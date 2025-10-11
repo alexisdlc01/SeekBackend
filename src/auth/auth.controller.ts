@@ -104,6 +104,13 @@ export class AuthController {
 			})) as User;
 		}
 
+		if (!savedUser.isGoogle) {
+			await this.usersService.updateUser(
+				{ email: savedUser.email },
+				{ isGoogle: true }
+			);
+		}
+
 		const isMobile = request.headers.platform === "mobile";
 		await this.authService.login(savedUser, response, isMobile);
 
