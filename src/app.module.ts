@@ -11,7 +11,7 @@ import { ListingsModule } from "./listings/listing.module";
 import { ConversationModule } from "./conversation/conversation.module";
 import { MessageModule } from "./message/message.module";
 import { EventsModule } from "./events/events.module";
-import { ContactModule } from './contact/contact.module';
+import { ContactModule } from "./contact/contact.module";
 import * as morgan from "morgan";
 import Redis from "ioredis";
 

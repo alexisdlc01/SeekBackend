@@ -25,7 +25,7 @@ export class UsersController {
 	@Get(":id")
 	@Superuser()
 	async getUser(@Param("id") id: string) {
-		return await this.usersService.getUser({_id: id});
+		return await this.usersService.getUser({ _id: id });
 	}
 
 	@Post()

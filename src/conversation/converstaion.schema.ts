@@ -33,10 +33,8 @@ export class Conversation {
 
 export const ConversationSchema = SchemaFactory.createForClass(Conversation);
 
-
 ConversationSchema.index({ users: 1 });
 ConversationSchema.index({ createdAt: -1 });
-
 
 ConversationSchema.virtual("messages", {
 	ref: "Message",
@@ -53,12 +51,15 @@ ConversationSchema.virtual("lastMessage", {
 	options: { sort: { createdAt: -1 } }
 });
 
-
-ConversationSchema.pre("deleteOne", { document: true, query: false }, async function (next) {
-	try {
-		await this.model("Message").deleteMany({ conversation: this._id });
-		next();
-	} catch (e) {
-		next(e as any);
+ConversationSchema.pre(
+	"deleteOne",
+	{ document: true, query: false },
+	async function (next) {
+		try {
+			await this.model("Message").deleteMany({ conversation: this._id });
+			next();
+		} catch (e) {
+			next(e as any);
+		}
 	}
-});
+);

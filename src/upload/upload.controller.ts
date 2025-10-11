@@ -1,8 +1,4 @@
-import {
-	Controller,
-	Get,
-	Query,
-} from "@nestjs/common";
+import { Controller, Get, Query } from "@nestjs/common";
 import { UploadService } from "./upload.service";
 import { LandlordAgency } from "../auth/decorators/role-auth.decorator";
 
@@ -26,7 +22,7 @@ export class UploadController {
 
 	@Get("access")
 	@LandlordAgency()
-	async download(@Query('key') key: string) {
-		return this.uploadService.getPresignedDownloadUrl(key, 'private');
+	async download(@Query("key") key: string) {
+		return this.uploadService.getPresignedDownloadUrl(key, "private");
 	}
 }

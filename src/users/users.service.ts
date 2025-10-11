@@ -50,7 +50,6 @@ export class UsersService {
 	}
 
 	async setProfilePic(url: string, user: User) {
-
 		const updated = await this.userModel.findByIdAndUpdate(
 			user._id,
 			{ $set: { profilePicUrl: url } },
