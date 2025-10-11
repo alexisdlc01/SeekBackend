@@ -1,14 +1,34 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
-import { CreateListingDto, Step1ListingDto, Step2ListingDto, Step3ListingDto } from "./dto/create-listing.dto";
+import {
+	Body,
+	Controller,
+	Delete,
+	Get,
+	Param,
+	Patch,
+	Post
+} from "@nestjs/common";
+import {
+	CreateListingDto,
+	Step1ListingDto,
+	Step2ListingDto,
+	Step3ListingDto
+} from "./dto/create-listing.dto";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "../users/users.schema";
 import { ListingsService } from "./listings.service";
-import { LandlordAgency, Superuser } from "../auth/decorators/role-auth.decorator";
+import {
+	LandlordAgency,
+	Superuser
+} from "../auth/decorators/role-auth.decorator";
+import { MailService } from "../auth/mail.service";
 
 // TODO: Add guard to make sure it's actually the user's listings.
 @Controller("listings")
 export class ListingsController {
-	constructor(private readonly listingsService: ListingsService) {}
+	constructor(
+		private readonly listingsService: ListingsService,
+		private readonly mailService: MailService
+	) {}
 
 	@Post("/draft")
 	@LandlordAgency()
@@ -56,12 +76,16 @@ export class ListingsController {
 		@Body() body: CreateListingDto
 	) {
 		await this.listingsService.updateDraft(listingId, user, body);
+		await this.mailService.sendNewListingEmail(user);
 		return this.listingsService.publishDraft(listingId, user);
 	}
 
 	@Delete(":id")
 	@LandlordAgency()
-	async deleteListing(@CurrentUser() user: User, @Param("id") listingId: string) {
+	async deleteListing(
+		@CurrentUser() user: User,
+		@Param("id") listingId: string
+	) {
 		return await this.listingsService.deleteListing(listingId, user);
 	}
 

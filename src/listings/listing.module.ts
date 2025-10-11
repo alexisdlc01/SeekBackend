@@ -5,6 +5,7 @@ import { User, UserSchema } from "../users/users.schema";
 import { ListingsController } from "./listings.controller";
 import { ListingsService } from "./listings.service";
 import { SharedModule } from "../shared/shared.module";
+import { AuthModule } from "../auth/auth.module";
 
 @Module({
 	imports: [
@@ -15,7 +16,8 @@ import { SharedModule } from "../shared/shared.module";
 			},
 			{ name: User.name, schema: UserSchema }
 		]),
-		SharedModule
+		SharedModule,
+		AuthModule
 	],
 	controllers: [ListingsController],
 	providers: [ListingsService]

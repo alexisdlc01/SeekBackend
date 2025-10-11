@@ -1,6 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import Mailgun from "mailgun.js";
+import { Listing } from "../listings/listings.schema";
+import { User } from "../users/users.schema";
 const formData = require("form-data");
 
 @Injectable()
@@ -27,6 +29,16 @@ export class MailService {
 			subject: "Verify your email",
 			text: `Click this link to verify your email: ${link}`,
 			html: `<p>Click <a href="${link}">here</a> to verify your email address.</p>`
+		});
+	}
+
+	async sendNewListingEmail(user: User) {
+		await this.mail.messages.create(this.domain, {
+			from: "Seek <noreply@mail.seekapp.uk>",
+			to: ["admin@seekapp.uk"],
+			subject: "New Listing Request",
+			text: `${user.name} wants to upload a new listing.`,
+			html: `<p>${user.name} wants to upload a new listing.</p>`
 		});
 	}
 
