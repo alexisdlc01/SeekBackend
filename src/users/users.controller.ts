@@ -16,6 +16,8 @@ import { Superuser } from "../auth/decorators/role-auth.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "./users.schema";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { SetProfilePicDto } from "./dto/set-profile-pic.dto";
+import { SetUsernameDto } from "./dto/set-username.dto";
 
 @Controller("users")
 @Serialize(UserDto)
@@ -36,7 +38,7 @@ export class UsersController {
 	@Put("setProfilePic")
 	@UseGuards(JwtAuthGuard)
 	async setProfilePic(
-		@Body() body: { url: string },
+		@Body() body: SetProfilePicDto,
 		@CurrentUser() user: User
 	) {
 		return await this.usersService.setProfilePic(body.url, user);
@@ -44,10 +46,7 @@ export class UsersController {
 
 	@Put("setUsername")
 	@UseGuards(JwtAuthGuard)
-	async setUsername(
-		@Body() body: { name: string },
-		@CurrentUser() user: User
-	) {
+	async setUsername(@Body() body: SetUsernameDto, @CurrentUser() user: User) {
 		return await this.usersService.setUsername(body.name, user);
 	}
 
