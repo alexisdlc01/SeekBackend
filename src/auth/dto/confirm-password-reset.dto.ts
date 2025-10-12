@@ -1,4 +1,4 @@
-import { IsString, MinLength } from "class-validator";
+import { IsString, IsStrongPassword } from "class-validator";
 
 export class ConfirmPasswordResetDto {
 	@IsString()
@@ -7,7 +7,6 @@ export class ConfirmPasswordResetDto {
 	@IsString()
 	token: string;
 
-	@IsString()
-	@MinLength(8)
-	newPassword: string;
+	@IsStrongPassword()
+	password: string;
 }
