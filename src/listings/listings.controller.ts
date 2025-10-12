@@ -21,7 +21,7 @@ import {
 	Superuser
 } from "../auth/decorators/role-auth.decorator";
 import { MailService } from "../auth/mail.service";
-import { OwnsListing } from "./owns-listing.decorator";
+import { OwnsListing } from "./decorators/owns-listing.decorator";
 
 @Controller("listings")
 export class ListingsController {
