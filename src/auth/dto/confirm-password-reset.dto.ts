@@ -8,5 +8,5 @@ export class ConfirmPasswordResetDto {
 	token: string;
 
 	@IsStrongPassword()
-	password: string;
+	newPassword: string;
 }
