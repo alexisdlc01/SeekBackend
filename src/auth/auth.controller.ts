@@ -23,6 +23,7 @@ import { GoogleOauthGuard } from "./guards/google-oauth.guard";
 import { ConfigService } from "@nestjs/config";
 import { GoogleUserDto } from "./dto/google-user.dto";
 import { ConfirmPasswordResetDto } from "./dto/confirm-password-reset.dto";
+import { ForgotPasswordDto } from "./dto/forgot-password.dto";
 
 @Controller("auth")
 export class AuthController {
@@ -67,7 +68,7 @@ export class AuthController {
 	}
 
 	@Post("/forgot-password")
-	async forgotPassword(@Body() body: { email: string }) {
+	async forgotPassword(@Body() body: ForgotPasswordDto) {
 		await this.authService.resetPassword(body.email);
 	}
 
