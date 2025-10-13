@@ -1,7 +1,6 @@
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { SchemaTypes, Types } from "mongoose";
 import { PropertyType } from "./enums/propertyType.enum";
-import { Amenity } from "./enums/amenity.enum";
 import { FurnishingStatus } from "./enums/furnishingStatus.enum";
 import { EpcRating } from "./enums/epcRating.enum";
 
