@@ -24,7 +24,9 @@ import { ConfigService } from "@nestjs/config";
 import { GoogleUserDto } from "./dto/google-user.dto";
 import { ConfirmPasswordResetDto } from "./dto/confirm-password-reset.dto";
 import { ForgotPasswordDto } from "./dto/forgot-password.dto";
+import { ApiBody, ApiTags } from "@nestjs/swagger";
 
+@ApiTags('Auth')
 @Controller("auth")
 export class AuthController {
 	constructor(
@@ -73,6 +75,7 @@ export class AuthController {
 	}
 
 	@Post("/confirmPasswordReset")
+	@ApiBody({ type: ConfirmPasswordResetDto })
 	async confirmPasswordReset(@Body() body: ConfirmPasswordResetDto) {
 		await this.authService.confirmResetPassword(
 			body.userId,

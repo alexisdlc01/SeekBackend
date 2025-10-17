@@ -3,6 +3,7 @@ import { AppModule } from "./app.module";
 import { ValidationPipe } from "@nestjs/common";
 import * as cookieParser from "cookie-parser";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
+import 'reflect-metadata';
 
 async function bootstrap() {
 	const app = await NestFactory.create(AppModule);
@@ -41,8 +42,8 @@ async function bootstrap() {
 					methodAcc[method] = {
 						...details,
 						security: [
-							{ access_token: [] }, // Cookie auth
-							{ "mobile-token": [] } // Bearer auth
+							{ access_token: [] },
+							{ "mobile-token": [] }
 						]
 					};
 					return methodAcc;
