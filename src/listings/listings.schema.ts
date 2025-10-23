@@ -4,7 +4,7 @@ import { PropertyType } from "./enums/propertyType.enum";
 import { FurnishingStatus } from "./enums/furnishingStatus.enum";
 import { EpcRating } from "./enums/epcRating.enum";
 
-@Schema()
+@Schema({ timestamps: true })
 export class Listing {
 	@Prop({ type: SchemaTypes.ObjectId, auto: true })
 	_id: Types.ObjectId;
@@ -47,3 +47,11 @@ export class Listing {
 }
 
 export const ListingSchema = SchemaFactory.createForClass(Listing);
+
+ListingSchema.index(
+	{ createdAt: 1 },
+	{
+		expireAfterSeconds: 60 * 60 * 24 * 7, // 7 days
+		partialFilterExpression: { isDraft: true }
+	}
+);

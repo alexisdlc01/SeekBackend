@@ -19,7 +19,7 @@ export class ListingsService {
 			landlord: new Types.ObjectId(user._id),
 			isDraft: true
 		});
-		this.listingsGateway.emitListingUpdated(newListing);
+		this.listingsGateway.emitListingCreated(newListing);
 		return newListing._id.toString();
 	}
 

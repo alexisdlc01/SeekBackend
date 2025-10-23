@@ -19,4 +19,8 @@ export class ListingsGateway {
 	emitListingDeleted(listingId: string) {
 		this.server.emit("listingDeleted", listingId);
 	}
+
+	emitListingCreated(listing: Listing) {
+		this.server.emit("listingCreated", listing);
+	}
 }

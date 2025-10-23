@@ -26,7 +26,7 @@ import { ConfirmPasswordResetDto } from "./dto/confirm-password-reset.dto";
 import { ForgotPasswordDto } from "./dto/forgot-password.dto";
 import { ApiBody, ApiTags } from "@nestjs/swagger";
 
-@ApiTags('Auth')
+@ApiTags("Auth")
 @Controller("auth")
 export class AuthController {
 	constructor(
