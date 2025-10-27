@@ -51,7 +51,7 @@ export const ListingSchema = SchemaFactory.createForClass(Listing);
 ListingSchema.index(
 	{ createdAt: 1 },
 	{
-		expireAfterSeconds: 60 * 60 * 24 * 7, // 7 days
+		expireAfterSeconds: 10,// 60 * 60 * 24 * 7, // 7 days
 		partialFilterExpression: { isDraft: true }
 	}
 );

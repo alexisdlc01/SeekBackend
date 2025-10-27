@@ -7,6 +7,7 @@ import { ListingsService } from "./listings.service";
 import { SharedModule } from "../shared/shared.module";
 import { AuthModule } from "../auth/auth.module";
 import { ListingsGateway } from "./listings.gateway";
+import { ListingsChangeListenerService } from "./listings-change-listener.service";
 
 @Module({
 	imports: [
@@ -21,6 +22,6 @@ import { ListingsGateway } from "./listings.gateway";
 		AuthModule
 	],
 	controllers: [ListingsController],
-	providers: [ListingsService, ListingsGateway]
+	providers: [ListingsService, ListingsGateway, ListingsChangeListenerService]
 })
 export class ListingsModule {}
