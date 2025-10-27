@@ -1,8 +1,10 @@
 import { WebSocketGateway, WebSocketServer } from "@nestjs/websockets";
 import { Server } from "socket.io";
 import { Listing } from "./listings.schema";
+import { ServerToClientEvents } from "./types/listings";
 
 @WebSocketGateway({
+	namespace: "listings",
 	cors: {
 		origin: "http://localhost:5173",
 		credentials: true
@@ -10,7 +12,7 @@ import { Listing } from "./listings.schema";
 })
 export class ListingsGateway {
 	@WebSocketServer()
-	server: Server;
+	server: Server<any, ServerToClientEvents>;
 
 	emitListingUpdated(listing: Listing) {
 		this.server.emit("listingUpdated", listing);
