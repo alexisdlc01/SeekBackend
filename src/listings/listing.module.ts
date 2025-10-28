@@ -7,6 +7,8 @@ import { ListingsService } from "./listings.service";
 import { SharedModule } from "../shared/shared.module";
 import { AuthModule } from "../auth/auth.module";
 import { ListingsGateway } from "./listings.gateway";
+import { UsersService } from "../users/users.service";
+import { UsersModule } from "../users/users.module";
 
 @Module({
 	imports: [
@@ -18,7 +20,8 @@ import { ListingsGateway } from "./listings.gateway";
 			{ name: User.name, schema: UserSchema }
 		]),
 		SharedModule,
-		AuthModule
+		AuthModule,
+		UsersModule
 	],
 	controllers: [ListingsController],
 	providers: [ListingsService, ListingsGateway]

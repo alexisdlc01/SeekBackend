@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, forwardRef, Inject } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Listing } from "./listings.schema";
 import { Model, Types } from "mongoose";
@@ -11,6 +11,7 @@ export class ListingsService {
 	constructor(
 		@InjectModel(Listing.name)
 		private readonly listingModel: Model<Listing>,
+		@Inject(forwardRef(() => ListingsGateway))
 		private readonly listingsGateway: ListingsGateway
 	) {}
 
