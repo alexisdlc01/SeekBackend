@@ -11,7 +11,6 @@ export class ListingsService {
 	constructor(
 		@InjectModel(Listing.name)
 		private readonly listingModel: Model<Listing>,
-		@Inject(forwardRef(() => ListingsGateway))
 		private readonly listingsGateway: ListingsGateway
 	) {}
 
