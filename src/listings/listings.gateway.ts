@@ -25,7 +25,7 @@ export class ListingsGateway implements OnGatewayInit {
 
 	constructor(private readonly usersService: UsersService) {}
 
-	afterInit(server: Server): any {
+	afterInit(server: Server) {
 		server.use(SocketAuthMiddleware(this.usersService));
 	}
 
