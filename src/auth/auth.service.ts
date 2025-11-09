@@ -14,6 +14,7 @@ import { CreateUserDto } from "../users/dto/create-user.dto";
 import { randomBytes } from "crypto";
 import { addMinutes } from "date-fns";
 import { MailService } from "./mail.service";
+import { Role } from "./role.enum";
 
 @Injectable()
 export class AuthService {
@@ -25,7 +26,7 @@ export class AuthService {
 	) {}
 
 	async signup(body: CreateUserDto) {
-		if (body.role === "STUDENT" || body.role === "LANDLORD_AGENCY") {
+		if (body.role === Role.STUDENT || body.role === Role.LANDLORD_AGENCY) {
 			const token = randomBytes(32).toString("hex");
 			const expires = addMinutes(new Date(), 60);
 
