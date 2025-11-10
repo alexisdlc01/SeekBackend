@@ -16,7 +16,7 @@ export class UserDto {
 	@Expose()
 	email: string;
 
-	@ApiProperty()
+	@ApiProperty({ enum: Role })
 	@Expose()
 	role: Role;
 
