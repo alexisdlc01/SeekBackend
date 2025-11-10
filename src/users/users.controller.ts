@@ -24,22 +24,22 @@ import { ErrorDto } from "../dto/errorDto.dto";
 @Controller("users")
 @Serialize(UserDto)
 export class UsersController {
-	constructor(private readonly usersService: UsersService) {}
+	constructor(private readonly usersService: UsersService) { }
 
 	@Get(":id")
+	@Superuser()
 	@ApiResponse({
 		status: 200,
 		type: UserDto
 	})
 	@ApiResponse({
 		status: 401,
-		type: UserDto
+		type: ErrorDto
 	})
 	@ApiResponse({
-		status: 403,
-		type: UserDto
+		status: 404,
+		type: ErrorDto
 	})
-	@Superuser()
 	async getUser(@Param("id") id: string) {
 		return await this.usersService.getUser({ _id: id });
 	}
@@ -50,17 +50,33 @@ export class UsersController {
 		status: 204,
 		type: UserDto
 	})
+	@ApiResponse({
+		status: 400,
+		type: ErrorDto
+	})
 	async create(@Body() body: CreateUserDto) {
 		await this.usersService.create(body);
 	}
 
 	@Put("setProfilePic")
+	@UseGuards(JwtAuthGuard)
 	@ApiBody({ type: SetProfilePicDto })
 	@ApiResponse({
 		status: 201,
 		type: UserDto
 	})
-	@UseGuards(JwtAuthGuard)
+	@ApiResponse({
+		status: 401,
+		type: ErrorDto
+	})
+	@ApiResponse({
+		status: 400,
+		type: ErrorDto
+	})
+	@ApiResponse({
+		status: 404,
+		type: ErrorDto
+	})
 	async setProfilePic(
 		@Body() body: SetProfilePicDto,
 		@CurrentUser() user: User
@@ -69,30 +85,38 @@ export class UsersController {
 	}
 
 	@Put("setUsername")
+	@UseGuards(JwtAuthGuard)
 	@ApiBody({ type: SetUsernameDto })
 	@ApiResponse({
 		status: 201,
 		type: UserDto
 	})
-	@UseGuards(JwtAuthGuard)
-	async setUsername(@Body() body: SetUsernameDto, @CurrentUser() user: User) {
-		return await this.usersService.setUsername(body.name, user);
-	}
-
-	@Get()
 	@ApiResponse({
-		status: 200,
-		type: UserDto
+		status: 400,
+		type: ErrorDto
 	})
 	@ApiResponse({
 		status: 401,
 		type: ErrorDto
 	})
 	@ApiResponse({
-		status: 403,
+		status: 404,
 		type: ErrorDto
 	})
+	async setUsername(@Body() body: SetUsernameDto, @CurrentUser() user: User) {
+		return await this.usersService.setUsername(body.name, user);
+	}
+
+	@Get()
 	@Superuser()
+	@ApiResponse({
+		status: 200,
+		type: Array<UserDto>
+	})
+	@ApiResponse({
+		status: 401,
+		type: ErrorDto
+	})
 	async getAllUsers() {
 		return this.usersService.getAllUsers();
 	}

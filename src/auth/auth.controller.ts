@@ -2,6 +2,7 @@ import {
 	Body,
 	Controller,
 	Get,
+	NotFoundException,
 	Post,
 	Req,
 	Res,
@@ -24,7 +25,8 @@ import { ConfigService } from "@nestjs/config";
 import { GoogleUserDto } from "./dto/google-user.dto";
 import { ConfirmPasswordResetDto } from "./dto/confirm-password-reset.dto";
 import { ForgotPasswordDto } from "./dto/forgot-password.dto";
-import { ApiBody, ApiTags } from "@nestjs/swagger";
+import { ApiBody, ApiResponse, ApiTags } from "@nestjs/swagger";
+import { ErrorDto } from "src/dto/errorDto.dto";
 
 @ApiTags("Auth")
 @Controller("auth")
@@ -33,31 +35,76 @@ export class AuthController {
 		private readonly authService: AuthService,
 		private readonly usersService: UsersService,
 		private readonly configService: ConfigService
-	) {}
+	) { }
 
 	@Post("/login")
 	@UseGuards(LocalAuthGuard)
+	@ApiResponse({
+		status: 201,
+		schema: {
+			type: "object",
+			properties: {
+				access_token: {
+					type: "string"
+				},
+				refresh_token: {
+					type: "string"
+				}
+			}
+		}
+	})
+	@ApiResponse({
+		status: 401,
+		type: ErrorDto
+	})
 	async login(
 		@CurrentUser() user: User,
 		@Req() request: Request,
 		@Res({ passthrough: true }) response: Response
 	) {
-		switch (request.headers.platform) {
-			case "mobile":
-				return await this.authService.login(user, response, true);
-			default:
-				return await this.authService.login(user, response, false);
-		}
+		const isMobile = request.headers.platform === "mobile";
+		return await this.authService.login(user, response, isMobile);
 	}
 
 	@Post("/signup")
 	@ApiBody({ type: CreateUserDto })
+	@ApiResponse({ status: 201 })
+	@ApiResponse({
+		status: 400,
+		type: ErrorDto
+	})
+	@ApiResponse({
+		status: 409,
+		type: ErrorDto
+	})
 	async signup(@Body() body: CreateUserDto) {
 		await this.authService.signup(body);
 	}
 
 	@Post("/verify-email")
 	@ApiBody({ type: VerifyEmailDto })
+	@ApiResponse({
+		status: 201,
+		schema: {
+			type: "object",
+			properties: {
+				access_token: {
+					type: "string"
+				},
+				refresh_token: {
+					type: "string"
+				}
+			}
+		}
+	})
+	@ApiResponse({
+		status: 400,
+		type: ErrorDto
+	})
+	@ApiResponse({
+		status: 404,
+		type: ErrorDto
+	})
 	async verifyEmail(
 		@Body() body: VerifyEmailDto,
 		@Req() request: Request,
@@ -65,7 +112,11 @@ export class AuthController {
 	) {
 		let user = (await this.usersService.getUser({
 			_id: body.userId
-		})) as User;
+		})) as User | null;
+		if (!user) {
+			throw new NotFoundException("User not found");
+		}
+
 		user = await this.authService.verifyEmail(user, body.token);
 		const isMobile = request.headers.platform === "mobile";
 		return this.authService.login(user, response, isMobile);
@@ -73,12 +124,30 @@ export class AuthController {
 
 	@Post("/forgot-password")
 	@ApiBody({ type: ForgotPasswordDto })
+	@ApiResponse({ status: 201 })
+	@ApiResponse({
+		status: 400,
+		type: ErrorDto
+	})
+	@ApiResponse({
+		status: 404,
+		type: ErrorDto
+	})
 	async forgotPassword(@Body() body: ForgotPasswordDto) {
 		await this.authService.resetPassword(body.email);
 	}
 
 	@Post("/confirmPasswordReset")
 	@ApiBody({ type: ConfirmPasswordResetDto })
+	@ApiResponse({ status: 201 })
+	@ApiResponse({
+		status: 400,
+		type: ErrorDto
+	})
+	@ApiResponse({
+		status: 404,
+		type: ErrorDto
+	})
 	async confirmPasswordReset(@Body() body: ConfirmPasswordResetDto) {
 		await this.authService.confirmResetPassword(
 			body.userId,
@@ -89,10 +158,20 @@ export class AuthController {
 
 	@Get("/google")
 	@UseGuards(GoogleOauthGuard)
-	async googleAuth() {}
+	@ApiResponse({ status: 200 })
+	@ApiResponse({
+		status: 401,
+		type: ErrorDto
+	})
+	async googleAuth() { }
 
 	@Get("/google/callback")
 	@UseGuards(GoogleOauthGuard)
+	@ApiResponse({ status: 200 })
+	@ApiResponse({
+		status: 401,
+		type: ErrorDto
+	})
 	async googleAuthCallback(
 		@Req() request: Request,
 		@Res({ passthrough: true }) response: Response
@@ -128,12 +207,28 @@ export class AuthController {
 	@Get("/currentUser")
 	@UseGuards(JwtAuthGuard)
 	@Serialize(UserDto)
+	@ApiResponse({
+		status: 200,
+		type: UserDto
+	})
+	@ApiResponse({
+		status: 401,
+		type: ErrorDto
+	})
 	async currentUser(@CurrentUser() user: User) {
 		return user;
 	}
 
 	@Post("/refresh")
 	@UseGuards(JwtRefreshGuard)
+	@ApiResponse({
+		status: 201,
+		type: UserDto
+	})
+	@ApiResponse({
+		status: 401,
+		type: ErrorDto
+	})
 	async refreshToken(
 		@CurrentUser() user: User,
 		@Req() request: Request,
@@ -145,6 +240,15 @@ export class AuthController {
 
 	@Post("logout")
 	@UseGuards(JwtAuthGuard)
+	@ApiResponse({ status: 201 })
+	@ApiResponse({
+		status: 401,
+		type: ErrorDto
+	})
+	@ApiResponse({
+		status: 404,
+		type: ErrorDto
+	})
 	async logout(
 		@CurrentUser() user: User,
 		@Req() request: Request,

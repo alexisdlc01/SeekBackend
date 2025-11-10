@@ -1,6 +1,8 @@
 import {
 	BadRequestException,
 	Injectable,
+	InternalServerErrorException,
+	NotFoundException,
 	UnauthorizedException
 } from "@nestjs/common";
 import { UsersService } from "../users/users.service";
@@ -171,7 +173,7 @@ export class AuthService {
 
 	async resetPassword(email: string) {
 		const user = await this.usersService.getUser({ email });
-		if (!user) throw new BadRequestException("User not found");
+		if (!user) throw new NotFoundException("User not found");
 		if (user.isGoogle)
 			throw new BadRequestException(
 				"This account uses Google login. Please sign in with Google."
@@ -205,8 +207,10 @@ export class AuthService {
 	) {
 		const user = await this.usersService.getUser({ _id: userId });
 
-		if (!user || !user.resetPasswordToken)
-			throw new BadRequestException("Invalid or expired reset request.");
+		if (!user)
+			throw new NotFoundException("No user found with this id");
+		if (!user.resetPasswordToken)
+			throw new BadRequestException("Invalid or expired reset request");
 		if (user.resetPasswordExpires && user.resetPasswordExpires < new Date())
 			throw new BadRequestException("Invalid reset token");
 
@@ -230,10 +234,13 @@ export class AuthService {
 	}
 
 	async logout(user: User, response: Response, isMobile: boolean) {
-		await this.usersService.updateUser(
+		const update = await this.usersService.updateUser(
 			{ _id: user._id },
 			{ $unset: { refreshToken: 1 } }
 		);
+		if (!update) {
+			throw new InternalServerErrorException("user not found post auth.");
+		}
 
 		if (!isMobile) {
 			response.clearCookie("Authentication", {
