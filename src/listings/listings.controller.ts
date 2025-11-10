@@ -22,6 +22,7 @@ import {
 } from "../auth/decorators/role-auth.decorator";
 import { MailService } from "../auth/mail.service";
 import { OwnsListing } from "./decorators/owns-listing.decorator";
+import { ApiBody } from "@nestjs/swagger";
 
 @Controller("listings")
 export class ListingsController {
@@ -38,6 +39,7 @@ export class ListingsController {
 
 	@Patch(":id/createStep1")
 	@OwnsListing()
+	@ApiBody({ type: CreateListingDto })
 	async createStep1(
 		@CurrentUser() user: User,
 		@Param("id") listingId: string,
@@ -48,6 +50,7 @@ export class ListingsController {
 
 	@Patch(":id/createStep2")
 	@OwnsListing()
+	@ApiBody({ type: Step2ListingDto })
 	async createStep2(
 		@CurrentUser() user: User,
 		@Param("id") listingId: string,
@@ -58,6 +61,7 @@ export class ListingsController {
 
 	@Patch(":id/createStep3")
 	@OwnsListing()
+	@ApiBody({ type: Step3ListingDto })
 	async createStep3(
 		@CurrentUser() user: User,
 		@Param("id") listingId: string,
@@ -69,6 +73,7 @@ export class ListingsController {
 
 	@Post(":id/publish")
 	@OwnsListing()
+	@ApiBody({ type: CreateListingDto })
 	async publish(
 		@CurrentUser() user: User,
 		@Param("id") listingId: string,
