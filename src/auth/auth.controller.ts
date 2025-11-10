@@ -51,11 +51,13 @@ export class AuthController {
 	}
 
 	@Post("/signup")
+	@ApiBody({ type: CreateUserDto })
 	async signup(@Body() body: CreateUserDto) {
 		await this.authService.signup(body);
 	}
 
 	@Post("/verify-email")
+	@ApiBody({ type: VerifyEmailDto })
 	async verifyEmail(
 		@Body() body: VerifyEmailDto,
 		@Req() request: Request,
@@ -70,6 +72,7 @@ export class AuthController {
 	}
 
 	@Post("/forgot-password")
+	@ApiBody({ type: ForgotPasswordDto })
 	async forgotPassword(@Body() body: ForgotPasswordDto) {
 		await this.authService.resetPassword(body.email);
 	}

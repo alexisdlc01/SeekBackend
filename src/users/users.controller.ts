@@ -18,6 +18,7 @@ import { User } from "./users.schema";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { SetProfilePicDto } from "./dto/set-profile-pic.dto";
 import { SetUsernameDto } from "./dto/set-username.dto";
+import { ApiBody } from "@nestjs/swagger";
 
 @Controller("users")
 @Serialize(UserDto)
@@ -31,11 +32,13 @@ export class UsersController {
 	}
 
 	@Post()
+	@ApiBody({ type: CreateUserDto })
 	async create(@Body() body: CreateUserDto) {
 		await this.usersService.create(body);
 	}
 
 	@Put("setProfilePic")
+	@ApiBody({ type: SetProfilePicDto })
 	@UseGuards(JwtAuthGuard)
 	async setProfilePic(
 		@Body() body: SetProfilePicDto,
@@ -45,6 +48,7 @@ export class UsersController {
 	}
 
 	@Put("setUsername")
+	@ApiBody({ type: SetUsernameDto })
 	@UseGuards(JwtAuthGuard)
 	async setUsername(@Body() body: SetUsernameDto, @CurrentUser() user: User) {
 		return await this.usersService.setUsername(body.name, user);
