@@ -1,10 +1,11 @@
-import { Injectable, forwardRef, Inject } from "@nestjs/common";
+import { Injectable, forwardRef, Inject, BadRequestException, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Listing } from "./listings.schema";
 import { Model, Types } from "mongoose";
 import { CreateListingDto } from "./dto/create-listing.dto";
 import { User } from "../users/users.schema";
 import { ListingsGateway } from "./listings.gateway";
+import { InvalidRequest } from "@aws-sdk/client-s3";
 
 @Injectable()
 export class ListingsService {
@@ -27,7 +28,7 @@ export class ListingsService {
 		listingId: string,
 		landlord: User,
 		data: Partial<CreateListingDto>
-	): Promise<Listing | null> {
+	): Promise<Listing> {
 		const listing = await this.listingModel.findOneAndUpdate(
 			{
 				_id: new Types.ObjectId(listingId),
@@ -39,14 +40,17 @@ export class ListingsService {
 		if (listing) {
 			this.listingsGateway.emitListingUpdated(listing);
 		}
+		if (!listing) {
+			throw new NotFoundException("Listing not found");
+		}
 		return listing;
 	}
 
 	async publishDraft(
 		listingId: string,
 		landlord: User
-	): Promise<Listing | null> {
-		return this.listingModel.findOneAndUpdate(
+	): Promise<Listing> {
+		const listing = await this.listingModel.findOneAndUpdate(
 			{
 				_id: new Types.ObjectId(listingId),
 				landlord: new Types.ObjectId(landlord._id)
@@ -54,6 +58,10 @@ export class ListingsService {
 			{ $set: { isDraft: false, lastUpdated: new Date() } },
 			{ new: true }
 		);
+		if (!listing) {
+			throw new NotFoundException("Listing not found");
+		}
+		return listing;
 	}
 
 	async deleteListing(
@@ -61,16 +69,16 @@ export class ListingsService {
 		landlord: User
 	): Promise<{ message: string }> {
 		if (!Types.ObjectId.isValid(listingId)) {
-			throw new Error("Invalid listing ID");
+			throw new BadRequestException("Invalid listing ID");
 		}
 
 		const listing = await this.listingModel.findById(listingId);
 		if (!listing) {
-			throw new Error("Listing not found");
+			throw new NotFoundException("Listing not found");
 		}
 
 		if (listing.landlord.toString() !== landlord._id.toString()) {
-			throw new Error("Unauthorized: You do not own this listing");
+			throw new UnauthorizedException("Unauthorized: You do not own this listing");
 		}
 
 		await this.listingModel.deleteOne({ _id: listingId });
@@ -78,37 +86,39 @@ export class ListingsService {
 		return { message: "Listing successfully deleted" };
 	}
 
-	async getAllUnverifiedListings(): Promise<Listing[] | null> {
+	async getAllUnverifiedListings(): Promise<Listing[]> {
 		return await this.listingModel
 			.find({ isVerified: false, isDraft: false })
 			.sort({ createdAt: -1 })
-			.exec();
+			.exec() ?? [];
 	}
 
-	async findByLandlord(id: string): Promise<Listing[] | null> {
-		return await this.listingModel.find({ landlord: id }).exec();
+	async findByLandlord(id: string): Promise<Listing[]> {
+		return await this.listingModel.find({ landlord: id }).exec() ?? [];
 	}
 
-	async verifyListing(id: string): Promise<Listing | null> {
+	async verifyListing(id: string): Promise<Listing> {
 		if (!Types.ObjectId.isValid(id)) {
-			throw new Error("Invalid listing ID");
+			throw new BadRequestException("Invalid listing ID");
 		}
 
-		return await this.listingModel
+		const listing = await this.listingModel
 			.findByIdAndUpdate(id, { isVerified: true }, { new: true })
 			.exec();
+		if (!listing) {
+			throw new NotFoundException("Listing not found");
+		}
+		return listing;
 	}
 
-	async findListingById(id: string): Promise<Listing | null> {
-		try {
-			if (!Types.ObjectId.isValid(id)) {
-				return null;
-			}
-			const listing = await this.listingModel.findById(id).exec();
-			return listing || null;
-		} catch (err) {
-			console.error("Error fetching listing:", err.message);
-			return null;
+	async findListingById(id: string): Promise<Listing> {
+		if (!Types.ObjectId.isValid(id)) {
+			throw new BadRequestException("Invalid listing ID");
 		}
+		const listing = await this.listingModel.findById(id).exec();
+		if (!listing) {
+			throw new NotFoundException("Listing not found");
+		}
+		return listing;
 	}
 }

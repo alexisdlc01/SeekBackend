@@ -21,7 +21,7 @@ export class CreateListingDto {
 	@IsNumber()
 	sizeSqMeters: number;
 
-	@ApiProperty()
+	@ApiProperty({ enum: PropertyType })
 	@IsEnum(PropertyType)
 	propertyType: PropertyType;
 
@@ -77,11 +77,11 @@ export class CreateListingDto {
 	@IsString()
 	registerOfTitleKey: string;
 
-	@ApiProperty()
+	@ApiProperty({ enum: FurnishingStatus })
 	@IsEnum(FurnishingStatus)
 	furnishingStatus: FurnishingStatus;
 
-	@ApiProperty()
+	@ApiProperty({ enum: EpcRating })
 	@IsOptional()
 	@IsEnum(EpcRating) epcRating: EpcRating;
 
