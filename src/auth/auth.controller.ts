@@ -25,8 +25,9 @@ import { ConfigService } from "@nestjs/config";
 import { GoogleUserDto } from "./dto/google-user.dto";
 import { ConfirmPasswordResetDto } from "./dto/confirm-password-reset.dto";
 import { ForgotPasswordDto } from "./dto/forgot-password.dto";
-import { ApiBody, ApiResponse, ApiTags } from "@nestjs/swagger";
+import { ApiBody, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { ErrorDto } from "src/dto/errorDto.dto";
+import LoginDto from "./dto/login.dto";
 
 @ApiTags("Auth")
 @Controller("auth")
@@ -39,6 +40,7 @@ export class AuthController {
 
 	@Post("/login")
 	@UseGuards(LocalAuthGuard)
+	@ApiBody({ type: LoginDto })
 	@ApiResponse({
 		status: 201,
 		schema: {
