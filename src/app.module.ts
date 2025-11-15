@@ -12,6 +12,7 @@ import { ConversationModule } from "./conversation/conversation.module";
 import { MessageModule } from "./message/message.module";
 import { EventsModule } from "./events/events.module";
 import { ContactModule } from "./contact/contact.module";
+import { ApplicationModule } from './application/application.module';
 import * as morgan from "morgan";
 import Redis from "ioredis";
 
@@ -32,7 +33,8 @@ import Redis from "ioredis";
 		ConversationModule,
 		MessageModule,
 		EventsModule,
-		ContactModule
+		ContactModule,
+		ApplicationModule
 	],
 	controllers: [AppController],
 	providers: [
