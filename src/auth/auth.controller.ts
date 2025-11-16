@@ -2,6 +2,7 @@ import {
 	Body,
 	Controller,
 	Get,
+	Inject,
 	NotFoundException,
 	Post,
 	Req,
@@ -25,9 +26,20 @@ import { ConfigService } from "@nestjs/config";
 import { GoogleUserDto } from "./dto/google-user.dto";
 import { ConfirmPasswordResetDto } from "./dto/confirm-password-reset.dto";
 import { ForgotPasswordDto } from "./dto/forgot-password.dto";
-import { ApiBody, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
-import { ErrorDto } from "src/dto/errorDto.dto";
-import LoginDto from "./dto/login.dto";
+import { ApiTags } from "@nestjs/swagger";
+import Redis from "ioredis";
+import {
+	ApiConfirmPasswordDocs,
+	ApiCurrentUserDocs,
+	ApiForgotPasswordDocs,
+	ApiGoogleCallbackDocs,
+	ApiGoogleDocs,
+	ApiLoginDocs,
+	ApiLogoutDocs,
+	ApiRefreshDocs,
+	ApiSignupDocs,
+	ApiVerifyEmailDocs
+} from "./swagger/auth-swagger.decorator";
 
 @ApiTags("Auth")
 @Controller("auth")
@@ -35,30 +47,13 @@ export class AuthController {
 	constructor(
 		private readonly authService: AuthService,
 		private readonly usersService: UsersService,
-		private readonly configService: ConfigService
-	) { }
+		private readonly configService: ConfigService,
+		@Inject("REDIS_CLIENT") private readonly redis: Redis
+	) {}
 
 	@Post("/login")
 	@UseGuards(LocalAuthGuard)
-	@ApiBody({ type: LoginDto })
-	@ApiResponse({
-		status: 201,
-		schema: {
-			type: "object",
-			properties: {
-				access_token: {
-					type: "string"
-				},
-				refresh_token: {
-					type: "string"
-				}
-			}
-		}
-	})
-	@ApiResponse({
-		status: 401,
-		type: ErrorDto
-	})
+	@ApiLoginDocs()
 	async login(
 		@CurrentUser() user: User,
 		@Req() request: Request,
@@ -69,44 +64,13 @@ export class AuthController {
 	}
 
 	@Post("/signup")
-	@ApiBody({ type: CreateUserDto })
-	@ApiResponse({ status: 201 })
-	@ApiResponse({
-		status: 400,
-		type: ErrorDto
-	})
-	@ApiResponse({
-		status: 409,
-		type: ErrorDto
-	})
+	@ApiSignupDocs()
 	async signup(@Body() body: CreateUserDto) {
 		await this.authService.signup(body);
 	}
 
 	@Post("/verify-email")
-	@ApiBody({ type: VerifyEmailDto })
-	@ApiResponse({
-		status: 201,
-		schema: {
-			type: "object",
-			properties: {
-				access_token: {
-					type: "string"
-				},
-				refresh_token: {
-					type: "string"
-				}
-			}
-		}
-	})
-	@ApiResponse({
-		status: 400,
-		type: ErrorDto
-	})
-	@ApiResponse({
-		status: 404,
-		type: ErrorDto
-	})
+	@ApiVerifyEmailDocs()
 	async verifyEmail(
 		@Body() body: VerifyEmailDto,
 		@Req() request: Request,
@@ -125,31 +89,13 @@ export class AuthController {
 	}
 
 	@Post("/forgot-password")
-	@ApiBody({ type: ForgotPasswordDto })
-	@ApiResponse({ status: 201 })
-	@ApiResponse({
-		status: 400,
-		type: ErrorDto
-	})
-	@ApiResponse({
-		status: 404,
-		type: ErrorDto
-	})
+	@ApiForgotPasswordDocs()
 	async forgotPassword(@Body() body: ForgotPasswordDto) {
 		await this.authService.resetPassword(body.email);
 	}
 
 	@Post("/confirmPasswordReset")
-	@ApiBody({ type: ConfirmPasswordResetDto })
-	@ApiResponse({ status: 201 })
-	@ApiResponse({
-		status: 400,
-		type: ErrorDto
-	})
-	@ApiResponse({
-		status: 404,
-		type: ErrorDto
-	})
+	@ApiConfirmPasswordDocs()
 	async confirmPasswordReset(@Body() body: ConfirmPasswordResetDto) {
 		await this.authService.confirmResetPassword(
 			body.userId,
@@ -160,20 +106,12 @@ export class AuthController {
 
 	@Get("/google")
 	@UseGuards(GoogleOauthGuard)
-	@ApiResponse({ status: 200 })
-	@ApiResponse({
-		status: 401,
-		type: ErrorDto
-	})
-	async googleAuth() { }
+	@ApiGoogleDocs()
+	async googleAuth() {}
 
 	@Get("/google/callback")
 	@UseGuards(GoogleOauthGuard)
-	@ApiResponse({ status: 200 })
-	@ApiResponse({
-		status: 401,
-		type: ErrorDto
-	})
+	@ApiGoogleCallbackDocs()
 	async googleAuthCallback(
 		@Req() request: Request,
 		@Res({ passthrough: true }) response: Response
@@ -209,28 +147,14 @@ export class AuthController {
 	@Get("/currentUser")
 	@UseGuards(JwtAuthGuard)
 	@Serialize(UserDto)
-	@ApiResponse({
-		status: 200,
-		type: UserDto
-	})
-	@ApiResponse({
-		status: 401,
-		type: ErrorDto
-	})
+	@ApiCurrentUserDocs()
 	async currentUser(@CurrentUser() user: User) {
 		return user;
 	}
 
 	@Post("/refresh")
 	@UseGuards(JwtRefreshGuard)
-	@ApiResponse({
-		status: 201,
-		type: UserDto
-	})
-	@ApiResponse({
-		status: 401,
-		type: ErrorDto
-	})
+	@ApiRefreshDocs()
 	async refreshToken(
 		@CurrentUser() user: User,
 		@Req() request: Request,
@@ -242,15 +166,7 @@ export class AuthController {
 
 	@Post("logout")
 	@UseGuards(JwtAuthGuard)
-	@ApiResponse({ status: 201 })
-	@ApiResponse({
-		status: 401,
-		type: ErrorDto
-	})
-	@ApiResponse({
-		status: 404,
-		type: ErrorDto
-	})
+	@ApiLogoutDocs()
 	async logout(
 		@CurrentUser() user: User,
 		@Req() request: Request,

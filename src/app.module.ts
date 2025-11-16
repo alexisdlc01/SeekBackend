@@ -12,9 +12,9 @@ import { ConversationModule } from "./conversation/conversation.module";
 import { MessageModule } from "./message/message.module";
 import { EventsModule } from "./events/events.module";
 import { ContactModule } from "./contact/contact.module";
-import { ApplicationModule } from './application/application.module';
+import { ApplicationModule } from "./application/application.module";
+import { RedisModule } from "./redis/redis.module";
 import * as morgan from "morgan";
-import Redis from "ioredis";
 
 @Module({
 	imports: [
@@ -34,19 +34,11 @@ import Redis from "ioredis";
 		MessageModule,
 		EventsModule,
 		ContactModule,
-		ApplicationModule
+		ApplicationModule,
+		RedisModule
 	],
 	controllers: [AppController],
-	providers: [
-		AppService,
-		{
-			provide: "REDIS_CLIENT",
-			inject: [ConfigService],
-			useFactory: (config: ConfigService) =>
-				new Redis(config.getOrThrow("REDIS_URL"))
-		}
-	],
-	exports: ["REDIS_CLIENT"]
+	providers: [AppService]
 })
 export class AppModule implements NestModule {
 	configure(consumer: MiddlewareConsumer) {
