@@ -5,7 +5,6 @@ import {
 	Param,
 	Post,
 	Put,
-	Query,
 	UseGuards
 } from "@nestjs/common";
 import { CreateUserDto } from "./dto/create-user.dto";
@@ -18,65 +17,35 @@ import { User } from "./users.schema";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { SetProfilePicDto } from "./dto/set-profile-pic.dto";
 import { SetUsernameDto } from "./dto/set-username.dto";
-import { ApiBody, ApiProperty, ApiResponse } from "@nestjs/swagger";
-import { ErrorDto } from "../dto/errorDto.dto";
+import {
+	ApiCreateUserDocs,
+	ApiGetAllUsersDocs,
+	ApiGetUserDocs,
+	ApiSetProfilePicDocs,
+	ApiSetUsernameDocs
+} from "./swagger/users-swagger.decorator";
 
 @Controller("users")
 @Serialize(UserDto)
 export class UsersController {
-	constructor(private readonly usersService: UsersService) { }
+	constructor(private readonly usersService: UsersService) {}
 
 	@Get(":id")
 	@Superuser()
-	@ApiResponse({
-		status: 200,
-		type: UserDto
-	})
-	@ApiResponse({
-		status: 401,
-		type: ErrorDto
-	})
-	@ApiResponse({
-		status: 404,
-		type: ErrorDto
-	})
+	@ApiGetUserDocs()
 	async getUser(@Param("id") id: string) {
 		return await this.usersService.getUser({ _id: id });
 	}
 
 	@Post()
-	@ApiBody({ type: CreateUserDto })
-	@ApiResponse({
-		status: 204,
-		type: UserDto
-	})
-	@ApiResponse({
-		status: 400,
-		type: ErrorDto
-	})
+	@ApiCreateUserDocs()
 	async create(@Body() body: CreateUserDto) {
 		await this.usersService.create(body);
 	}
 
 	@Put("setProfilePic")
 	@UseGuards(JwtAuthGuard)
-	@ApiBody({ type: SetProfilePicDto })
-	@ApiResponse({
-		status: 201,
-		type: UserDto
-	})
-	@ApiResponse({
-		status: 401,
-		type: ErrorDto
-	})
-	@ApiResponse({
-		status: 400,
-		type: ErrorDto
-	})
-	@ApiResponse({
-		status: 404,
-		type: ErrorDto
-	})
+	@ApiSetProfilePicDocs()
 	async setProfilePic(
 		@Body() body: SetProfilePicDto,
 		@CurrentUser() user: User
@@ -86,37 +55,14 @@ export class UsersController {
 
 	@Put("setUsername")
 	@UseGuards(JwtAuthGuard)
-	@ApiBody({ type: SetUsernameDto })
-	@ApiResponse({
-		status: 201,
-		type: UserDto
-	})
-	@ApiResponse({
-		status: 400,
-		type: ErrorDto
-	})
-	@ApiResponse({
-		status: 401,
-		type: ErrorDto
-	})
-	@ApiResponse({
-		status: 404,
-		type: ErrorDto
-	})
+	@ApiSetUsernameDocs()
 	async setUsername(@Body() body: SetUsernameDto, @CurrentUser() user: User) {
 		return await this.usersService.setUsername(body.name, user);
 	}
 
 	@Get()
 	@Superuser()
-	@ApiResponse({
-		status: 200,
-		type: Array<UserDto>
-	})
-	@ApiResponse({
-		status: 401,
-		type: ErrorDto
-	})
+	@ApiGetAllUsersDocs()
 	async getAllUsers() {
 		return this.usersService.getAllUsers();
 	}
