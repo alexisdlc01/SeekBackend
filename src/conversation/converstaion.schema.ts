@@ -12,20 +12,14 @@ export class Conversation {
 	@Prop({ default: Date.now, index: true })
 	createdAt: Date;
 
-	@Prop({ default: false })
-	isGroup: boolean;
-
 	@Prop()
 	groupDescription?: string;
 
 	@Prop()
 	avatar?: string;
 
-	@Prop({ type: [SchemaTypes.ObjectId], ref: "User", default: [] })
-	groupAdmins: Types.ObjectId[];
-
 	@Prop({ type: SchemaTypes.ObjectId, ref: "User" })
-	createdBy?: Types.ObjectId;
+	createdBy: Types.ObjectId;
 
 	@Prop({ type: [SchemaTypes.ObjectId], ref: "User", default: [] })
 	users: Types.ObjectId[];

@@ -12,16 +12,13 @@ export class Message {
 	_id: Types.ObjectId;
 
 	@Prop({ type: SchemaTypes.ObjectId, ref: "User" })
-	sender?: Types.ObjectId;
-
-	@Prop({ type: SchemaTypes.ObjectId, ref: "User" })
-	botMessageTo?: Types.ObjectId;
+	sender: Types.ObjectId;
 
 	@Prop({ enum: MessageType, default: MessageType.Text })
 	messageType: MessageType;
 
 	@Prop({ required: true, trim: true })
-	message: string;
+	data: string;
 
 	@Prop({ default: Date.now, index: true })
 	createdAt: Date;
