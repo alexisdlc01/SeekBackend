@@ -10,11 +10,12 @@ import { UseGuards } from "@nestjs/common";
 import { WsJwtGuard } from "../auth/guards/ws-jwt.guard";
 import { SocketAuthMiddleware } from "../auth/middleware/ws.middleware";
 import { UsersService } from "../users/users.service";
+import * as process from "node:process";
 
 @WebSocketGateway({
 	namespace: "listings",
 	cors: {
-		origin: "http://localhost:5173",
+		origin: process.env.FRONTEND_URL,
 		credentials: true
 	}
 })

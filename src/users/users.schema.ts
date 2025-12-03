@@ -53,3 +53,11 @@ UserSchema.virtual("listings", {
 	foreignField: "landlord",
 	justOne: false
 });
+
+UserSchema.virtual("applications", {
+	ref: "Application",
+	localField: "_id",
+	foreignField: "applicants",
+	justOne: false,
+});
+
