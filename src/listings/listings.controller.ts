@@ -11,7 +11,8 @@ import {
 	CreateListingDto,
 	Step1ListingDto,
 	Step2ListingDto,
-	Step3ListingDto
+	Step3ListingDto,
+	Step4ListingDto
 } from "./dto/create-listing.dto";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "../users/users.schema";
@@ -80,7 +81,16 @@ export class ListingsController {
 		@Param("id") listingId: string,
 		@Body() body: Step3ListingDto
 	) {
-		console.log("here", body);
+		return this.listingsService.updateDraft(listingId, user, body);
+	}
+
+	@Patch(":id/createStep4")
+	@OwnsListing()
+	async createStep4(
+		@CurrentUser() user: User,
+		@Param("id") listingId: string,
+		@Body() body: Step4ListingDto
+	) {
 		return this.listingsService.updateDraft(listingId, user, body);
 	}
 

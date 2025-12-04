@@ -69,6 +69,23 @@ export class Listing {
 	@Prop() floorPlanImage?: string;
 
 	@ApiProperty()
+	@Prop({
+		type: [
+			{
+				name: String,
+				desc: String,
+				required: Boolean
+			}
+		],
+		default: []
+	})
+	requirements?: {
+		name: string;
+		desc: string;
+		required: boolean;
+	}[];
+
+	@ApiProperty()
 	@Prop({ default: false }) isVerified: boolean;
 
 	@ApiProperty()
