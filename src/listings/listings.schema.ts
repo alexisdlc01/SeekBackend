@@ -23,6 +23,8 @@ export class Listing {
 	@ApiProperty()
 	@Prop() propertyTitle?: string;
 	@ApiProperty()
+	@Prop() numOfPeople?: number;
+	@ApiProperty()
 	@Prop() sizeSqMeters?: number;
 	@ApiProperty({ enum: PropertyType })
 	@Prop({ enum: PropertyType }) propertyType?: PropertyType;

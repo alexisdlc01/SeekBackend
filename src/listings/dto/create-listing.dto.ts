@@ -18,6 +18,10 @@ export class CreateListingDto {
 	propertyTitle: string;
 
 	@ApiProperty()
+	@IsString()
+	numOfPeople: number;
+
+	@ApiProperty()
 	@IsNumber()
 	sizeSqMeters: number;
 
@@ -109,6 +113,9 @@ export class CreateListingDto {
 export class Step1ListingDto {
 	@ApiProperty()
 	@IsOptional() @IsString() propertyTitle: string;
+
+	@ApiProperty()
+	@IsOptional() @IsNumber() numOfPeople: number;
 
 	@ApiProperty()
 	@IsOptional() @IsNumber() sizeSqMeters: number;
