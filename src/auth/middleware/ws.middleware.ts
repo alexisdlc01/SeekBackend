@@ -7,12 +7,13 @@ export type SocketIOMiddleware = {
 };
 
 export const SocketAuthMiddleware = (usersService: UsersService): SocketIOMiddleware => {
-	return (server, next) => {
+	return async (server, next) => {
 		try {
-			WsJwtGuard.validateToken(server, usersService);
+			await WsJwtGuard.validateToken(server, usersService);
+			next();
 		} catch (err) {
 			next(err);
 		}
-		next();
 	};
 };
+
