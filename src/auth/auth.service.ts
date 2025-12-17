@@ -1,5 +1,6 @@
 import {
 	BadRequestException,
+	Inject,
 	Injectable,
 	InternalServerErrorException,
 	NotFoundException,
@@ -17,6 +18,7 @@ import { randomBytes } from "crypto";
 import { addMinutes } from "date-fns";
 import { MailService } from "./mail.service";
 import { Role } from "./role.enum";
+import Redis from "ioredis";
 
 @Injectable()
 export class AuthService {
@@ -24,7 +26,8 @@ export class AuthService {
 		private readonly usersService: UsersService,
 		private readonly configService: ConfigService,
 		private readonly mailService: MailService,
-		private readonly jwtService: JwtService
+		private readonly jwtService: JwtService,
+		@Inject("REDIS_CLIENT") private readonly redisService: Redis
 	) {}
 
 	async signup(body: CreateUserDto) {
@@ -108,6 +111,7 @@ export class AuthService {
 						? "none"
 						: "lax"
 			});
+			// this.redisService
 		} else {
 			return {
 				access_token: accessToken,

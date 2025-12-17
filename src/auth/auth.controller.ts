@@ -47,8 +47,7 @@ export class AuthController {
 	constructor(
 		private readonly authService: AuthService,
 		private readonly usersService: UsersService,
-		private readonly configService: ConfigService,
-		@Inject("REDIS_CLIENT") private readonly redis: Redis
+		private readonly configService: ConfigService
 	) {}
 
 	@Post("/login")
