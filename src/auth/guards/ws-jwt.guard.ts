@@ -15,19 +15,19 @@ export class WsJwtGuard implements CanActivate {
 
 	async canActivate(context: ExecutionContext): Promise<boolean> {
 		// TODO: RBAC
-		console.log("hererkuhsdf");
 		if (context.getType() !== "ws") {
 			return true;
 		}
 		const client: Socket = context.switchToWs().getClient();
-		// WsJwtGuard.validateToken(client);
-		console.log("inside canActivate", client.data.user);
-		return true;
+		return WsJwtGuard.validateToken(client, this.usersService);
 	}
 
 	static async validateToken(server: Socket, usersService: UsersService) {
 		const token = this.extractToken(server) as string;
-		const payload = verify(token, process.env.JWT_ACCESS_TOKEN_SECRET as string) as TokenPayload;
+		const payload = verify(
+			token,
+			process.env.JWT_ACCESS_TOKEN_SECRET as string
+		) as TokenPayload;
 
 		if (!payload)
 			throw new UnauthorizedException("Invalid or missing token");
@@ -58,7 +58,6 @@ export class WsJwtGuard implements CanActivate {
 		if (!cookieHeader) return null;
 
 		const cookies = this.parseCookies(cookieHeader);
-		console.log(cookies);
 		return cookies["Authentication"] ?? null;
 	}
 

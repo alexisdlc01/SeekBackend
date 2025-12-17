@@ -207,8 +207,7 @@ export class AuthService {
 	) {
 		const user = await this.usersService.getUser({ _id: userId });
 
-		if (!user)
-			throw new NotFoundException("No user found with this id");
+		if (!user) throw new NotFoundException("No user found with this id");
 		if (!user.resetPasswordToken)
 			throw new BadRequestException("Invalid or expired reset request");
 		if (user.resetPasswordExpires && user.resetPasswordExpires < new Date())
