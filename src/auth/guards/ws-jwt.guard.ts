@@ -16,7 +16,7 @@ export class WsJwtGuard implements CanActivate {
 	async canActivate(context: ExecutionContext): Promise<boolean> {
 		// TODO: RBAC
 		if (context.getType() !== "ws") {
-			return true;
+			return false;
 		}
 		const client: Socket = context.switchToWs().getClient();
 		return WsJwtGuard.validateToken(client, this.usersService);

@@ -111,7 +111,6 @@ export class AuthService {
 						? "none"
 						: "lax"
 			});
-			// this.redisService
 		} else {
 			return {
 				access_token: accessToken,
