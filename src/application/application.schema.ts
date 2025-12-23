@@ -1,6 +1,7 @@
-import { Prop, Schema } from "@nestjs/mongoose";
+import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { SchemaTypes, Types } from "mongoose";
 import { ApplicationStage } from "./enums/application-stage.enum";
+import { User } from "../users/users.schema";
 
 @Schema()
 export class Application {
@@ -25,3 +26,5 @@ export class Application {
 	@Prop({ enum: ApplicationStage, default: ApplicationStage.NOT_SENT })
 	stage: string;
 }
+
+export const ApplicationSchema = SchemaFactory.createForClass(Application);
