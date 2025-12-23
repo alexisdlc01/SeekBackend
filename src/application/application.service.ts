@@ -9,4 +9,6 @@ export class ApplicationService {
 		@InjectModel(Application.name)
 		private readonly applicationModel: Model<Application>
 	) {}
+
+
 }
