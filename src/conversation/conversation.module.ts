@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { MongooseModule } from "@nestjs/mongoose";
 import { SharedModule } from "../shared/shared.module";
 import { Conversation, ConversationSchema } from "./converstaion.schema";
+import { ConversationController } from './conversation.controller';
 
 @Module({
 	imports: [
@@ -12,6 +13,7 @@ import { Conversation, ConversationSchema } from "./converstaion.schema";
 			}
 		]),
 		SharedModule
-	]
+	],
+	controllers: [ConversationController]
 })
 export class ConversationModule {}

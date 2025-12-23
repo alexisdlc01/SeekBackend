@@ -10,5 +10,7 @@ export class ApplicationService {
 		private readonly applicationModel: Model<Application>
 	) {}
 
-
+	async createApplication() {
+		// return await this.applicationModel.create();
+	}
 }
