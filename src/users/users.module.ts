@@ -6,6 +6,7 @@ import { User, UserSchema } from "./users.schema";
 import { SharedModule } from "../shared/shared.module";
 import { PresenceService } from './presence.service';
 import { RedisModule } from "../redis/redis.module";
+import { PresenceGateway } from "./presence.gateway";
 
 @Module({
 	imports: [
@@ -19,7 +20,7 @@ import { RedisModule } from "../redis/redis.module";
 		RedisModule
 	],
 	controllers: [UsersController],
-	providers: [UsersService, PresenceService],
+	providers: [UsersService, PresenceGateway, PresenceService],
 	exports: [UsersService]
 })
 export class UsersModule {}

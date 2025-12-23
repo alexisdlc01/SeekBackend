@@ -30,6 +30,9 @@ export class User {
 	isVerified: boolean;
 
 	@Prop()
+	lastSeen?: Date
+
+	@Prop()
 	emailVerificationToken?: string;
 
 	@Prop()

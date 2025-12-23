@@ -46,6 +46,15 @@ export class PresenceGateway
 		);
 
 		if (cameOnline) {
+			await this.usersService.updateUser(
+				{ _id: user._id },
+				{
+					$set: {
+						lastSeen: Date.now()
+					}
+				}
+			);
+
 			this.server.emit("presenceUpdate", {
 				userId: user._id,
 				online: true
@@ -67,7 +76,14 @@ export class PresenceGateway
 				online: false
 			});
 
-			await this.presenceService.updateLastSeen(user._id.toString());
+			await this.usersService.updateUser(
+				{ _id: user._id },
+				{
+					$set: {
+						lastSeen: Date.now()
+					}
+				}
+			);
 		}
 	}
 

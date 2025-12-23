@@ -10,7 +10,7 @@ export class PresenceService {
 		const count = await this.redisService.incr(key);
 		await this.redisService.expire(key, 60);
 
-		return count === 1; // true = user just came online
+		return count === 1;
 	}
 
 	async userDisconnected(userId: string): Promise<boolean> {
@@ -27,15 +27,5 @@ export class PresenceService {
 
 	async heartbeat(userId: string) {
 		await this.redisService.expire(`presence:user:${userId}`, 60);
-	}
-
-	// TODO: move this to usersService and add lastSeen to users.schema
-	async updateLastSeen(userId: string) {
-		const key = `presence:user:${userId}`;
-	}
-
-	async isOnline(userId: string): Promise<boolean> {
-		const count = await this.redisService.get(`presence:user:${userId}`);
-		return !!count && Number(count) > 0;
 	}
 }
