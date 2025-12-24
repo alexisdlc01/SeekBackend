@@ -30,6 +30,17 @@ export class ApplicationController {
 	@Get(":id")
 	@Applicant()
 	async getApplication(@Param("id") id: string) {
-		console.log(id);
+		return this.applicationService.findApplicationById(id);
+	}
+
+	@Get(":id/share")
+	@Applicant()
+	async getShareLink(@Param("id") id: string) {
+		return this.applicationService.getShareLinkForApplication(id);
+	}
+
+	@Post(":id/join")
+	async joinApplication(@Param("id") id: string) {
+
 	}
 }

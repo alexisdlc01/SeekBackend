@@ -8,16 +8,21 @@ import { Model, Types } from "mongoose";
 import { Application } from "./application.schema";
 import { ListingsService } from "../listings/listings.service";
 import { User } from "../users/users.schema";
+import { ConfigService } from "@nestjs/config";
 
 @Injectable()
 export class ApplicationService {
 	constructor(
 		@InjectModel(Application.name)
 		private readonly applicationModel: Model<Application>,
-		private readonly listingService: ListingsService
+		private readonly listingService: ListingsService,
+		private readonly configService: ConfigService
 	) {}
 
-	async createApplication(listingId: string, user: User) {
+	async createApplication(
+		listingId: string,
+		user: User
+	): Promise<Application> {
 		if (!Types.ObjectId.isValid(listingId)) {
 			throw new BadRequestException("Invalid listing ID");
 		}
@@ -31,8 +36,8 @@ export class ApplicationService {
 		});
 	}
 
-	async getAllMyApplications(userId: string) {
-		return this.applicationModel
+	async getAllMyApplications(userId: string): Promise<Application[] | null> {
+		return await this.applicationModel
 			.find({ applicants: userId })
 			.populate("listing")
 			.populate("landlord", "name email")
@@ -40,14 +45,28 @@ export class ApplicationService {
 			.exec();
 	}
 
-	async findApplicationById(id: string) {
+	async findApplicationById(id: string): Promise<Application> {
 		if (!Types.ObjectId.isValid(id)) {
 			throw new BadRequestException("Invalid application ID");
 		}
-		const application = await this.applicationModel.findById(id).exec();
+		const application: Application | null = await this.applicationModel
+			.findById(id)
+			.exec();
 		if (!application) {
 			throw new NotFoundException("Application not found");
 		}
 		return application;
 	}
+
+	async getShareLinkForApplication(id: string): Promise<string> {
+		const application: Application | null =
+			await this.applicationModel.findById(id);
+
+		if (!application) {
+			throw new BadRequestException("Invalid application id");
+		}
+		return `${this.configService.get("BACKEND_URL")}/application/${application._id.toString()}/join`;
+	}
+
+	async joinApplication(applicationId: string) {}
 }
