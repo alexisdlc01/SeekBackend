@@ -5,6 +5,7 @@ import {
 	ForbiddenException
 } from "@nestjs/common";
 import { ApplicationService } from "../application.service";
+import { User } from "../../users/users.schema";
 
 @Injectable()
 export class ApplicantGuard implements CanActivate {
@@ -12,11 +13,7 @@ export class ApplicantGuard implements CanActivate {
 
 	async canActivate(context: ExecutionContext): Promise<boolean> {
 		const request = context.switchToHttp().getRequest();
-		const user = request.user;
-
-		if (!user || !user._id) {
-			throw new ForbiddenException("User not authenticated");
-		}
+		const user: User = request.user;
 
 		const applicationId = request.params.id;
 
@@ -27,13 +24,13 @@ export class ApplicantGuard implements CanActivate {
 			throw new ForbiddenException("Application not found");
 		}
 
-		const applicants = application.toObject().applicants;
-		applicants.forEach(applicant => {
-			if (applicant.toString() === user._id) {
-				return true;
-			}
-		});
+		const isApplicant = application.applicants.some(
+			applicant => applicant.toString() === user._id.toString()
+		);
+		if (!isApplicant) {
+			throw new ForbiddenException("You are not an applicant");
+		}
 
-		return false;
+		return true;
 	}
 }

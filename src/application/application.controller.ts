@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post } from "@nestjs/common";
 import { ApplicationService } from "./application.service";
-import { ApplicantGuard } from "./guards/applicant.guard";
 import { CreateApplicationDto } from "./dto/create-application.dto";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "../users/users.schema";
 import { Student } from "../auth/decorators/role-auth.decorator";
+import { Applicant } from "./decorators/applicant.decorator";
 
 @Controller("application")
 export class ApplicationController {
@@ -27,7 +27,9 @@ export class ApplicationController {
 		);
 	}
 
-	@Get()
-	@UseGuards(ApplicantGuard)
-	async getApplication() {}
+	@Get(":id")
+	@Applicant()
+	async getApplication(@Param("id") id: string) {
+		console.log(id);
+	}
 }
