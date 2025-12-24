@@ -10,13 +10,21 @@ import { Student } from "../auth/decorators/role-auth.decorator";
 export class ApplicationController {
 	constructor(private readonly applicationService: ApplicationService) {}
 
-	@Post()
+	@Post("create")
 	@Student()
 	async createApplication(
 		@CurrentUser() user: User,
 		@Body() body: CreateApplicationDto
 	) {
 		await this.applicationService.createApplication(body.listingId, user);
+	}
+
+	@Get("mine")
+	@Student()
+	async getAllMyApplications(@CurrentUser() user: User) {
+		return this.applicationService.getAllMyApplications(
+			user._id.toString()
+		);
 	}
 
 	@Get()

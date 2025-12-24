@@ -31,6 +31,15 @@ export class ApplicationService {
 		});
 	}
 
+	async getAllMyApplications(userId: string) {
+		return this.applicationModel
+			.find({ applicants: userId })
+			.populate("listing")
+			.populate("landlord", "name email")
+			.sort({ createdAt: -1 })
+			.exec();
+	}
+
 	async findApplicationById(id: string) {
 		if (!Types.ObjectId.isValid(id)) {
 			throw new BadRequestException("Invalid application ID");
