@@ -24,6 +24,7 @@ import { UsersModule } from "../users/users.module";
 		UsersModule
 	],
 	controllers: [ListingsController],
-	providers: [ListingsService, ListingsGateway]
+	providers: [ListingsService, ListingsGateway],
+	exports: [ListingsService]
 })
 export class ListingsModule {}
