@@ -65,7 +65,7 @@ export const ApiDeleteListingDocs = () =>
 
 export const ApiMyListingsDocs = () =>
 	applyDecorators(
-		ApiResponse({ status: 200, type: Array<Listing> }),
+		ApiResponse({ status: 200, type: Listing, isArray: true }),
 		ApiResponse({ status: 400, type: ErrorDto }),
 		ApiResponse({ status: 401, type: ErrorDto })
 	);
@@ -80,7 +80,7 @@ export const ApiGetListingDocs = () =>
 
 export const ApiGetAllUnverifiedDocs = () =>
 	applyDecorators(
-		ApiResponse({ status: 200, type: Array<Listing> }),
+		ApiResponse({ status: 200, type: Listing, isArray: true }),
 		ApiResponse({ status: 400, type: ErrorDto }),
 		ApiResponse({ status: 401, type: ErrorDto })
 	);

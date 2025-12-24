@@ -81,7 +81,8 @@ export const ApiGetAllUsersDocs = () =>
 	applyDecorators(
 		ApiResponse({
 			status: 200,
-			type: Array<UserDto>
+			type: UserDto,
+			isArray: true
 		}),
 		ApiResponse({
 			status: 401,
