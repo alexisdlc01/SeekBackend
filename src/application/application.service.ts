@@ -68,5 +68,28 @@ export class ApplicationService {
 		return `${this.configService.get("BACKEND_URL")}/application/${application._id.toString()}/join`;
 	}
 
-	async joinApplication(applicationId: string) {}
+	async joinApplication(
+		applicationId: string,
+		userId: string
+	): Promise<Application> {
+		const application: Application | null =
+			await this.applicationModel.findById(applicationId);
+
+		if (!application) {
+			throw new BadRequestException("Invalid application id");
+		}
+
+		const updatedApplication: Application | null =
+			await this.applicationModel.findOneAndUpdate(
+				{ _id: applicationId },
+				{ $addToSet: { applicants: new Types.ObjectId(userId) } },
+				{ new: true }
+			);
+
+		if (!updatedApplication) {
+			throw new NotFoundException("Application not found");
+		}
+
+		return updatedApplication;
+	}
 }

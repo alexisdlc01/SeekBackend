@@ -40,7 +40,7 @@ export class ApplicationController {
 	}
 
 	@Post(":id/join")
-	async joinApplication(@Param("id") id: string) {
-
+	async joinApplication(@CurrentUser() user: User, @Param("id") id: string) {
+		return this.applicationService.joinApplication(id, user._id.toString());
 	}
 }

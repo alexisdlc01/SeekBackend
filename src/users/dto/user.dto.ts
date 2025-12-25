@@ -28,4 +28,8 @@ export class UserDto {
 	@ApiProperty()
 	@Expose()
 	isVerified: string;
+
+	@ApiProperty()
+	@Expose()
+	lastSeen: Date;
 }
