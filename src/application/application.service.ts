@@ -9,6 +9,7 @@ import { Application } from "./application.schema";
 import { ListingsService } from "../listings/listings.service";
 import { User } from "../users/users.schema";
 import { ConfigService } from "@nestjs/config";
+import { ApplicationStage } from "./enums/application-stage.enum";
 
 @Injectable()
 export class ApplicationService {
@@ -91,5 +92,22 @@ export class ApplicationService {
 		}
 
 		return updatedApplication;
+	}
+
+	async sendApplication(applicationId: string): Promise<void> {
+		const application: Application | null =
+			await this.applicationModel.findById(applicationId);
+		if (!application) {
+			throw new BadRequestException("Invalid application id");
+		}
+		if (application.stage === ApplicationStage.NOT_SENT) {
+			await this.applicationModel.findOneAndUpdate(
+				{ _id: applicationId },
+				{ $set: { stage: ApplicationStage.SENT } },
+				{ new: true }
+			);
+		} else {
+			throw new BadRequestException("Application already send.");
+		}
 	}
 }
