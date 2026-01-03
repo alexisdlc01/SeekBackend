@@ -39,5 +39,10 @@ export class CreateUserDto {
 	@ApiProperty()
 	@IsString()
 	@IsOptional()
+	otpVerificationCode?: string;
+
+	@ApiProperty()
+	@IsString()
+	@IsOptional()
 	emailVerificationTokenExpires?: Date;
 }

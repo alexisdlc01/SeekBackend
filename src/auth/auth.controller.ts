@@ -64,8 +64,9 @@ export class AuthController {
 
 	@Post("/signup")
 	@ApiSignupDocs()
-	async signup(@Body() body: CreateUserDto) {
-		await this.authService.signup(body);
+	async signup(@Body() body: CreateUserDto, @Req() request: Request) {
+		const isMobile = request.headers.platform === "mobile";
+		await this.authService.signup(body, isMobile);
 	}
 
 	@Post("/verify-email")
@@ -75,6 +76,7 @@ export class AuthController {
 		@Req() request: Request,
 		@Res({ passthrough: true }) response: Response
 	) {
+		const isMobile = request.headers.platform === "mobile";
 		let user = (await this.usersService.getUser({
 			_id: body.userId
 		})) as User | null;
@@ -82,8 +84,7 @@ export class AuthController {
 			throw new NotFoundException("User not found");
 		}
 
-		user = await this.authService.verifyEmail(user, body.token);
-		const isMobile = request.headers.platform === "mobile";
+		user = await this.authService.verifyEmail(user, body.token, isMobile);
 		return this.authService.login(user, response, isMobile);
 	}
 

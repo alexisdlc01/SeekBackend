@@ -36,6 +36,9 @@ export class User {
 	emailVerificationToken?: string;
 
 	@Prop()
+	otpVerificationCode?: string;
+
+	@Prop()
 	emailVerificationTokenExpires?: Date;
 
 	@Prop({ default: false })

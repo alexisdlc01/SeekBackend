@@ -66,6 +66,11 @@ export class ApplicationService {
 		if (!application) {
 			throw new BadRequestException("Invalid application id");
 		}
+
+		if (application.stage !== ApplicationStage.NOT_SENT) {
+			throw new BadRequestException("Application already sent.");
+		}
+
 		return `${this.configService.get("BACKEND_URL")}/application/${application._id.toString()}/join`;
 	}
 
@@ -78,6 +83,10 @@ export class ApplicationService {
 
 		if (!application) {
 			throw new BadRequestException("Invalid application id");
+		}
+
+		if (application.stage !== ApplicationStage.NOT_SENT) {
+			throw new BadRequestException("Application already sent.");
 		}
 
 		const updatedApplication: Application | null =

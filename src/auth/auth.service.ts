@@ -19,6 +19,7 @@ import { addMinutes } from "date-fns";
 import { MailService } from "./mail.service";
 import { Role } from "./role.enum";
 import Redis from "ioredis";
+import { createHash, randomInt } from "node:crypto";
 
 @Injectable()
 export class AuthService {
@@ -29,22 +30,43 @@ export class AuthService {
 		private readonly jwtService: JwtService
 	) {}
 
-	async signup(body: CreateUserDto) {
+	generateOtp = () => randomInt(100000, 999999).toString();
+
+	hashOtp = (otp: string) => createHash("sha256").update(otp).digest("hex");
+
+	async signup(body: CreateUserDto, isMobile: boolean) {
 		if (body.role === Role.STUDENT || body.role === Role.LANDLORD_AGENCY) {
-			const token = randomBytes(32).toString("hex");
 			const expires = addMinutes(new Date(), 60);
 
-			const newUser = (await this.usersService.create({
-				...body,
-				emailVerificationToken: token,
-				emailVerificationTokenExpires: expires
-			})) as User;
+			if (isMobile) {
+				const otp = this.generateOtp();
+				const otpHash = this.hashOtp(otp);
 
-			await this.mailService.sendVerificationEmail(
-				newUser.email,
-				token,
-				newUser._id.toString()
-			);
+				const newUser = await this.usersService.create({
+					...body,
+					otpVerificationCode: otpHash,
+					emailVerificationTokenExpires: expires
+				}) as User;
+
+				await this.mailService.sendOtpEmail(
+					newUser.email,
+					otp
+				);
+			} else {
+				const token = randomBytes(32).toString("hex");
+
+				const newUser = (await this.usersService.create({
+					...body,
+					emailVerificationToken: token,
+					emailVerificationTokenExpires: expires
+				})) as User;
+
+				await this.mailService.sendVerificationEmail(
+					newUser.email,
+					token,
+					newUser._id.toString()
+				);
+			}
 		}
 	}
 
@@ -150,7 +172,7 @@ export class AuthService {
 		}
 	}
 
-	async verifyEmail(user: User, token: string) {
+	async verifyEmail(user: User, token: string, isMobile: boolean) {
 		const expirationDate = user.emailVerificationTokenExpires as Date;
 		const currentDate = new Date();
 		if (expirationDate < currentDate) {

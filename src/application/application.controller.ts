@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post } from "@nestjs/common";
 import { ApplicationService } from "./application.service";
 import { CreateApplicationDto } from "./dto/create-application.dto";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "../users/users.schema";
 import { Student } from "../auth/decorators/role-auth.decorator";
 import { Applicant } from "./decorators/applicant.decorator";
+import { OwnsListing } from "../listings/decorators/owns-listing.decorator";
 
 @Controller("application")
 export class ApplicationController {
@@ -49,5 +50,11 @@ export class ApplicationController {
 	@Applicant()
 	async sendApplication(@Param("id") id: string) {
 		return this.applicationService.sendApplication(id);
+	}
+
+	@Patch(":id/review")
+	@OwnsListing()
+	async reviewApplication(@Param("id") id: string) {
+
 	}
 }

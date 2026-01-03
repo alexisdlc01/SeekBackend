@@ -32,6 +32,15 @@ export class MailService {
 		});
 	}
 
+	async sendOtpEmail(email: string, otp: string) {
+		await this.mail.messages.create(this.domain, {
+			from: "Seek <noreply@mail.seekapp.uk>",
+			to: [email],
+			subject: "Activate your account",
+			text: `Use this code to verify your account: ${otp}`
+		});
+	}
+
 	async sendNewListingEmail(user: User) {
 		await this.mail.messages.create(this.domain, {
 			from: "Seek <noreply@mail.seekapp.uk>",
