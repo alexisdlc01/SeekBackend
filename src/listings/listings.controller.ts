@@ -19,6 +19,7 @@ import { User } from "../users/users.schema";
 import { ListingsService } from "./listings.service";
 import {
 	LandlordAgency,
+	Student,
 	Superuser
 } from "../auth/decorators/role-auth.decorator";
 import { MailService } from "../auth/mail.service";
@@ -136,6 +137,12 @@ export class ListingsController {
 	@ApiGetAllUnverifiedDocs()
 	async getAllUnverifiedListings() {
 		return await this.listingsService.getAllUnverifiedListings();
+	}
+	
+	@Get("allVerified")
+	@Student()
+	async getAllVerifiedListings() {
+		return await this.listingsService.getAllVerifiedListings();
 	}
 
 	@Get("/:id")

@@ -1,4 +1,11 @@
-import { Injectable, forwardRef, Inject, BadRequestException, NotFoundException, UnauthorizedException } from "@nestjs/common";
+import {
+	Injectable,
+	forwardRef,
+	Inject,
+	BadRequestException,
+	NotFoundException,
+	UnauthorizedException
+} from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Listing } from "./listings.schema";
 import { Model, Types } from "mongoose";
@@ -46,10 +53,7 @@ export class ListingsService {
 		return listing;
 	}
 
-	async publishDraft(
-		listingId: string,
-		landlord: User
-	): Promise<Listing> {
+	async publishDraft(listingId: string, landlord: User): Promise<Listing> {
 		const listing = await this.listingModel.findOneAndUpdate(
 			{
 				_id: new Types.ObjectId(listingId),
@@ -78,7 +82,9 @@ export class ListingsService {
 		}
 
 		if (listing.landlord.toString() !== landlord._id.toString()) {
-			throw new UnauthorizedException("Unauthorized: You do not own this listing");
+			throw new UnauthorizedException(
+				"Unauthorized: You do not own this listing"
+			);
 		}
 
 		await this.listingModel.deleteOne({ _id: listingId });
@@ -87,14 +93,24 @@ export class ListingsService {
 	}
 
 	async getAllUnverifiedListings(): Promise<Listing[]> {
-		return await this.listingModel
-			.find({ isVerified: false, isDraft: false })
-			.sort({ createdAt: -1 })
-			.exec() ?? [];
+		return (
+			(await this.listingModel
+				.find({ isVerified: false, isDraft: false })
+				.sort({ createdAt: -1 })
+				.exec()) ?? []
+		);
+	}
+
+	async getAllVerifiedListings(): Promise<Listing[]> {
+		return (
+			(await this.listingModel
+				.find({ isVerified: true, isDraft: false })
+				.exec()) ?? []
+		);
 	}
 
 	async findByLandlord(id: string): Promise<Listing[]> {
-		return await this.listingModel.find({ landlord: id }).exec() ?? [];
+		return (await this.listingModel.find({ landlord: id }).exec()) ?? [];
 	}
 
 	async verifyListing(id: string): Promise<Listing> {
