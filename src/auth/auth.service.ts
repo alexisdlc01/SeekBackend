@@ -32,26 +32,20 @@ export class AuthService {
 
 	generateOtp = () => randomInt(100000, 999999).toString();
 
-	hashOtp = (otp: string) => createHash("sha256").update(otp).digest("hex");
-
 	async signup(body: CreateUserDto, isMobile: boolean) {
 		if (body.role === Role.STUDENT || body.role === Role.LANDLORD_AGENCY) {
 			const expires = addMinutes(new Date(), 60);
 
 			if (isMobile) {
 				const otp = this.generateOtp();
-				const otpHash = this.hashOtp(otp);
 
-				const newUser = await this.usersService.create({
+				const newUser = (await this.usersService.create({
 					...body,
-					otpVerificationCode: otpHash,
+					otpVerificationCode: otp,
 					emailVerificationTokenExpires: expires
-				}) as User;
+				})) as User;
 
-				await this.mailService.sendOtpEmail(
-					newUser.email,
-					otp
-				);
+				await this.mailService.sendOtpEmail(newUser.email, otp);
 			} else {
 				const token = randomBytes(32).toString("hex");
 
@@ -178,20 +172,38 @@ export class AuthService {
 		if (expirationDate < currentDate) {
 			throw new BadRequestException("This token has expired");
 		}
-		if (token === user.emailVerificationToken) {
-			await this.usersService.updateUser(
-				{
-					_id: user._id
-				},
-				{
-					$set: { isVerified: true },
-					$unset: {
-						emailVerificationToken: 1,
-						emailVerificationTokenExpires: 1
+		if (isMobile) {
+			if (token === user.emailVerificationToken) {
+				await this.usersService.updateUser(
+					{
+						_id: user._id
+					},
+					{
+						$set: { isVerified: true },
+						$unset: {
+							emailVerificationToken: 1,
+							emailVerificationTokenExpires: 1
+						}
 					}
-				}
-			);
+				);
+			}
+		} else {
+			if (token === user.otpVerificationCode) {
+				await this.usersService.updateUser(
+					{
+						_id: user._id
+					},
+					{
+						$set: { isVerified: true },
+						$unset: {
+							otpVerificationCode: 1,
+							emailVerificationTokenExpires: 1
+						}
+					}
+				);
+			}
 		}
+
 		return user;
 	}
 
