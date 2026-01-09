@@ -138,7 +138,8 @@ export class ListingsController {
 	async getAllUnverifiedListings() {
 		return await this.listingsService.getAllUnverifiedListings();
 	}
-	
+
+	// TODO: Implement filters
 	@Get("allVerified")
 	@Student()
 	async getAllVerifiedListings() {

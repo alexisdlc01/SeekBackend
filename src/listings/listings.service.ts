@@ -65,6 +65,7 @@ export class ListingsService {
 		if (!listing) {
 			throw new NotFoundException("Listing not found");
 		}
+		this.listingsGateway.emitListingUpdated(listing);
 		return listing;
 	}
 
