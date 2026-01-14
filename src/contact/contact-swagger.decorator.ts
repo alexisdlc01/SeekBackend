@@ -6,8 +6,7 @@ import { ErrorDto } from "src/dto/errorDto.dto";
 export const ApiContactDocs = () =>
 	applyDecorators(
 		ApiResponse({
-			status: 200,
-			type: ContactDto
+			status: 201
 		}),
 		ApiResponse({
 			status: 400,
