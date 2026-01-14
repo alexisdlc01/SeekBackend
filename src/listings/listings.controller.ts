@@ -31,6 +31,7 @@ import {
 	ApiDeleteListingDocs,
 	ApiDraftDocs,
 	ApiGetAllUnverifiedDocs,
+	ApiGetAllVerifiedDocs,
 	ApiGetByIdDocs,
 	ApiGetListingDocs,
 	ApiMyListingsDocs,
@@ -142,6 +143,7 @@ export class ListingsController {
 	// TODO: Implement filters
 	@Get("allVerified")
 	@Student()
+	@ApiGetAllVerifiedDocs()
 	async getAllVerifiedListings() {
 		return await this.listingsService.getAllVerifiedListings();
 	}

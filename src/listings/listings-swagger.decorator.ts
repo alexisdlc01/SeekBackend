@@ -85,6 +85,13 @@ export const ApiGetAllUnverifiedDocs = () =>
 		ApiResponse({ status: 401, type: ErrorDto })
 	);
 
+export const ApiGetAllVerifiedDocs = () =>
+	applyDecorators(
+		ApiResponse({ status: 200, type: Listing, isArray: true }),
+		ApiResponse({ status: 400, type: ErrorDto }),
+		ApiResponse({ status: 401, type: ErrorDto })
+	);
+
 export const ApiGetByIdDocs = () =>
 	applyDecorators(
 		ApiResponse({ status: 200, type: Listing }),
