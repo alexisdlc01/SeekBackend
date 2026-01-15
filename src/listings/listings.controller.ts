@@ -34,8 +34,11 @@ import {
 	ApiGetAllVerifiedDocs,
 	ApiGetByIdDocs,
 	ApiGetListingDocs,
+	ApiLikedListingsDocs,
+	ApiLikeListingDocs,
 	ApiMyListingsDocs,
 	ApiPublishDocs,
+	ApiUnlikeListingDocs,
 	ApiVerifyListingDocs
 } from "./listings-swagger.decorator";
 
@@ -148,6 +151,13 @@ export class ListingsController {
 		return await this.listingsService.getAllVerifiedListings();
 	}
 
+	@Get("/like")
+	@Student()
+	@ApiLikedListingsDocs()
+	async getLiked(@CurrentUser() user: User) {
+		return await this.listingsService.getLiked(user);
+	}
+
 	@Get("/:id")
 	@Superuser()
 	@ApiGetByIdDocs()
@@ -160,5 +170,19 @@ export class ListingsController {
 	@ApiVerifyListingDocs()
 	async verifyListing(@Param("id") id: string) {
 		await this.listingsService.verifyListing(id);
+	}
+
+	@Patch("/like/:id")
+	@Student()
+	@ApiLikeListingDocs()
+	async likeListing(@Param("id") id: string, @CurrentUser() user: User) {
+		await this.listingsService.likeListing(id, user);
+	}
+
+	@Patch("/unlike/:id")
+	@Student()
+	@ApiUnlikeListingDocs()
+	async unlikeListing(@Param("id") id: string, @CurrentUser() user: User) {
+		await this.listingsService.unlikeListing(id, user);
 	}
 }

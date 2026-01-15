@@ -27,10 +27,7 @@ export const GetFlagDocs = () =>
 
 export const ResolveFlagDocs = () =>
 	applyDecorators(
-		ApiResponse({
-			status: 204,
-			type: Flag
-		}),
+		ApiResponse({ status: 204 }),
 		ApiResponse({ status: 400, type: ErrorDto }),
 		ApiResponse({ status: 401, type: ErrorDto }),
 		ApiResponse({ status: 404, type: ErrorDto })

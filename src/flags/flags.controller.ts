@@ -42,6 +42,6 @@ export class FlagsController {
 	@Superuser()
 	@Patch("/resolve/:id")
 	resolve(@Param("id") id: string, @Body() resolveFlagDto: ResolveFlagDto) {
-		return this.flagsService.resolve(+id, resolveFlagDto);
+		return this.flagsService.resolve(id, resolveFlagDto);
 	}
 }

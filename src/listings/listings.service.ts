@@ -13,6 +13,7 @@ import { CreateListingDto } from "./dto/create-listing.dto";
 import { User } from "../users/users.schema";
 import { ListingsGateway } from "./listings.gateway";
 import { InvalidRequest } from "@aws-sdk/client-s3";
+import { LikedListingsDto } from "./dto/liked-listings.dto";
 
 @Injectable()
 export class ListingsService {
@@ -103,11 +104,10 @@ export class ListingsService {
 	}
 
 	async getAllVerifiedListings(): Promise<Listing[]> {
-		return (
-			(await this.listingModel
-				.find({ isVerified: true, isDraft: false })
-				.exec()) ?? []
-		);
+		const listings = await this.listingModel
+			.find({ isVerified: true, isDraft: false })
+			.exec();
+		return listings;
 	}
 
 	async findByLandlord(id: string): Promise<Listing[]> {
@@ -137,5 +137,43 @@ export class ListingsService {
 			throw new NotFoundException("Listing not found");
 		}
 		return listing;
+	}
+
+	async likeListing(id: string, user: User): Promise<void> {
+		if (!Types.ObjectId.isValid(id)) {
+			throw new BadRequestException("Invalid listing ID");
+		}
+		const listing = await this.listingModel
+			.findByIdAndUpdate(id, {
+				$addToSet: { likedBy: user._id }
+			})
+			.exec();
+		if (!listing) {
+			throw new NotFoundException("Listing not found");
+		}
+	}
+
+	async unlikeListing(id: string, user: User): Promise<void> {
+		if (!Types.ObjectId.isValid(id)) {
+			throw new BadRequestException("Invalid listing ID");
+		}
+		const listing = await this.listingModel
+			.findByIdAndUpdate(id, {
+				$pull: { likedBy: user._id }
+			})
+			.exec();
+		if (!listing) {
+			throw new NotFoundException("Listing not found");
+		}
+	}
+
+	async getLiked(user: User): Promise<LikedListingsDto> {
+		const listings = await this.listingModel
+			.find({ likedBy: user._id })
+			.exec();
+		return {
+			data: listings,
+			total: listings.length
+		};
 	}
 }

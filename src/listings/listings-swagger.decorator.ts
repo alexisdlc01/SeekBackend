@@ -7,6 +7,7 @@ import {
 	Step3ListingDto
 } from "./dto/create-listing.dto";
 import { Listing } from "./listings.schema";
+import { LikedListingsDto } from "./dto/liked-listings.dto";
 
 export const ApiDraftDocs = () =>
 	applyDecorators(
@@ -102,6 +103,31 @@ export const ApiGetByIdDocs = () =>
 
 export const ApiVerifyListingDocs = () =>
 	applyDecorators(
+		ApiResponse({ status: 400, type: ErrorDto }),
+		ApiResponse({ status: 401, type: ErrorDto }),
+		ApiResponse({ status: 404, type: ErrorDto })
+	);
+
+export const ApiLikeListingDocs = () =>
+	applyDecorators(
+		ApiResponse({ status: 204 }),
+		ApiResponse({ status: 400, type: ErrorDto }),
+		ApiResponse({ status: 401, type: ErrorDto }),
+		ApiResponse({ status: 404, type: ErrorDto })
+	);
+
+export const ApiUnlikeListingDocs = () =>
+	applyDecorators(
+		ApiResponse({ status: 204 }),
+		ApiResponse({ status: 400, type: ErrorDto }),
+		ApiResponse({ status: 401, type: ErrorDto }),
+		ApiResponse({ status: 404, type: ErrorDto })
+	);
+
+
+export const ApiLikedListingsDocs = () =>
+	applyDecorators(
+		ApiResponse({ status: 200, type: Listing, isArray: true }),
 		ApiResponse({ status: 400, type: ErrorDto }),
 		ApiResponse({ status: 401, type: ErrorDto }),
 		ApiResponse({ status: 404, type: ErrorDto })

@@ -25,7 +25,7 @@ export class FlagsService {
 			throw new BadRequestException("Invalid reported user ID");
 		}
 
-        // Check if the reported user exists
+		// Check if the reported user exists
 		const reported = await this.userModel
 			.exists({
 				_id: createFlagDto.reportedUser
@@ -35,7 +35,7 @@ export class FlagsService {
 			throw new NotFoundException("User not found");
 		}
 
-        // Create the flag
+		// Create the flag
 		const flag = await this.flagModel.create({
 			text: createFlagDto.text,
 			category: createFlagDto.category,
@@ -58,7 +58,7 @@ export class FlagsService {
 		return flag;
 	}
 
-	async resolve(id: number, resolveFlagDto: ResolveFlagDto): Promise<Flag> {
+	async resolve(id: string, resolveFlagDto: ResolveFlagDto): Promise<void> {
 		if (!Types.ObjectId.isValid(id)) {
 			throw new BadRequestException("Invalid flag ID");
 		}
@@ -73,6 +73,5 @@ export class FlagsService {
 		if (!result) {
 			throw new NotFoundException("Flag not found");
 		}
-		return result.toObject();
 	}
 }

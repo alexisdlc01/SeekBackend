@@ -140,6 +140,10 @@ export class Listing {
 	@ApiProperty()
 	@Prop({ default: Date.now })
 	lastUpdated: Date;
+
+	@ApiProperty({ type: String, isArray: true })
+	@Prop({ type: [{ type: Types.ObjectId, ref: "User" }], default: [] })
+	likedBy: Types.ObjectId[];
 }
 
 export const ListingSchema = SchemaFactory.createForClass(Listing);
