@@ -21,52 +21,96 @@ export class Listing {
 	landlord: Types.ObjectId;
 
 	@ApiProperty()
-	@Prop() propertyTitle?: string;
-	@ApiProperty()
-	@Prop() numOfPeople?: number;
-	@ApiProperty()
-	@Prop() sizeSqMeters?: number;
-	@ApiProperty({ enum: PropertyType })
-	@Prop({ enum: PropertyType }) propertyType?: PropertyType;
-	@ApiProperty()
-	@Prop() bedroomsCount?: number;
-	@ApiProperty()
-	@Prop() enSuiteBedroomCount?: number;
-	@ApiProperty()
-	@Prop() bathrooms?: number;
-	@ApiProperty()
-	@Prop() registerOfTitleKey?: string;
-	@ApiProperty()
-	@Prop() propertyDesc?: string;
-	@ApiProperty()
-	@Prop({ type: [String], default: [] }) amenities?: string[];
-	@ApiProperty()
-	@Prop() streetAddress?: string;
-	@ApiProperty()
-	@Prop() cityTown?: string;
-	@ApiProperty()
-	@Prop() postcodeZIP?: string;
-	@ApiProperty()
-	@Prop() country?: string;
-	@ApiProperty()
-	@Prop() monthlyRent?: number;
-	@ApiProperty()
-	@Prop() securityDeposit?: number;
-	@ApiProperty()
-	@Prop() availableFrom?: Date;
-	@ApiProperty()
-	@Prop() availableUntil?: Date;
-	@ApiProperty({ enum: FurnishingStatus })
-	@Prop({ enum: FurnishingStatus }) furnishingStatus?: FurnishingStatus;
-	@ApiProperty({ enum: EpcRating })
-	@Prop({ enum: EpcRating }) epcRating?: EpcRating;
-	@ApiProperty()
-	@Prop({ type: [String] }) photos?: string[];
-	@ApiProperty()
-	@Prop() videoTourLink?: string;
+	@Prop()
+	propertyTitle?: string;
 
 	@ApiProperty()
-	@Prop() floorPlanImage?: string;
+	@Prop()
+	numOfPeople?: number;
+
+	@ApiProperty()
+	@Prop()
+	sizeSqMeters?: number;
+
+	@ApiProperty({ enum: PropertyType })
+	@Prop({ enum: PropertyType })
+	propertyType?: PropertyType;
+
+	@ApiProperty()
+	@Prop()
+	bedroomsCount?: number;
+
+	@ApiProperty()
+	@Prop()
+	enSuiteBedroomCount?: number;
+
+	@ApiProperty()
+	@Prop()
+	bathrooms?: number;
+
+	@ApiProperty()
+	@Prop()
+	registerOfTitleKey?: string;
+
+	@ApiProperty()
+	@Prop()
+	propertyDesc?: string;
+
+	@ApiProperty()
+	@Prop({ type: [String], default: [] })
+	amenities?: string[];
+
+	@ApiProperty()
+	@Prop()
+	streetAddress?: string;
+
+	@ApiProperty()
+	@Prop()
+	cityTown?: string;
+
+	@ApiProperty()
+	@Prop()
+	postcodeZIP?: string;
+
+	@ApiProperty()
+	@Prop()
+	country?: string;
+
+	@ApiProperty()
+	@Prop()
+	monthlyRent?: number;
+
+	@ApiProperty()
+	@Prop()
+	securityDeposit?: number;
+
+	@ApiProperty()
+	@Prop()
+	availableFrom?: Date;
+
+	@ApiProperty()
+	@Prop()
+	availableUntil?: Date;
+
+	@ApiProperty({ enum: FurnishingStatus })
+	@Prop({ enum: FurnishingStatus })
+	furnishingStatus?: FurnishingStatus;
+
+	@ApiProperty({ enum: EpcRating })
+	@Prop({ enum: EpcRating })
+	epcRating?: EpcRating;
+
+	@ApiProperty()
+	@Prop({ type: [String] })
+	photos?: string[];
+
+	@ApiProperty()
+	@Prop()
+	videoTourLink?: string;
+
+	@ApiProperty()
+	@Prop()
+	floorPlanImage?: string;
 
 	@ApiProperty()
 	@Prop({
@@ -86,13 +130,16 @@ export class Listing {
 	}[];
 
 	@ApiProperty()
-	@Prop({ default: false }) isVerified: boolean;
+	@Prop({ default: false })
+	isVerified: boolean;
 
 	@ApiProperty()
-	@Prop({ default: true }) isDraft: boolean;
+	@Prop({ default: true })
+	isDraft: boolean;
 
 	@ApiProperty()
-	@Prop({ default: Date.now }) lastUpdated: Date;
+	@Prop({ default: Date.now })
+	lastUpdated: Date;
 }
 
 export const ListingSchema = SchemaFactory.createForClass(Listing);
