@@ -14,6 +14,7 @@ import { EventsModule } from "./events/events.module";
 import { ContactModule } from "./contact/contact.module";
 import { ApplicationModule } from "./application/application.module";
 import { RedisModule } from "./redis/redis.module";
+import { FlagsModule } from './flags/flags.module';
 import * as morgan from "morgan";
 
 @Module({
@@ -35,7 +36,8 @@ import * as morgan from "morgan";
 		EventsModule,
 		ContactModule,
 		ApplicationModule,
-		RedisModule
+		RedisModule,
+		FlagsModule
 	],
 	controllers: [AppController],
 	providers: [AppService]
