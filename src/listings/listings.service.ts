@@ -14,13 +14,24 @@ import { User } from "../users/users.schema";
 import { ListingsGateway } from "./listings.gateway";
 import { InvalidRequest } from "@aws-sdk/client-s3";
 import { LikedListingsDto } from "./dto/liked-listings.dto";
+import { ConfigService } from "@nestjs/config";
+import axios from "axios";
+
+type DraftUpdateData = Partial<CreateListingDto> & {
+	location?: {
+		type: "Point";
+		coordinates: [number, number];
+	};
+	formatted_address?: string;
+};
 
 @Injectable()
 export class ListingsService {
 	constructor(
 		@InjectModel(Listing.name)
 		private readonly listingModel: Model<Listing>,
-		private readonly listingsGateway: ListingsGateway
+		private readonly listingsGateway: ListingsGateway,
+		private readonly configService: ConfigService
 	) {}
 
 	async createDraft(user: User): Promise<string> {
@@ -35,7 +46,7 @@ export class ListingsService {
 	async updateDraft(
 		listingId: string,
 		landlord: User,
-		data: Partial<CreateListingDto>
+		data: Partial<DraftUpdateData>
 	): Promise<Listing> {
 		const listing = await this.listingModel.findOneAndUpdate(
 			{
@@ -174,6 +185,31 @@ export class ListingsService {
 		return {
 			data: listings,
 			total: listings.length
+		};
+	}
+
+	async getCoordinates(
+		streetAddress: string,
+		cityTown: string,
+		postcode: string,
+		country: string
+	): Promise<{ formatted_address: string; lat: number; lng: number }> {
+		const address = `${streetAddress}, ${cityTown}, ${postcode}, ${country}`;
+		let url = "https://maps.googleapis.com/maps/api/geocode/json";
+
+		const res = await axios.get(url, {
+			params: {
+				address,
+				key: this.configService.get("GOOGLE_GEOCODING_API_KEY")
+			}
+		});
+		if (res.data.status !== "OK" || !res.data.results?.length) {
+			throw new BadRequestException("Invalid address");
+		}
+		return {
+			formatted_address: res.data.results[0].formatted_address,
+			lat: res.data.results[0].geometry.location.lat,
+			lng: res.data.results[0].geometry.location.lng
 		};
 	}
 }

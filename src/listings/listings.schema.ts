@@ -144,6 +144,32 @@ export class Listing {
 	@ApiProperty({ type: String, isArray: true })
 	@Prop({ type: [{ type: Types.ObjectId, ref: "User" }], default: [] })
 	likedBy: Types.ObjectId[];
+
+	@Prop({
+		type: {
+			type: String
+		}
+	})
+	formatted_address: string;
+
+	@ApiProperty({
+		example: { type: "Point", coordinates: [-3.1883, 55.9533] }
+	})
+	@Prop({
+		type: {
+			type: String,
+			enum: ["Point"]
+		},
+		coordinates: {
+			type: [Number]
+		}
+	})
+	location: {
+		type: "Point";
+		coordinates: [number, number]; // [lng, lat]
+	};
+
+
 }
 
 export const ListingSchema = SchemaFactory.createForClass(Listing);

@@ -35,6 +35,7 @@
 		"@nestjs/websockets": "^11.1.6",
 		"@types/cookie-parser": "^1.4.9",
 		"@types/mailgun-js": "^0.22.18",
+		"axios": "^1.13.3",
 		"bcryptjs": "^3.0.2",
 		"class-transformer": "^0.5.1",
 		"class-validator": "^0.14.2",
