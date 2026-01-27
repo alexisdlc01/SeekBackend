@@ -127,7 +127,7 @@ export const ApiUnlikeListingDocs = () =>
 
 export const ApiLikedListingsDocs = () =>
 	applyDecorators(
-		ApiResponse({ status: 200, type: Listing, isArray: true }),
+		ApiResponse({ status: 200, type: LikedListingsDto }),
 		ApiResponse({ status: 400, type: ErrorDto }),
 		ApiResponse({ status: 401, type: ErrorDto }),
 		ApiResponse({ status: 404, type: ErrorDto })
