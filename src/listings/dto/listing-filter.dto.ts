@@ -6,7 +6,8 @@ import {
 	IsString
 } from "class-validator";
 import { PropertyType } from "../enums/propertyType.enum";
-import { ApiProperty } from "@nestjs/swagger";
+import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { Type } from "class-transformer";
 
 export class ListingFilterDto {
 	@ApiProperty({ enum: PropertyType })
@@ -39,4 +40,20 @@ export class ListingFilterDto {
 	@IsArray()
 	@IsString({ each: true })
 	amenities: string[];
+
+	@ApiProperty()
+	@IsOptional()
+	@Type(() => Number)
+	@IsNumber()
+	lat?: number;
+
+	@IsOptional()
+	@Type(() => Number)
+	@IsNumber()
+	lng?: number;
+
+	@IsOptional()
+	@Type(() => Number)
+	@IsNumber()
+	radius?: number;
 }
