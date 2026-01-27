@@ -49,7 +49,7 @@ export class ListingsController {
 	constructor(
 		private readonly listingsService: ListingsService,
 		private readonly mailService: MailService
-	) {}
+	) { }
 
 	@Post("/draft")
 	@LandlordAgency()
@@ -179,7 +179,7 @@ export class ListingsController {
 	}
 
 	@Get("/:id")
-	@Superuser()
+	@Student()
 	@ApiGetByIdDocs()
 	async getById(@Param("id") id: string) {
 		return await this.listingsService.findListingById(id);
