@@ -5,7 +5,8 @@ import {
 	Get,
 	Param,
 	Patch,
-	Post
+	Post,
+	Query
 } from "@nestjs/common";
 import {
 	CreateListingDto,
@@ -41,6 +42,7 @@ import {
 	ApiUnlikeListingDocs,
 	ApiVerifyListingDocs
 } from "./swagger/listings-swagger.decorator";
+import { ListingFilterDto } from "./dto/listing-filter.dto";
 
 @Controller("listings")
 export class ListingsController {
@@ -156,13 +158,19 @@ export class ListingsController {
 		return await this.listingsService.getAllUnverifiedListings();
 	}
 
-	// TODO: Implement filters
-	// Location, Number of people, price per month, property size, property type, amenities
 	@Get("allVerified")
 	@Student()
 	@ApiGetAllVerifiedDocs()
 	async getAllVerifiedListings() {
 		return await this.listingsService.getAllVerifiedListings();
+	}
+
+	// TODO: Implement filters
+	// Location, Number of people, price per month, property size, property type, amenities
+	@Get("filter")
+	@Student()
+	async getFilteredListings(@Query() filters: ListingFilterDto) {
+		return this.listingsService.findAll(filters);
 	}
 
 	@Get("/like")

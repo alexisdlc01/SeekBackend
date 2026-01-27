@@ -16,6 +16,7 @@ import { InvalidRequest } from "@aws-sdk/client-s3";
 import { LikedListingsDto } from "./dto/liked-listings.dto";
 import { ConfigService } from "@nestjs/config";
 import axios from "axios";
+import { ListingFilterDto } from "./dto/listing-filter.dto";
 
 type DraftUpdateData = Partial<CreateListingDto> & {
 	location?: {
@@ -211,5 +212,39 @@ export class ListingsService {
 			lat: res.data.results[0].geometry.location.lat,
 			lng: res.data.results[0].geometry.location.lng
 		};
+	}
+
+	async findAll(filters: ListingFilterDto): Promise<Listing[]> {
+		const query: any = {};
+
+		if (filters.propertyType) {
+			query.propertyType = filters.propertyType;
+		}
+
+		if (filters.numOfPeople) {
+			query.numOfPeople = { $gte: filters.numOfPeople };
+		}
+
+		if (filters.monthlyRentMin || filters.monthlyRentMax) {
+			query.monthlyRent = {};
+
+			if (filters.monthlyRentMin) {
+				query.monthlyRent.$gte = filters.monthlyRentMin;
+			}
+
+			if (filters.monthlyRentMax) {
+				query.monthlyRent.$lte = filters.monthlyRentMax;
+			}
+		}
+
+		if (filters.sizeSqMeters) {
+			query.sizeSqMeters = { $gte: filters.sizeSqMeters };
+		}
+
+		if (filters.amenities && filters.amenities.length > 0) {
+			query.amenities = { $all: filters.amenities };
+		}
+
+		return this.listingModel.find(query).exec();
 	}
 }
