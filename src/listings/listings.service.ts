@@ -214,8 +214,20 @@ export class ListingsService {
 		};
 	}
 
-	async findAll(filters: ListingFilterDto): Promise<Listing[]> {
+	async filters(filters: ListingFilterDto): Promise<Listing[]> {
 		const query: any = {};
+
+		if (filters.lat && filters.lng) {
+			query.location = {
+				$near: {
+					$geometry: {
+						type: "Point",
+						coordinates: [filters.lng, filters.lat]
+					},
+					$maxDistance: filters.radius ?? 5000
+				}
+			};
+		}
 
 		if (filters.propertyType) {
 			query.propertyType = filters.propertyType;

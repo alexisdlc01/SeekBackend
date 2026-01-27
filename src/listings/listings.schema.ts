@@ -181,3 +181,5 @@ ListingSchema.index(
 		partialFilterExpression: { isDraft: true }
 	}
 );
+
+ListingSchema.index({ location: "2dsphere" });
