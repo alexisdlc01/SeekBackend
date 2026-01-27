@@ -40,7 +40,7 @@ import {
 	ApiPublishDocs,
 	ApiUnlikeListingDocs,
 	ApiVerifyListingDocs
-} from "./listings-swagger.decorator";
+} from "./swagger/listings-swagger.decorator";
 
 @Controller("listings")
 export class ListingsController {
@@ -157,6 +157,7 @@ export class ListingsController {
 	}
 
 	// TODO: Implement filters
+	// Location, Number of people, price per month, property size, property type, amenities
 	@Get("allVerified")
 	@Student()
 	@ApiGetAllVerifiedDocs()

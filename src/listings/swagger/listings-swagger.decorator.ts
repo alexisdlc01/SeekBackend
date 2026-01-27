@@ -1,13 +1,13 @@
 import { applyDecorators } from "@nestjs/common";
 import { ApiBody, ApiResponse } from "@nestjs/swagger";
-import { ErrorDto } from "../dto/errorDto.dto";
+import { ErrorDto } from "../../dto/errorDto.dto";
 import {
 	CreateListingDto,
 	Step2ListingDto,
 	Step3ListingDto
-} from "./dto/create-listing.dto";
-import { Listing } from "./listings.schema";
-import { LikedListingsDto } from "./dto/liked-listings.dto";
+} from "../dto/create-listing.dto";
+import { Listing } from "../listings.schema";
+import { LikedListingsDto } from "../dto/liked-listings.dto";
 
 export const ApiDraftDocs = () =>
 	applyDecorators(
