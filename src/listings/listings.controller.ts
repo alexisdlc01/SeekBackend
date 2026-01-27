@@ -165,10 +165,12 @@ export class ListingsController {
 		return await this.listingsService.getAllVerifiedListings();
 	}
 
+	// TODO: Implement filters
+	// Location, Number of people, price per month, property size, property type, amenities
 	@Get("filter")
 	@Student()
 	async getFilteredListings(@Query() filters: ListingFilterDto) {
-		return this.listingsService.filters(filters);
+		return this.listingsService.findAll(filters);
 	}
 
 	@Get("/like")
