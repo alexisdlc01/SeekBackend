@@ -34,7 +34,20 @@ export const ApiLoginDocs = () =>
 export const ApiSignupDocs = () =>
 	applyDecorators(
 		ApiBody({ type: CreateUserDto }),
-		ApiResponse({ status: 201 }),
+		ApiResponse({
+			status: 201,
+			schema: {
+				type: "object",
+				properties: {
+					access_token: {
+						type: "string"
+					},
+					refresh_token: {
+						type: "string"
+					}
+				}
+			}
+		}),
 		ApiResponse({
 			status: 400,
 			type: ErrorDto
