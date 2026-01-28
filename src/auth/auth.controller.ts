@@ -48,7 +48,7 @@ export class AuthController {
 		private readonly authService: AuthService,
 		private readonly usersService: UsersService,
 		private readonly configService: ConfigService
-	) {}
+	) { }
 
 	@Post("/login")
 	@UseGuards(LocalAuthGuard)
@@ -66,7 +66,7 @@ export class AuthController {
 	@ApiSignupDocs()
 	async signup(@Body() body: CreateUserDto, @Req() request: Request) {
 		const isMobile = request.headers.platform === "mobile";
-		await this.authService.signup(body, isMobile);
+		return await this.authService.signup(body, isMobile);
 	}
 
 	@Post("/verify-email")
@@ -107,7 +107,7 @@ export class AuthController {
 	@Get("/google")
 	@UseGuards(GoogleOauthGuard)
 	@ApiGoogleDocs()
-	async googleAuth() {}
+	async googleAuth() { }
 
 	@Get("/google/callback")
 	@UseGuards(GoogleOauthGuard)
