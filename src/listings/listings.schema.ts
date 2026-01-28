@@ -54,6 +54,10 @@ export class Listing {
 
 	@ApiProperty()
 	@Prop()
+	registrationNumber?: string;
+
+	@ApiProperty()
+	@Prop()
 	propertyDesc?: string;
 
 	@ApiProperty()

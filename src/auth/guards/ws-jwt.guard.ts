@@ -6,7 +6,7 @@ import {
 } from "@nestjs/common";
 import { Socket } from "socket.io";
 import { verify } from "jsonwebtoken";
-import { UsersService } from "../../users/users.service";
+import UsersService from "../../users/users.service";
 import { TokenPayload } from "../token-payload.interface";
 
 @Injectable()

@@ -9,7 +9,7 @@ import { ServerToClientEvents } from "./types/listings";
 import { UseGuards } from "@nestjs/common";
 import { WsJwtGuard } from "../auth/guards/ws-jwt.guard";
 import { SocketAuthMiddleware } from "../auth/middleware/ws.middleware";
-import { UsersService } from "../users/users.service";
+import UsersService from "../users/users.service";
 import * as process from "node:process";
 
 @WebSocketGateway({

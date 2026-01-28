@@ -1,4 +1,5 @@
 import {
+	BadRequestException,
 	ConflictException,
 	Injectable,
 	NotFoundException
@@ -9,9 +10,10 @@ import { User } from "./users.schema";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { hash } from "bcryptjs";
 import { GoogleUserDto } from "../auth/dto/google-user.dto";
+import { DocumentType } from "./types/document-type";
 
 @Injectable()
-export class UsersService {
+class UsersService {
 	constructor(
 		@InjectModel(User.name) private readonly userModel: Model<User>
 	) {}
@@ -84,4 +86,35 @@ export class UsersService {
 	async updateUser(query: FilterQuery<User>, data: UpdateQuery<User>) {
 		return this.userModel.findOneAndUpdate(query, data);
 	}
+
+	async addDocument(userId: string, documentType: DocumentType, url: string) {
+		const result = await this.userModel.updateOne(
+			{
+				_id: userId,
+				"documents.type": { $ne: documentType }
+			},
+			{
+				$push: {
+					documents: {
+						type: documentType,
+						url
+					}
+				}
+			}
+		);
+
+		if (result.matchedCount === 0) {
+			throw new BadRequestException(
+				`Document ${documentType} already exists`
+			);
+		}
+
+		return {
+			message: "Document added successfully",
+			documentType,
+			url
+		};
+	}
 }
+
+export default UsersService

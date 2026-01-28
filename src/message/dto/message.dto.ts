@@ -1,7 +1,7 @@
 import { Expose } from "class-transformer";
 import { IsEnum } from "class-validator";
 import { ApiProperty } from "@nestjs/swagger";
-import { MessageType } from "../message.schema";
+import { MessageType } from "../../conversation/message.schema";
 
 export class MessageDto {
 	@ApiProperty()

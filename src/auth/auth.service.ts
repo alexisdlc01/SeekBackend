@@ -6,7 +6,7 @@ import {
 	NotFoundException,
 	UnauthorizedException
 } from "@nestjs/common";
-import { UsersService } from "../users/users.service";
+import UsersService from "../users/users.service";
 import { compare, hash } from "bcryptjs";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
