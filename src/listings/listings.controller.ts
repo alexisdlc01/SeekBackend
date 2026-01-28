@@ -66,20 +66,7 @@ export class ListingsController {
 		@Param("id") listingId: string,
 		@Body() body: Step1ListingDto
 	) {
-		const addressData = await this.listingsService.getCoordinates(
-			body.streetAddress,
-			body.cityTown,
-			body.postcodeZIP,
-			body.country
-		);
-		return await this.listingsService.updateDraft(listingId, user, {
-			...body,
-			formatted_address: addressData.formatted_address,
-			location: {
-				type: "Point",
-				coordinates: [addressData.lng, addressData.lat]
-			}
-		});
+		return await this.listingsService.updateDraft(listingId, user, body);
 	}
 
 	@Patch(":id/createStep2")
@@ -122,7 +109,20 @@ export class ListingsController {
 		@Param("id") listingId: string,
 		@Body() body: CreateListingDto
 	) {
-		await this.listingsService.updateDraft(listingId, user, body);
+		const addressData = await this.listingsService.getCoordinates(
+			body.streetAddress,
+			body.cityTown,
+			body.postcodeZIP,
+			body.country
+		);
+		await this.listingsService.updateDraft(listingId, user, {
+			...body,
+			formatted_address: addressData.formatted_address,
+			location: {
+				type: "Point",
+				coordinates: [addressData.lng, addressData.lat]
+			}
+		});
 		await this.mailService.sendNewListingEmail(user);
 		return this.listingsService.publishDraft(listingId, user);
 	}

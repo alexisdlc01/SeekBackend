@@ -1,6 +1,6 @@
 import { Socket } from "socket.io";
 import { WsJwtGuard } from "../guards/ws-jwt.guard";
-import {UsersService} from "../../users/users.service";
+import UsersService from "../../users/users.service";
 
 export type SocketIOMiddleware = {
 	(server: Socket, next: (err?: Error) => void);

@@ -8,10 +8,10 @@ import {
 	UseGuards
 } from "@nestjs/common";
 import { CreateUserDto } from "./dto/create-user.dto";
-import { UsersService } from "./users.service";
+import UsersService from "./users.service";
 import { Serialize } from "../interceptors/serialize.interceptor";
 import { UserDto } from "./dto/user.dto";
-import { Superuser } from "../auth/decorators/role-auth.decorator";
+import { Student, Superuser } from "../auth/decorators/role-auth.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "./users.schema";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -24,6 +24,7 @@ import {
 	ApiSetProfilePicDocs,
 	ApiSetUsernameDocs
 } from "./swagger/users-swagger.decorator";
+import { AddDocumentDto } from "./dto/add-document.dto";
 
 @Controller("users")
 @Serialize(UserDto)
@@ -65,5 +66,15 @@ export class UsersController {
 	@ApiGetAllUsersDocs()
 	async getAllUsers() {
 		return this.usersService.getAllUsers();
+	}
+
+	@Post("addDocument")
+	@Student()
+	async addDocument(@Body() body: AddDocumentDto, @CurrentUser() user: User) {
+		await this.usersService.addDocument(
+			user._id.toString(),
+			body.documentType,
+			body.url
+		);
 	}
 }

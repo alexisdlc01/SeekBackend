@@ -10,7 +10,7 @@ import {
 } from "@nestjs/websockets";
 import { Server, Socket } from "socket.io";
 import { PresenceService } from "./presence.service";
-import { UsersService } from "./users.service";
+import UsersService from "./users.service";
 import { SocketAuthMiddleware } from "../auth/middleware/ws.middleware";
 import { User } from "./users.schema";
 import { ConnectedUser } from "../auth/decorators/connected-user.decorator";

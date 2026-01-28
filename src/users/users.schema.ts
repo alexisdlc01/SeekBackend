@@ -2,6 +2,18 @@ import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { SchemaTypes, Types } from "mongoose";
 import { Role } from "../auth/role.enum";
 import { Listing } from "../listings/listings.schema";
+import { DocumentType } from "./types/document-type";
+
+@Schema({ _id: false })
+export class UserDocument {
+	@Prop({ enum: DocumentType, required: true })
+	type: DocumentType;
+
+	@Prop({ required: true })
+	url: string;
+}
+
+export const UserDocumentSchema = SchemaFactory.createForClass(UserDocument);
 
 @Schema()
 export class User {
@@ -30,7 +42,7 @@ export class User {
 	isVerified: boolean;
 
 	@Prop()
-	lastSeen?: Date
+	lastSeen?: Date;
 
 	@Prop()
 	emailVerificationToken?: string;
@@ -49,6 +61,9 @@ export class User {
 
 	@Prop()
 	resetPasswordExpires?: Date;
+
+	@Prop({ type: [UserDocumentSchema], default: [] })
+	documents: UserDocument[];
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
@@ -64,12 +79,5 @@ UserSchema.virtual("applications", {
 	ref: "Application",
 	localField: "_id",
 	foreignField: "applicants",
-	justOne: false,
+	justOne: false
 });
-
-// identification
-// proof of income
-// guarantor agreement
-// landlord reference
-// character reference
-

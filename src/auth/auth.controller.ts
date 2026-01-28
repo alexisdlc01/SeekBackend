@@ -20,7 +20,7 @@ import { CreateUserDto } from "../users/dto/create-user.dto";
 import { Serialize } from "../interceptors/serialize.interceptor";
 import { UserDto } from "../users/dto/user.dto";
 import { VerifyEmailDto } from "./dto/verify-email.dto";
-import { UsersService } from "../users/users.service";
+import UsersService from "../users/users.service";
 import { GoogleOauthGuard } from "./guards/google-oauth.guard";
 import { ConfigService } from "@nestjs/config";
 import { GoogleUserDto } from "./dto/google-user.dto";

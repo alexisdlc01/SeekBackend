@@ -95,6 +95,11 @@ export class CreateListingDto {
 	@IsString()
 	registerOfTitleKey: string;
 
+	@ApiProperty()
+	@IsOptional()
+	@IsString()
+	registrationNumber: string;
+
 	@ApiProperty({ enum: FurnishingStatus })
 	@IsEnum(FurnishingStatus)
 	furnishingStatus: FurnishingStatus;
@@ -215,6 +220,11 @@ export class Step1ListingDto {
 	@IsOptional()
 	@IsString()
 	registerOfTitleKey: string;
+
+	@ApiProperty()
+	@IsOptional()
+	@IsString()
+	registrationNumber: string;
 }
 
 export class Step2ListingDto {

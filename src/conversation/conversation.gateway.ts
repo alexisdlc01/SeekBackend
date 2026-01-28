@@ -7,7 +7,7 @@ import {
 import { UseGuards } from "@nestjs/common";
 import { WsJwtGuard } from "../auth/guards/ws-jwt.guard";
 import { Server, Socket } from "socket.io";
-import { UsersService } from "../users/users.service";
+import UsersService from "../users/users.service";
 import { SocketAuthMiddleware } from "../auth/middleware/ws.middleware";
 import { InjectModel } from "@nestjs/mongoose";
 import { Message } from "./message.schema";
