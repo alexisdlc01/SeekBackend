@@ -92,6 +92,7 @@ export class CreateListingDto {
 	availableUntil: string;
 
 	@ApiProperty()
+	@IsOptional()
 	@IsString()
 	registerOfTitleKey: string;
 
