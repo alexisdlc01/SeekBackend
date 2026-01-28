@@ -23,6 +23,9 @@ export class Conversation {
 
 	@Prop({ type: [SchemaTypes.ObjectId], ref: "User", default: [] })
 	users: Types.ObjectId[];
+
+	@Prop({ type: SchemaTypes.ObjectId, ref: "Message" })
+	lastMessage?: Types.ObjectId;
 }
 
 export const ConversationSchema = SchemaFactory.createForClass(Conversation);
@@ -37,13 +40,13 @@ ConversationSchema.virtual("messages", {
 	justOne: false
 });
 
-ConversationSchema.virtual("lastMessage", {
-	ref: "Message",
-	localField: "_id",
-	foreignField: "conversation",
-	justOne: true,
-	options: { sort: { createdAt: -1 } }
-});
+// ConversationSchema.virtual("lastMessage", {
+// 	ref: "Message",
+// 	localField: "_id",
+// 	foreignField: "conversation",
+// 	justOne: true,
+// 	options: { sort: { createdAt: -1 } }
+// });
 
 ConversationSchema.pre(
 	"deleteOne",

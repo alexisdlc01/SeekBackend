@@ -67,3 +67,9 @@ UserSchema.virtual("applications", {
 	justOne: false,
 });
 
+// identification
+// proof of income
+// guarantor agreement
+// landlord reference
+// character reference
+

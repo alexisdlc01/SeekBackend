@@ -1,7 +1,6 @@
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { SchemaTypes, Types } from "mongoose";
 import { ApplicationStage } from "./enums/application-stage.enum";
-import { User } from "../users/users.schema";
 
 @Schema()
 export class Application {
