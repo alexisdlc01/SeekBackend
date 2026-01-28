@@ -30,7 +30,7 @@ export class AuthService {
 		private readonly jwtService: JwtService
 	) {}
 
-	generateOtp = () => randomInt(100000, 999999).toString();
+	generateOtp = () => randomInt(10000, 100000).toString();
 
 	async signup(body: CreateUserDto, isMobile: boolean) {
 		if (body.role === Role.STUDENT || body.role === Role.LANDLORD_AGENCY) {
