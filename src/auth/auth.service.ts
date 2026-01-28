@@ -46,6 +46,31 @@ export class AuthService {
 				})) as User;
 
 				await this.mailService.sendOtpEmail(newUser.email, otp);
+
+				const expiresAccessToken = new Date();
+				expiresAccessToken.setMilliseconds(
+					expiresAccessToken.getTime() +
+						parseInt(
+							this.configService.getOrThrow<string>(
+								"JWT_ACCESS_TOKEN_EXPIRATION_MS"
+							)
+						)
+				);
+				const tokenPayload: TokenPayload = {
+					userId: newUser._id.toHexString()
+				};
+
+				const access_token = this.jwtService.sign(tokenPayload, {
+					secret: this.configService.getOrThrow(
+						"JWT_ACCESS_TOKEN_SECRET"
+					),
+					expiresIn: `${this.configService.getOrThrow("JWT_ACCESS_TOKEN_EXPIRATION_MS")}ms`
+				});
+
+				return {
+					access_token,
+					refresh_token: newUser.refreshToken
+				};
 			} else {
 				const token = randomBytes(32).toString("hex");
 
