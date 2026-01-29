@@ -15,7 +15,7 @@ export class UserDocument {
 
 export const UserDocumentSchema = SchemaFactory.createForClass(UserDocument);
 
-@Schema()
+@Schema({ timestamps: true })
 export class User {
 	@Prop({ type: SchemaTypes.ObjectId, auto: true })
 	_id: Types.ObjectId;

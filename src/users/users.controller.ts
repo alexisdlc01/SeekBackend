@@ -29,13 +29,13 @@ import { AddDocumentDto } from "./dto/add-document.dto";
 @Controller("users")
 @Serialize(UserDto)
 export class UsersController {
-	constructor(private readonly usersService: UsersService) {}
+	constructor(private readonly usersService: UsersService) { }
 
 	@Get(":id")
 	@Superuser()
 	@ApiGetUserDocs()
 	async getUser(@Param("id") id: string) {
-		return await this.usersService.getUser({ _id: id });
+		return await this.usersService.getUserById(id);
 	}
 
 	@Post()

@@ -11,7 +11,7 @@ import { TokenPayload } from "../token-payload.interface";
 
 @Injectable()
 export class WsJwtGuard implements CanActivate {
-	constructor(private readonly usersService: UsersService) {}
+	constructor(private readonly usersService: UsersService) { }
 
 	async canActivate(context: ExecutionContext): Promise<boolean> {
 		// TODO: RBAC
@@ -34,7 +34,7 @@ export class WsJwtGuard implements CanActivate {
 
 		const userId = payload.userId;
 		try {
-			const user = await usersService.getUser({ _id: userId });
+			const user = await usersService.getUserById(userId);
 			if (user) {
 				server.data.user = user;
 			}

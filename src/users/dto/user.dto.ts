@@ -1,4 +1,4 @@
-import { Expose } from "class-transformer";
+import { Expose, Transform } from "class-transformer";
 import { IsOptional } from "class-validator";
 import { Role } from "../../auth/role.enum";
 import { ApiProperty } from "@nestjs/swagger";
@@ -6,6 +6,7 @@ import { ApiProperty } from "@nestjs/swagger";
 export class UserDto {
 	@ApiProperty()
 	@Expose()
+	@Transform(({ obj }) => obj?._id.toString())
 	_id: string;
 
 	@ApiProperty()
