@@ -45,7 +45,8 @@ export class AuthService {
 				const newUser = await this.usersRepo.create({
 					...body,
 					otpVerificationCode: otp,
-					emailVerificationTokenExpires: expires
+					emailVerificationTokenExpires: expires,
+					password: await hash(body.password, 10)
 				});
 
 				if (!newUser) {
@@ -81,10 +82,11 @@ export class AuthService {
 			} else {
 				const token = randomBytes(32).toString("hex");
 
-				const newUser = await this.usersService.create({
+				const newUser = await this.usersRepo.create({
 					...body,
 					emailVerificationToken: token,
-					emailVerificationTokenExpires: expires
+					emailVerificationTokenExpires: expires,
+					password: await hash(body.password, 10)
 				});
 
 				if (!newUser) {
