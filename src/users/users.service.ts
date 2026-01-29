@@ -11,20 +11,27 @@ import { CreateUserDto } from "./dto/create-user.dto";
 import { hash } from "bcryptjs";
 import { GoogleUserDto } from "../auth/dto/google-user.dto";
 import { DocumentType } from "./types/document-type";
+import { plainToInstance } from "class-transformer";
+import { UserDto } from "./dto/user.dto";
+import { UsersRepository } from "./users.repository";
 
 @Injectable()
 class UsersService {
 	constructor(
-		@InjectModel(User.name) private readonly userModel: Model<User>
-	) {}
+		@InjectModel(User.name) private readonly userModel: Model<User>,
+		private readonly userRepo: UsersRepository
+	) { }
 
 	async create(data: CreateUserDto) {
 		try {
-			const userDoc = await new this.userModel({
+			const result = await new this.userModel({
 				...data,
 				password: await hash(data.password, 10)
 			}).save();
-			return userDoc.toObject() as User;
+
+			return plainToInstance(UserDto, result.toObject(), {
+				excludeExtraneousValues: true
+			});
 		} catch (err) {
 			if (err.code === 11000 && err.keyPattern?.email) {
 				throw new ConflictException("Email already in use.");
@@ -33,23 +40,36 @@ class UsersService {
 	}
 
 	async createGoogleUser(data: GoogleUserDto) {
-		try {
-			const userDoc = await new this.userModel({
-				...data
-			}).save();
-			return userDoc.toObject() as User;
-		} catch (err) {
-			console.log("error saving user to db in createGoogleUser", err);
-		}
+		const result = await new this.userModel({
+			...data
+		}).save();
+		return plainToInstance(UserDto, result.toObject(), {
+			excludeExtraneousValues: true
+		});
 	}
 
-	async getUser(query: FilterQuery<User>) {
-		const user = (await this.userModel.findOne(query))?.toObject();
-		if (!user) {
+	async getUserById(id: string) {
+		const result = await this.userRepo.getUserById(id);
+		if (!result) {
 			throw new NotFoundException("User not found.");
 		}
-		return user;
+
+		return plainToInstance(UserDto, result, {
+			excludeExtraneousValues: true
+		});
 	}
+
+	async getUserByEmail(email: string) {
+		const result = await this.userRepo.getUserByEmail(email);
+		if (!result) {
+			throw new NotFoundException("User not found.");
+		}
+		return plainToInstance(UserDto, result, {
+			excludeExtraneousValues: true
+		});
+	}
+
+
 
 	async setProfilePic(url: string, user: User) {
 		const updated = await this.userModel.findByIdAndUpdate(
@@ -62,7 +82,9 @@ class UsersService {
 			throw new NotFoundException("User not found.");
 		}
 
-		return updated.toObject() as User;
+		return plainToInstance(UserDto, updated.toObject(), {
+			excludeExtraneousValues: true
+		});
 	}
 
 	async setUsername(newName: string, user: User) {
@@ -76,15 +98,27 @@ class UsersService {
 			throw new NotFoundException("User not found.");
 		}
 
-		return updated.toObject() as User;
+		return plainToInstance(UserDto, updated.toObject(), {
+			excludeExtraneousValues: true
+		});
 	}
 
 	async getAllUsers() {
-		return this.userModel.find({});
+		const users = await this.userModel.find({}).exec();
+		return users.map(user => plainToInstance(UserDto, user.toObject(), {
+			excludeExtraneousValues: true
+		}));
 	}
 
 	async updateUser(query: FilterQuery<User>, data: UpdateQuery<User>) {
-		return this.userModel.findOneAndUpdate(query, data);
+		const update = await this.userModel.findOneAndUpdate(query, data);
+		if (!update) {
+			throw new NotFoundException("User not found.");
+		}
+
+		return plainToInstance(UserDto, update.toObject(), {
+			excludeExtraneousValues: true
+		});
 	}
 
 	async addDocument(userId: string, documentType: DocumentType, url: string) {

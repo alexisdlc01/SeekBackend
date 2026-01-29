@@ -19,9 +19,9 @@ import { RedisModule } from "../redis/redis.module";
 		JwtStrategy,
 		JwtRefreshStrategy,
 		GoogleStrategy,
-		MailService
+		MailService,
 	],
 	controllers: [AuthController],
 	exports: [MailService]
 })
-export class AuthModule {}
+export class AuthModule { }

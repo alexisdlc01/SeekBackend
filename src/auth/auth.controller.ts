@@ -2,8 +2,6 @@ import {
 	Body,
 	Controller,
 	Get,
-	Inject,
-	NotFoundException,
 	Post,
 	Req,
 	Res,
@@ -20,14 +18,12 @@ import { CreateUserDto } from "../users/dto/create-user.dto";
 import { Serialize } from "../interceptors/serialize.interceptor";
 import { UserDto } from "../users/dto/user.dto";
 import { VerifyEmailDto } from "./dto/verify-email.dto";
-import UsersService from "../users/users.service";
 import { GoogleOauthGuard } from "./guards/google-oauth.guard";
 import { ConfigService } from "@nestjs/config";
 import { GoogleUserDto } from "./dto/google-user.dto";
 import { ConfirmPasswordResetDto } from "./dto/confirm-password-reset.dto";
 import { ForgotPasswordDto } from "./dto/forgot-password.dto";
 import { ApiTags } from "@nestjs/swagger";
-import Redis from "ioredis";
 import {
 	ApiConfirmPasswordDocs,
 	ApiCurrentUserDocs,
@@ -40,13 +36,13 @@ import {
 	ApiSignupDocs,
 	ApiVerifyEmailDocs
 } from "./swagger/auth-swagger.decorator";
+import { plainToInstance } from "class-transformer";
 
 @ApiTags("Auth")
 @Controller("auth")
 export class AuthController {
 	constructor(
 		private readonly authService: AuthService,
-		private readonly usersService: UsersService,
 		private readonly configService: ConfigService
 	) { }
 
@@ -77,14 +73,7 @@ export class AuthController {
 		@Res({ passthrough: true }) response: Response
 	) {
 		const isMobile = request.headers.platform === "mobile";
-		let user = (await this.usersService.getUser({
-			_id: body.userId
-		})) as User | null;
-		if (!user) {
-			throw new NotFoundException("User not found");
-		}
-
-		user = await this.authService.verifyEmail(user, body.token, isMobile);
+		const user = await this.authService.verifyEmail(body.userId, body.token, isMobile);
 		return this.authService.login(user, response, isMobile);
 	}
 
@@ -117,27 +106,10 @@ export class AuthController {
 		@Res({ passthrough: true }) response: Response
 	) {
 		const requestUser = request.user as GoogleUserDto;
-		let savedUser: User;
-		try {
-			savedUser = await this.usersService.getUser({
-				email: requestUser.email
-			});
-		} catch {
-			savedUser = (await this.usersService.createGoogleUser({
-				...(request.user as GoogleUserDto)
-			})) as User;
-		}
-
-		if (!savedUser.isGoogle) {
-			await this.usersService.updateUser(
-				{ email: savedUser.email },
-				{ isGoogle: true }
-			);
-		}
-
 		const isMobile = request.headers.platform === "mobile";
-		await this.authService.login(savedUser, response, isMobile);
 
+		const savedUser = await this.authService.createGoogleUser(requestUser);
+		await this.authService.login(savedUser, response, isMobile);
 		if (!isMobile) {
 			const baseUrl = this.configService.getOrThrow("FRONTEND_URL");
 			response.redirect(`${baseUrl}/`);
@@ -149,7 +121,12 @@ export class AuthController {
 	@Serialize(UserDto)
 	@ApiCurrentUserDocs()
 	async currentUser(@CurrentUser() user: User) {
-		return user;
+		console.log("user info", user);
+		const instance = plainToInstance(UserDto, user, {
+			excludeExtraneousValues: true,
+		});
+		console.log("instance", instance);
+		return instance;
 	}
 
 	@Post("/refresh")

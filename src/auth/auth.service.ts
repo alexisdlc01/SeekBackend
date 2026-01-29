@@ -1,6 +1,5 @@
 import {
 	BadRequestException,
-	Inject,
 	Injectable,
 	InternalServerErrorException,
 	NotFoundException,
@@ -18,17 +17,21 @@ import { randomBytes } from "crypto";
 import { addMinutes } from "date-fns";
 import { MailService } from "./mail.service";
 import { Role } from "./role.enum";
-import Redis from "ioredis";
-import { createHash, randomInt } from "node:crypto";
+import { randomInt } from "node:crypto";
+import { UsersRepository } from "src/users/users.repository";
+import { UserDto } from "src/users/dto/user.dto";
+import { GoogleUserDto } from "./dto/google-user.dto";
+import { NotFoundError } from "rxjs";
 
 @Injectable()
 export class AuthService {
 	constructor(
+		private readonly usersRepo: UsersRepository,
 		private readonly usersService: UsersService,
 		private readonly configService: ConfigService,
 		private readonly mailService: MailService,
 		private readonly jwtService: JwtService
-	) {}
+	) { }
 
 	generateOtp = () => randomInt(10000, 100000).toString();
 
@@ -39,22 +42,26 @@ export class AuthService {
 			if (isMobile) {
 				const otp = this.generateOtp();
 
-				const newUser = (await this.usersService.create({
+				const newUser = await this.usersRepo.create({
 					...body,
 					otpVerificationCode: otp,
 					emailVerificationTokenExpires: expires
-				})) as User;
+				});
+
+				if (!newUser) {
+					throw new BadRequestException("Unable to create user.");
+				}
 
 				await this.mailService.sendOtpEmail(newUser.email, otp);
 
 				const expiresAccessToken = new Date();
 				expiresAccessToken.setMilliseconds(
 					expiresAccessToken.getTime() +
-						parseInt(
-							this.configService.getOrThrow<string>(
-								"JWT_ACCESS_TOKEN_EXPIRATION_MS"
-							)
+					parseInt(
+						this.configService.getOrThrow<string>(
+							"JWT_ACCESS_TOKEN_EXPIRATION_MS"
 						)
+					)
 				);
 				const tokenPayload: TokenPayload = {
 					userId: newUser._id.toHexString()
@@ -74,11 +81,15 @@ export class AuthService {
 			} else {
 				const token = randomBytes(32).toString("hex");
 
-				const newUser = (await this.usersService.create({
+				const newUser = await this.usersService.create({
 					...body,
 					emailVerificationToken: token,
 					emailVerificationTokenExpires: expires
-				})) as User;
+				});
+
+				if (!newUser) {
+					throw new BadRequestException("Unable to create user.");
+				}
 
 				await this.mailService.sendVerificationEmail(
 					newUser.email,
@@ -93,21 +104,21 @@ export class AuthService {
 		const expiresAccessToken = new Date();
 		expiresAccessToken.setMilliseconds(
 			expiresAccessToken.getTime() +
-				parseInt(
-					this.configService.getOrThrow<string>(
-						"JWT_ACCESS_TOKEN_EXPIRATION_MS"
-					)
+			parseInt(
+				this.configService.getOrThrow<string>(
+					"JWT_ACCESS_TOKEN_EXPIRATION_MS"
 				)
+			)
 		);
 
 		const expiresRefreshToken = new Date();
 		expiresRefreshToken.setMilliseconds(
 			expiresRefreshToken.getTime() +
-				parseInt(
-					this.configService.getOrThrow<string>(
-						"JWT_REFRESH_TOKEN_EXPIRATION_MS"
-					)
+			parseInt(
+				this.configService.getOrThrow<string>(
+					"JWT_REFRESH_TOKEN_EXPIRATION_MS"
 				)
+			)
 		);
 
 		const tokenPayload: TokenPayload = {
@@ -160,10 +171,12 @@ export class AuthService {
 	}
 
 	async verifyUser(email: string, password: string) {
+		const user = await this.usersRepo.getUserByEmail(email);
+		if (!user) {
+			throw new NotFoundException("User not found.");
+		}
+
 		try {
-			const user = await this.usersService.getUser({
-				email
-			});
 			const authenticated = await compare(password, user.password);
 			if (!authenticated) {
 				throw new UnauthorizedException();
@@ -175,10 +188,12 @@ export class AuthService {
 	}
 
 	async verifyUserRefreshToken(refreshToken: string, userId: string) {
+		const user = await this.usersRepo.getUserById(userId);
+		if (!user) {
+			throw new NotFoundException("User not found.");
+		}
+
 		try {
-			const user = (await this.usersService.getUser({
-				_id: userId
-			})) as User;
 			const [authenticated] = await Promise.all([
 				compare(refreshToken, user.refreshToken as string)
 			]);
@@ -191,7 +206,12 @@ export class AuthService {
 		}
 	}
 
-	async verifyEmail(user: User, token: string, isMobile: boolean) {
+	async verifyEmail(id: string, token: string, isMobile: boolean) {
+		const user = await this.usersRepo.getUserById(id);
+		if (!user) {
+			throw new NotFoundException("User not found.");
+		}
+
 		const expirationDate = user.emailVerificationTokenExpires as Date;
 		const currentDate = new Date();
 		if (expirationDate < currentDate) {
@@ -233,8 +253,11 @@ export class AuthService {
 	}
 
 	async resetPassword(email: string) {
-		const user = await this.usersService.getUser({ email });
-		if (!user) throw new NotFoundException("User not found");
+		const user = await this.usersRepo.getUserByEmail(email);
+		if (!user) {
+			throw new NotFoundException("User not found");
+		}
+
 		if (user.isGoogle)
 			throw new BadRequestException(
 				"This account uses Google login. Please sign in with Google."
@@ -266,7 +289,7 @@ export class AuthService {
 		token: string,
 		newPassword: string
 	) {
-		const user = await this.usersService.getUser({ _id: userId });
+		const user = await this.usersRepo.getUserById(userId);
 
 		if (!user) throw new NotFoundException("No user found with this id");
 		if (!user.resetPasswordToken)
@@ -320,5 +343,28 @@ export class AuthService {
 						: "lax"
 			});
 		}
+	}
+
+	async createGoogleUser(user: GoogleUserDto) {
+		let savedUser = await this.usersRepo.getUserByEmail(user.email);
+		if (!savedUser) {
+			savedUser = await this.usersRepo.createPaswordless({
+				imageUrl: user.imageUrl,
+				name: user.name,
+				email: user.email,
+				role: user.role,
+			});
+		}
+		if (!savedUser) {
+			throw new NotFoundException("Unable to create or find user.");
+		}
+
+		if (!savedUser.isGoogle) {
+			await this.usersService.updateUser(
+				{ email: savedUser.email },
+				{ isGoogle: true }
+			);
+		}
+		return savedUser;
 	}
 }
