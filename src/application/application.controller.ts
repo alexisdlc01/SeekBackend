@@ -6,11 +6,13 @@ import { User } from "../users/users.schema";
 import { Student } from "../auth/decorators/role-auth.decorator";
 import { Applicant } from "./decorators/applicant.decorator";
 import { OwnsListing } from "../listings/decorators/owns-listing.decorator";
+import { ApiCreateApplicationDocs, ApiGetAllMyApplicationsDocs, ApiGetApplicationById, ApiGetShareLink, ApiJoinApplication, ApiSendApplication } from "./swagger/application-swagger.decorator";
 
 @Controller("application")
 export class ApplicationController {
-	constructor(private readonly applicationService: ApplicationService) {}
+	constructor(private readonly applicationService: ApplicationService) { }
 
+	@ApiCreateApplicationDocs()
 	@Post("create")
 	@Student()
 	async createApplication(
@@ -20,6 +22,7 @@ export class ApplicationController {
 		await this.applicationService.createApplication(body.listingId, user);
 	}
 
+	@ApiGetAllMyApplicationsDocs()
 	@Get("mine")
 	@Student()
 	async getAllMyApplications(@CurrentUser() user: User) {
@@ -28,24 +31,28 @@ export class ApplicationController {
 		);
 	}
 
+	@ApiGetApplicationById()
 	@Get(":id")
 	@Applicant()
 	async getApplication(@Param("id") id: string) {
 		return this.applicationService.findApplicationById(id);
 	}
 
+	@ApiGetShareLink()
 	@Get(":id/share")
 	@Applicant()
 	async getShareLink(@Param("id") id: string) {
 		return this.applicationService.getShareLinkForApplication(id);
 	}
 
+	@ApiJoinApplication()
 	@Post(":id/join")
 	@Student()
 	async joinApplication(@CurrentUser() user: User, @Param("id") id: string) {
 		return this.applicationService.joinApplication(id, user._id.toString());
 	}
 
+	@ApiSendApplication()
 	@Post(":id/send")
 	@Applicant()
 	async sendApplication(@Param("id") id: string) {

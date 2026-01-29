@@ -18,7 +18,7 @@ export class ApplicationService {
 		private readonly applicationModel: Model<Application>,
 		private readonly listingService: ListingsService,
 		private readonly configService: ConfigService
-	) {}
+	) { }
 
 	async createApplication(
 		listingId: string,
@@ -37,13 +37,13 @@ export class ApplicationService {
 		});
 	}
 
-	async getAllMyApplications(userId: string): Promise<Application[] | null> {
+	async getAllMyApplications(userId: string): Promise<Application[]> {
 		return await this.applicationModel
 			.find({ applicants: userId })
 			.populate("listing")
 			.populate("landlord", "name email")
 			.sort({ createdAt: -1 })
-			.exec();
+			.exec() ?? [];
 	}
 
 	async findApplicationById(id: string): Promise<Application> {

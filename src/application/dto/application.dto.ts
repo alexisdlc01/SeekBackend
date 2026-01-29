@@ -13,7 +13,7 @@ export class ApplicationDto {
 	@Expose()
 	listing: Listing;
 
-	@ApiProperty()
+	@ApiProperty({ type: Conversation })
 	@Expose()
 	conversation: Conversation;
 
@@ -21,7 +21,7 @@ export class ApplicationDto {
 	@Expose()
 	landlord: string;
 
-	@ApiProperty()
+	@ApiProperty({ isArray: true, type: String })
 	@Expose()
 	applicants: string[];
 

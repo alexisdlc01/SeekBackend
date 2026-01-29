@@ -6,8 +6,21 @@ import { ApplicationDto } from "../dto/application.dto";
 export const ApiCreateApplicationDocs = () =>
 	applyDecorators(
 		ApiResponse({
-			status: 201,
-			type: ApplicationDto
+			status: 401,
+			type: ErrorDto
+		}),
+		ApiResponse({
+			status: 404,
+			type: ErrorDto
+		})
+	);
+
+export const ApiGetAllMyApplicationsDocs = () =>
+	applyDecorators(
+		ApiResponse({
+			status: 200,
+			type: ApplicationDto,
+			isArray: true
 		}),
 		ApiResponse({
 			status: 401,
@@ -18,3 +31,68 @@ export const ApiCreateApplicationDocs = () =>
 			type: ErrorDto
 		})
 	);
+
+export const ApiGetApplicationById = () =>
+	applyDecorators(
+		ApiResponse({
+			status: 200,
+			type: ApplicationDto,
+		}),
+		ApiResponse({
+			status: 401,
+			type: ErrorDto
+		}),
+		ApiResponse({
+			status: 404,
+			type: ErrorDto
+		})
+	);
+
+export const ApiGetShareLink = () =>
+	applyDecorators(
+		ApiResponse({
+			status: 200,
+			type: String,
+		}),
+		ApiResponse({
+			status: 401,
+			type: ErrorDto
+		}),
+		ApiResponse({
+			status: 404,
+			type: ErrorDto
+		})
+	);
+
+export const ApiJoinApplication = () =>
+	applyDecorators(
+		ApiResponse({
+			status: 200,
+			type: ApplicationDto,
+		}),
+		ApiResponse({
+			status: 401,
+			type: ErrorDto
+		}),
+		ApiResponse({
+			status: 404,
+			type: ErrorDto
+		})
+	);
+
+export const ApiSendApplication = () =>
+	applyDecorators(
+		ApiResponse({
+			status: 201,
+			type: ApplicationDto,
+		}),
+		ApiResponse({
+			status: 401,
+			type: ErrorDto
+		}),
+		ApiResponse({
+			status: 404,
+			type: ErrorDto
+		})
+	);
+
