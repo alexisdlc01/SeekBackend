@@ -88,6 +88,7 @@ export class CreateListingDto {
 	availableFrom: string;
 
 	@ApiProperty()
+	@IsOptional()
 	@IsDateString()
 	availableUntil: string;
 
