@@ -89,3 +89,16 @@ export const ApiGetAllUsersDocs = () =>
 			type: ErrorDto
 		})
 	);
+
+export const ApiAddDocumentDocs = () =>
+	applyDecorators(
+		ApiResponse({
+			status: 200,
+			isArray: true
+		}),
+		ApiResponse({
+			status: 401,
+			type: ErrorDto
+		})
+	);
+

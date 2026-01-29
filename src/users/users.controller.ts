@@ -18,6 +18,7 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { SetProfilePicDto } from "./dto/set-profile-pic.dto";
 import { SetUsernameDto } from "./dto/set-username.dto";
 import {
+	ApiAddDocumentDocs,
 	ApiCreateUserDocs,
 	ApiGetAllUsersDocs,
 	ApiGetUserDocs,
@@ -70,6 +71,7 @@ export class UsersController {
 
 	@Post("addDocument")
 	@Student()
+	@ApiAddDocumentDocs()
 	async addDocument(@Body() body: AddDocumentDto, @CurrentUser() user: User) {
 		await this.usersService.addDocument(
 			user._id.toString(),
