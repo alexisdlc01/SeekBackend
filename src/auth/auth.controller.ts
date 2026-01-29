@@ -121,11 +121,9 @@ export class AuthController {
 	@Serialize(UserDto)
 	@ApiCurrentUserDocs()
 	async currentUser(@CurrentUser() user: User) {
-		console.log("user info", user);
 		const instance = plainToInstance(UserDto, user, {
 			excludeExtraneousValues: true,
 		});
-		console.log("instance", instance);
 		return instance;
 	}
 

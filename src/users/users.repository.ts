@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { ConflictException, Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { User } from "./users.schema";
 import { Model } from "mongoose";
@@ -21,7 +21,14 @@ export class UsersRepository {
 	}
 
 	async create(data: CreateUserDto): Promise<User | null> {
-		return await this.userModel.create(data);
+		try {
+			return await this.userModel.create(data);
+		} catch (err) {
+			if (err.code === 11000 && err.keyPattern?.email) {
+				throw new ConflictException("Email already in use.");
+			}
+			return null;
+		}
 	}
 
 	async createPaswordless(data: Omit<CreateUserDto, "password">): Promise<User | null> {
