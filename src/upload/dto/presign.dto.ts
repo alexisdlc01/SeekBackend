@@ -1,7 +1,4 @@
-import {
-	IsEnum,
-	IsString
-} from "class-validator";
+import { IsEnum, IsString } from "class-validator";
 import { ApiProperty } from "@nestjs/swagger";
 
 export enum UploadFolder {
@@ -21,7 +18,7 @@ export class PresignReqDto {
 	@ApiProperty()
 	@IsString()
 	filename: string;
-};
+}
 
 export class PresignResDto {
 	@ApiProperty()
@@ -35,4 +32,4 @@ export class PresignResDto {
 	@ApiProperty()
 	@IsString()
 	key: string;
-};
+}

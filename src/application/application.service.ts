@@ -30,11 +30,21 @@ export class ApplicationService {
 
 		const listing = await this.listingService.findListingById(listingId);
 
-		return await this.applicationModel.create({
+		// Totally fucked
+		const alreadyApplied = await this.applicationModel.exists({
 			listing: listing._id,
-			landlord: listing.landlord,
-			applicants: [user._id]
+			applicants: user._id
 		});
+
+		if (!alreadyApplied) {
+			return await this.applicationModel.create({
+				listing: listing._id,
+				landlord: listing.landlord,
+				applicants: [user._id]
+			});
+		}
+		throw new BadRequestException();
+
 	}
 
 	async getAllMyApplications(userId: string): Promise<Application[]> {
