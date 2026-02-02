@@ -19,6 +19,9 @@ export class Application {
 	@Prop({ type: [{ type: SchemaTypes.ObjectId, ref: "User" }] })
 	applicants: Types.ObjectId[];
 
+	@Prop({ type: SchemaTypes.ObjectId })
+	owner: Types.ObjectId;
+
 	@Prop({ default: Date.now, index: true })
 	createdAt: Date;
 

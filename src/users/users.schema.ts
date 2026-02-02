@@ -11,6 +11,9 @@ export class UserDocument {
 
 	@Prop({ required: true })
 	url: string;
+
+	@Prop({ required: false })
+	key: string;
 }
 
 export const UserDocumentSchema = SchemaFactory.createForClass(UserDocument);

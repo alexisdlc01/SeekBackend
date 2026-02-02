@@ -33,6 +33,7 @@ export class UploadService {
 		fileType: string,
 		folder: "public" | "private"
 	) {
+		console.log(folder, folder === "private");
 		const bucket =
 			folder === "private" ? this.privateBucket : this.publicBucket;
 
@@ -41,16 +42,16 @@ export class UploadService {
 		const command =
 			folder === "private"
 				? new PutObjectCommand({
-						Bucket: bucket,
-						Key: key,
-						ContentType: fileType,
-						ACL: "private"
-					})
+					Bucket: bucket,
+					Key: key,
+					ContentType: fileType,
+					ACL: "private"
+				})
 				: new PutObjectCommand({
-						Bucket: bucket,
-						Key: key,
-						ContentType: fileType
-					});
+					Bucket: bucket,
+					Key: key,
+					ContentType: fileType
+				});
 
 		const uploadUrl = await getSignedUrl(this.s3Client, command, {
 			expiresIn: 60 // 1 min

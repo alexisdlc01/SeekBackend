@@ -17,8 +17,8 @@ export class Conversation {
 	createdAt: Date;
 
 	@ApiProperty()
-	@Prop()
-	groupDescription?: string;
+	@Prop({ default: "" })
+	groupDescription: string;
 
 	@ApiProperty()
 	@Prop()

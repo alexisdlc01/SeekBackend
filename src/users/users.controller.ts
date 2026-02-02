@@ -21,6 +21,7 @@ import {
 	ApiAddDocumentDocs,
 	ApiCreateUserDocs,
 	ApiGetAllUsersDocs,
+	ApiGetDocumentTypes,
 	ApiGetUserDocs,
 	ApiSetProfilePicDocs,
 	ApiSetUsernameDocs
@@ -32,11 +33,11 @@ import { AddDocumentDto } from "./dto/add-document.dto";
 export class UsersController {
 	constructor(private readonly usersService: UsersService) { }
 
-	@Get(":id")
-	@Superuser()
-	@ApiGetUserDocs()
-	async getUser(@Param("id") id: string) {
-		return await this.usersService.getUserById(id);
+	@Get("document-types")
+	@Student()
+	@ApiGetDocumentTypes()
+	async documentTypes(@CurrentUser() user: User) {
+		return await this.usersService.documentTypes(user);
 	}
 
 	@Post()
@@ -76,7 +77,15 @@ export class UsersController {
 		await this.usersService.addDocument(
 			user._id.toString(),
 			body.documentType,
-			body.url
+			body.url,
+			body.key
 		);
+	}
+
+	@Get(":id")
+	@Superuser()
+	@ApiGetUserDocs()
+	async getUser(@Param("id") id: string) {
+		return await this.usersService.getUserById(id);
 	}
 }

@@ -1,7 +1,6 @@
 export enum ApplicationStage {
 	SENT = "SENT",
 	NOT_SENT = "NOT_SENT",
-	UNDER_REVIEW = "UNDER_REVIEW",
 	ACCEPTED = "ACCEPTED",
 	REJECTED = "REJECTED"
 }

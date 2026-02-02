@@ -1,11 +1,12 @@
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Conversation } from "./converstaion.schema";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 import { ConfigService } from "@nestjs/config";
 import { SendMessageDto } from "./dto/send-message.dto";
 import { Message } from "./message.schema";
 import { ConversationGateway } from "./conversation.gateway";
+import { User } from "src/users/users.schema";
 
 @Injectable()
 export class ConversationService {
@@ -16,7 +17,7 @@ export class ConversationService {
 		private readonly messageModel: Model<Message>,
 		private readonly conversationGateway: ConversationGateway,
 		private readonly configService: ConfigService
-	) {}
+	) { }
 
 	async sendMessage(
 		body: SendMessageDto,
@@ -35,5 +36,16 @@ export class ConversationService {
 			{ lastMessage: message._id }
 		);
 		this.conversationGateway.emitNewMessage(conversationId, message);
+	}
+
+	async create(
+		name: string,
+		user: User,
+	) {
+		return await this.conversationModel.create({
+			name: name,
+			createdBy: user._id,
+			users: [user._id]
+		});
 	}
 }

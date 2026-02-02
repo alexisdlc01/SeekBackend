@@ -14,6 +14,7 @@ import { DocumentType } from "./types/document-type";
 import { plainToInstance } from "class-transformer";
 import { UserDto } from "./dto/user.dto";
 import { UsersRepository } from "./users.repository";
+import { DocumentTypesDto } from "./dto/provided-docs.dto";
 
 @Injectable()
 class UsersService {
@@ -121,21 +122,21 @@ class UsersService {
 		});
 	}
 
-	async addDocument(userId: string, documentType: DocumentType, url: string) {
-		const result = await this.userModel.updateOne(
+	async addDocument(userId: string, documentType: DocumentType, url: string, key: string) {
+		const result = await this.userModel.bulkWrite([
 			{
-				_id: userId,
-				"documents.type": { $ne: documentType }
+				updateOne: {
+					filter: { _id: userId },
+					update: { $pull: { documents: { type: documentType } } }
+				}
 			},
 			{
-				$push: {
-					documents: {
-						type: documentType,
-						url
-					}
+				updateOne: {
+					filter: { _id: userId },
+					update: { $push: { documents: { type: documentType, url, key } } }
 				}
 			}
-		);
+		])
 
 		if (result.matchedCount === 0) {
 			throw new BadRequestException(
@@ -148,6 +149,12 @@ class UsersService {
 			documentType,
 			url
 		};
+	}
+
+	async documentTypes(user: User): Promise<DocumentTypesDto> {
+		return {
+			data: user.documents.map(el => el.type) ?? [],
+		}
 	}
 }
 

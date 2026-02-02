@@ -5,7 +5,6 @@ import { Conversation, ConversationSchema } from "./converstaion.schema";
 import { ConversationController } from "./conversation.controller";
 import { ConversationGateway } from "./conversation.gateway";
 import { ConversationService } from "./conversation.service";
-import { MessageModule } from "../message/message.module";
 import { Message, MessageSchema } from "./message.schema";
 import { UsersModule } from "../users/users.module";
 
@@ -24,9 +23,9 @@ import { UsersModule } from "../users/users.module";
 			}
 		]),
 		UsersModule,
-		SharedModule
+		SharedModule,
 	],
 	controllers: [ConversationController],
-	providers: [ConversationGateway, ConversationService]
+	providers: [ConversationGateway, ConversationService],
 })
-export class ConversationModule {}
+export class ConversationModule { }

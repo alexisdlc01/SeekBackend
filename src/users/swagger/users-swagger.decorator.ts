@@ -5,6 +5,7 @@ import { ErrorDto } from "../../dto/errorDto.dto";
 import { CreateUserDto } from "../dto/create-user.dto";
 import { SetProfilePicDto } from "../dto/set-profile-pic.dto";
 import { SetUsernameDto } from "../dto/set-username.dto";
+import { DocumentTypesDto } from "../dto/provided-docs.dto";
 
 export const ApiGetUserDocs = () =>
 	applyDecorators(
@@ -94,7 +95,19 @@ export const ApiAddDocumentDocs = () =>
 	applyDecorators(
 		ApiResponse({
 			status: 200,
-			isArray: true
+		}),
+		ApiResponse({
+			status: 401,
+			type: ErrorDto
+		})
+	);
+
+
+export const ApiGetDocumentTypes = () =>
+	applyDecorators(
+		ApiResponse({
+			status: 200,
+			type: DocumentTypesDto
 		}),
 		ApiResponse({
 			status: 401,
