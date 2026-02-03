@@ -1,8 +1,9 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { Expose } from "class-transformer";
+import { Expose, Type } from "class-transformer";
 import { Listing } from "../../listings/listings.schema";
 import { ApplicationStage } from "../enums/application-stage.enum";
 import { ConversationDto } from "src/conversation/dto/conversation.dto";
+import { ValidateNested } from "class-validator";
 
 export class ApplicationDto {
 	@ApiProperty()
@@ -15,6 +16,8 @@ export class ApplicationDto {
 
 	@ApiProperty({ type: ConversationDto })
 	@Expose()
+	@ValidateNested({ each: true })
+	@Type(() => ConversationDto)
 	conversation: ConversationDto;
 
 	@ApiProperty()
