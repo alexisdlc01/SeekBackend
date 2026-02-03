@@ -16,6 +16,9 @@ export class ApplicationOwnerGuard implements CanActivate {
 	async canActivate(context: ExecutionContext): Promise<boolean> {
 		const request = context.switchToHttp().getRequest();
 		const user: User = request.user;
+		if (!user) {
+			throw new NotFoundException("Failed to get user for account.");
+		}
 
 		const applicationId = request.params.id;
 
@@ -24,9 +27,9 @@ export class ApplicationOwnerGuard implements CanActivate {
 			throw new NotFoundException("Application not found.");
 		}
 
-		const isOwner = application.owner === user._id;
+		const isOwner = application.owner.toString() === user._id.toString();
 		if (!isOwner) {
-			throw new ForbiddenException("You are not an applicant");
+			throw new ForbiddenException("You are not the application owner");
 		}
 
 		return true;

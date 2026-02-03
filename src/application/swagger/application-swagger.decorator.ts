@@ -6,6 +6,10 @@ import { ApplicationDto } from "../dto/application.dto";
 export const ApiCreateApplicationDocs = () =>
 	applyDecorators(
 		ApiResponse({
+			status: 201,
+			type: ApplicationDto
+		}),
+		ApiResponse({
 			status: 401,
 			type: ErrorDto
 		}),

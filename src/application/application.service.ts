@@ -46,7 +46,8 @@ export class ApplicationService {
 			listing: listing._id,
 			landlord: listing.landlord,
 			applicants: [user._id],
-			conversation: conversation._id
+			conversation: conversation._id,
+			owner: user._id
 		});
 	}
 
@@ -149,7 +150,7 @@ export class ApplicationService {
 	async join(
 		applicationId: string,
 		userId: string
-	): Promise<Application> {
+	): Promise<void> {
 		const application: Application | null =
 			await this.applicationModel.findById(applicationId);
 
@@ -165,14 +166,11 @@ export class ApplicationService {
 			await this.applicationModel.findOneAndUpdate(
 				{ _id: applicationId },
 				{ $addToSet: { applicants: new Types.ObjectId(userId) } },
-				{ new: true }
 			);
 
 		if (!updatedApplication) {
 			throw new NotFoundException("Application not found");
 		}
-
-		return updatedApplication;
 	}
 
 	async sendApplication(applicationId: string): Promise<void> {

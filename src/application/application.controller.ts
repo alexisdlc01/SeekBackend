@@ -6,7 +6,7 @@ import { User } from "../users/users.schema";
 import { LandlordAgency, Student } from "../auth/decorators/role-auth.decorator";
 import { Applicant } from "./decorators/applicant.decorator";
 import { OwnsListing } from "../listings/decorators/owns-listing.decorator";
-import { ApiCreateApplicationDocs, ApiGetAllMyApplicationsDocs, ApiGetApplicationById, ApiGetShareLink, ApiJoinApplication, ApiSendApplication } from "./swagger/application-swagger.decorator";
+import { ApiCreateApplicationDocs, ApiGetAllMyApplicationsDocs, ApiGetApplicationById, ApiJoinApplication, ApiSendApplication } from "./swagger/application-swagger.decorator";
 import { OwnsAppliedListingGuard } from "./guards/owns-applied-listing.guard";
 import { ApplicationOwnerGuard } from "./guards/application-owner.guard";
 
@@ -21,49 +21,49 @@ export class ApplicationController {
 		@CurrentUser() user: User,
 		@Body() body: CreateApplicationDto
 	) {
-		await this.applicationService.create(body.listingId, user);
+		return await this.applicationService.create(body.listingId, user);
 	}
 
 	@ApiJoinApplication()
 	@Student()
 	@Patch(":id/join")
 	async joinApplication(@CurrentUser() user: User, @Param("id") id: string) {
-		return this.applicationService.join(id, user._id.toString());
+		this.applicationService.join(id, user._id.toString());
 	}
 
 	@ApiSendApplication()
-	@Student()
 	@UseGuards(ApplicationOwnerGuard)
-	@Post(":id/send")
+	@Student()
+	@Patch(":id/send")
 	async sendApplication(@Param("id") id: string) {
 		return this.applicationService.send(id);
 	}
 
-	@LandlordAgency()
 	@UseGuards(OwnsAppliedListingGuard)
+	@LandlordAgency()
 	@Patch(":id/approve")
 	async approveApplication(@Param("id") id: string) {
 		this.applicationService.approve(id);
 	}
 
-	@LandlordAgency()
 	@UseGuards(OwnsAppliedListingGuard)
+	@LandlordAgency()
 	@Patch(":id/reject")
 	async rejectApplication(@Param("id") id: string) {
 		this.applicationService.reject(id);
 	}
 
 	@ApiJoinApplication()
-	@Student()
 	@UseGuards(ApplicationOwnerGuard)
+	@Student()
 	@Patch(":id/delete")
 	async deleteApplication(@Param("id") id: string) {
 		return this.applicationService.delete(id);
 	}
 
 
-	@LandlordAgency()
 	@OwnsListing()
+	@LandlordAgency()
 	@Get("listing/:id")
 	async getAllForListing(@Param("id") listingId: string) {
 		return this.applicationService.getAllByListing(listingId);
