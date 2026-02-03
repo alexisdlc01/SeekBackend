@@ -4,7 +4,7 @@ import { ConversationService } from "./conversation.service";
 import { StudentOrLandlord } from "../auth/decorators/role-auth.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "../users/users.schema";
-import { GetMessagesApiDocs } from "./message-swagger.decorator";
+import { GetConversationApiDocs } from "./message-swagger.decorator";
 
 @Controller("conversation")
 export class ConversationController {
@@ -24,12 +24,12 @@ export class ConversationController {
 		);
 	}
 
-	@GetMessagesApiDocs()
-	@Get(":id/messages")
+	@GetConversationApiDocs()
+	@Get(":id")
 	@StudentOrLandlord()
-	async getMessages(
+	async getConversation(
 		@Param("id") id: string,
 	) {
-		return await this.conversationService.getAll(id);
+		return await this.conversationService.getById(id);
 	}
 }

@@ -1,40 +1,37 @@
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
-import { ApiProperty } from "@nestjs/swagger";
 import { SchemaTypes, Types } from "mongoose";
+import { Message } from "./message.schema";
 
-@Schema()
+@Schema({
+	toJSON: { virtuals: true },
+	toObject: { virtuals: true },
+})
 export class Conversation {
-	@ApiProperty()
 	@Prop({ type: SchemaTypes.ObjectId, auto: true })
 	_id: Types.ObjectId;
 
-	@ApiProperty()
 	@Prop({ required: true, trim: true })
 	name: string;
 
-	@ApiProperty()
 	@Prop({ default: Date.now, index: true })
 	createdAt: Date;
 
-	@ApiProperty()
 	@Prop({ default: "" })
 	groupDescription: string;
 
-	@ApiProperty()
 	@Prop()
 	avatar?: string;
 
-	@ApiProperty()
 	@Prop({ type: SchemaTypes.ObjectId, ref: "User" })
 	createdBy: Types.ObjectId;
 
-	@ApiProperty({ isArray: true, type: String })
 	@Prop({ type: [SchemaTypes.ObjectId], ref: "User", default: [] })
 	users: Types.ObjectId[];
 
-	@ApiProperty()
 	@Prop({ type: SchemaTypes.ObjectId, ref: "Message" })
 	lastMessage?: Types.ObjectId;
+
+	messages: Message[]
 }
 
 export const ConversationSchema = SchemaFactory.createForClass(Conversation);
@@ -46,16 +43,7 @@ ConversationSchema.virtual("messages", {
 	ref: "Message",
 	localField: "_id",
 	foreignField: "conversation",
-	justOne: false
 });
-
-// ConversationSchema.virtual("lastMessage", {
-// 	ref: "Message",
-// 	localField: "_id",
-// 	foreignField: "conversation",
-// 	justOne: true,
-// 	options: { sort: { createdAt: -1 } }
-// });
 
 ConversationSchema.pre(
 	"deleteOne",

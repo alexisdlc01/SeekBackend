@@ -91,7 +91,7 @@ export class ApplicationService {
 			.sort({ createdAt: -1 })
 			.exec() ?? [];
 		return applications.map(application => plainToInstance(ApplicationDto, application.toObject(), {
-			excludeExtraneousValues: true
+			excludeExtraneousValues: true,
 		}));
 	}
 

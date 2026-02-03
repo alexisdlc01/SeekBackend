@@ -1,13 +1,15 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Conversation } from "./converstaion.schema";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 import { SendMessageDto } from "./dto/send-message.dto";
 import { Message } from "./message.schema";
 import { ConversationGateway } from "./conversation.gateway";
 import { User } from "src/users/users.schema";
 import { MessageDto } from "src/message/dto/message.dto";
 import { plainToInstance } from "class-transformer";
+import { ConversationDto } from "./dto/conversation.dto";
+import { NotFound } from "@aws-sdk/client-s3";
 
 @Injectable()
 export class ConversationService {
@@ -63,5 +65,20 @@ export class ConversationService {
 		return messages.map(message => plainToInstance(MessageDto, message.toObject(), {
 			excludeExtraneousValues: true
 		}))
+	}
+
+	async getById(id: string): Promise<ConversationDto> {
+		const conv = await this.conversationModel.findById(new Types.ObjectId(id))
+			.populate({
+				path: "messages",
+				populate: { path: "sender" }
+			})
+			.exec();
+		if (!conv) {
+			throw new NotFoundException("no such conversation exists");
+		}
+		return plainToInstance(ConversationDto, conv.toObject(), {
+			excludeExtraneousValues: true
+		});
 	}
 }

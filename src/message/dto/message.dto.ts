@@ -1,4 +1,4 @@
-import { Expose, Type } from "class-transformer";
+import { Expose, Transform, Type } from "class-transformer";
 import { IsEnum, ValidateNested } from "class-validator";
 import { ApiProperty } from "@nestjs/swagger";
 import { MessageType } from "../../conversation/message.schema";
@@ -7,6 +7,7 @@ import { UserDto } from "src/users/dto/user.dto";
 export class MessageDto {
 	@ApiProperty()
 	@Expose()
+	@Transform(({ obj }) => obj?._id.toString())
 	_id: string;
 
 	@ApiProperty()

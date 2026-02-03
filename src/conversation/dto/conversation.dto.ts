@@ -1,11 +1,12 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { Expose } from "class-transformer";
-import { IsOptional } from "class-validator";
+import { Expose, Transform, Type } from "class-transformer";
+import { IsOptional, ValidateNested } from "class-validator";
 import { MessageDto } from "src/message/dto/message.dto";
 
 export class ConversationDto {
 	@ApiProperty()
 	@Expose()
+	@Transform(({ obj }) => obj?._id.toString())
 	_id: string;
 
 	@ApiProperty()
@@ -35,5 +36,7 @@ export class ConversationDto {
 
 	@ApiProperty({ type: MessageDto, isArray: true })
 	@Expose()
-	messages: MessageDto[];
+	@ValidateNested({ each: true })
+	@Type(() => MessageDto)
+	messages: MessageDto[] = [];
 }

@@ -37,17 +37,3 @@ export const MessageSchema = SchemaFactory.createForClass(Message);
 
 MessageSchema.index({ conversation: 1, createdAt: -1 });
 MessageSchema.index({ sender: 1, createdAt: -1 });
-
-MessageSchema.virtual("conversationDoc", {
-	ref: "Conversation",
-	localField: "conversation",
-	foreignField: "_id",
-	justOne: true
-});
-
-MessageSchema.virtual("senderDoc", {
-	ref: "User",
-	localField: "sender",
-	foreignField: "_id",
-	justOne: true
-});
