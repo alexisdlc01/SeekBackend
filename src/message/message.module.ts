@@ -6,8 +6,8 @@ import { MessageController } from './message.controller';
 
 @Module({
 	imports: [
-		SharedModule
+		SharedModule,
 	],
-	controllers: [MessageController]
+	controllers: [MessageController],
 })
-export class MessageModule {}
+export class MessageModule { }

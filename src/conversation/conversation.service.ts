@@ -1,12 +1,13 @@
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Conversation } from "./converstaion.schema";
-import { Model, Types } from "mongoose";
-import { ConfigService } from "@nestjs/config";
+import { Model } from "mongoose";
 import { SendMessageDto } from "./dto/send-message.dto";
 import { Message } from "./message.schema";
 import { ConversationGateway } from "./conversation.gateway";
 import { User } from "src/users/users.schema";
+import { MessageDto } from "src/message/dto/message.dto";
+import { plainToInstance } from "class-transformer";
 
 @Injectable()
 export class ConversationService {
@@ -16,7 +17,6 @@ export class ConversationService {
 		@InjectModel(Message.name)
 		private readonly messageModel: Model<Message>,
 		private readonly conversationGateway: ConversationGateway,
-		private readonly configService: ConfigService
 	) { }
 
 	async sendMessage(
@@ -27,15 +27,21 @@ export class ConversationService {
 		const message = await this.messageModel.create({
 			sender: senderId,
 			conversation: conversationId,
-			data: body.messageData,
+			data: body.message,
 			deliveredTo: [],
 			seenUsers: []
 		});
+
+
 		await this.conversationModel.updateOne(
 			{ _id: conversationId },
 			{ lastMessage: message._id }
 		);
-		this.conversationGateway.emitNewMessage(conversationId, message);
+
+		const messageDto = plainToInstance(MessageDto, message.toObject(), {
+			excludeExtraneousValues: true,
+		})
+		this.conversationGateway.emitNewMessage(conversationId, messageDto);
 	}
 
 	async create(
@@ -47,5 +53,15 @@ export class ConversationService {
 			createdBy: user._id,
 			users: [user._id]
 		});
+	}
+
+	async getAll(id: string): Promise<MessageDto[]> {
+		const messages = await this.messageModel.find({
+			conversation: id
+		}).populate("sender").exec();
+
+		return messages.map(message => plainToInstance(MessageDto, message.toObject(), {
+			excludeExtraneousValues: true
+		}))
 	}
 }

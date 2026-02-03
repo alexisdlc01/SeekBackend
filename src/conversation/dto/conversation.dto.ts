@@ -1,5 +1,6 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { Expose } from "class-transformer";
+import { IsOptional } from "class-validator";
 import { MessageDto } from "src/message/dto/message.dto";
 
 export class ConversationDto {
@@ -10,6 +11,11 @@ export class ConversationDto {
 	@ApiProperty()
 	@Expose()
 	name: string;
+
+	@ApiProperty({ required: false })
+	@IsOptional()
+	@Expose()
+	lastMessage?: MessageDto;
 
 	@ApiProperty()
 	@Expose()

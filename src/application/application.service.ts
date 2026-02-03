@@ -11,6 +11,8 @@ import { User } from "../users/users.schema";
 import { ApplicationStage } from "./enums/application-stage.enum";
 import { Conversation } from "src/conversation/converstaion.schema";
 import { UsersRepository } from "src/users/users.repository";
+import { ApplicationDto } from "./dto/application.dto";
+import { plainToInstance } from "class-transformer";
 
 @Injectable()
 export class ApplicationService {
@@ -26,7 +28,7 @@ export class ApplicationService {
 	async create(
 		listingId: string,
 		user: User
-	): Promise<Application> {
+	): Promise<ApplicationDto> {
 		if (!Types.ObjectId.isValid(listingId)) {
 			throw new BadRequestException("Invalid listing ID");
 		}
@@ -42,12 +44,15 @@ export class ApplicationService {
 			users: [user._id]
 		});
 
-		return await this.applicationModel.create({
+		const application = await this.applicationModel.create({
 			listing: listing._id,
 			landlord: listing.landlord,
 			applicants: [user._id],
 			conversation: conversation._id,
 			owner: user._id
+		});
+		return plainToInstance(ApplicationDto, application.toObject(), {
+			excludeExtraneousValues: true
 		});
 	}
 
@@ -78,17 +83,20 @@ export class ApplicationService {
 		});
 	}
 
-	async getAllMyApplications(userId: string): Promise<Application[]> {
-		return await this.applicationModel
+	async getAllMyApplications(userId: string): Promise<ApplicationDto[]> {
+		const applications = await this.applicationModel
 			.find({ applicants: userId })
 			.populate("listing")
 			.populate("conversation")
 			.sort({ createdAt: -1 })
 			.exec() ?? [];
+		return applications.map(application => plainToInstance(ApplicationDto, application.toObject(), {
+			excludeExtraneousValues: true
+		}));
 	}
 
-	async getAllByListing(listingId: string): Promise<Application[]> {
-		return await this.applicationModel
+	async getAllByListing(listingId: string): Promise<ApplicationDto[]> {
+		const applications = await this.applicationModel
 			.find({
 				listing: listingId,
 				$or: [{
@@ -102,6 +110,9 @@ export class ApplicationService {
 			})
 			.sort({ createdAt: -1 })
 			.exec() ?? [];
+		return applications.map(application => plainToInstance(ApplicationDto, application.toObject(), {
+			excludeExtraneousValues: true
+		}));
 	}
 
 	async approve(applicationId: string): Promise<void> {
@@ -134,7 +145,7 @@ export class ApplicationService {
 			.exec();
 	}
 
-	async findApplicationById(id: string): Promise<Application> {
+	async findApplicationById(id: string): Promise<ApplicationDto> {
 		if (!Types.ObjectId.isValid(id)) {
 			throw new BadRequestException("Invalid application ID");
 		}
@@ -144,7 +155,9 @@ export class ApplicationService {
 		if (!application) {
 			throw new NotFoundException("Application not found");
 		}
-		return application;
+		return plainToInstance(ApplicationDto, application.toObject(), {
+			excludeExtraneousValues: true
+		});
 	}
 
 	async join(

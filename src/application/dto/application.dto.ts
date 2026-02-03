@@ -1,8 +1,8 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { Expose } from "class-transformer";
 import { Listing } from "../../listings/listings.schema";
-import { Conversation } from "../../conversation/converstaion.schema";
 import { ApplicationStage } from "../enums/application-stage.enum";
+import { ConversationDto } from "src/conversation/dto/conversation.dto";
 
 export class ApplicationDto {
 	@ApiProperty()
@@ -13,9 +13,9 @@ export class ApplicationDto {
 	@Expose()
 	listing: Listing;
 
-	@ApiProperty({ type: Conversation })
+	@ApiProperty({ type: ConversationDto })
 	@Expose()
-	conversation: Conversation;
+	conversation: ConversationDto;
 
 	@ApiProperty()
 	@Expose()
@@ -28,6 +28,10 @@ export class ApplicationDto {
 	@ApiProperty()
 	@Expose()
 	createdAt: Date;
+
+	@ApiProperty()
+	@Expose()
+	owner: string;
 
 	@ApiProperty({ enum: ApplicationStage })
 	@Expose()

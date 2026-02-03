@@ -1,13 +1,14 @@
-import { Body, Controller, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post } from "@nestjs/common";
 import { SendMessageDto } from "./dto/send-message.dto";
 import { ConversationService } from "./conversation.service";
 import { StudentOrLandlord } from "../auth/decorators/role-auth.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "../users/users.schema";
+import { GetMessagesApiDocs } from "./message-swagger.decorator";
 
 @Controller("conversation")
 export class ConversationController {
-	constructor(private readonly conversationService: ConversationService) {}
+	constructor(private readonly conversationService: ConversationService) { }
 
 	@Post(":id/sendMessage")
 	@StudentOrLandlord()
@@ -21,5 +22,14 @@ export class ConversationController {
 			conversationId,
 			user._id.toString()
 		);
+	}
+
+	@GetMessagesApiDocs()
+	@Get(":id/messages")
+	@StudentOrLandlord()
+	async getMessages(
+		@Param("id") id: string,
+	) {
+		return await this.conversationService.getAll(id);
 	}
 }

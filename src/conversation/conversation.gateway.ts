@@ -12,6 +12,7 @@ import { SocketAuthMiddleware } from "../auth/middleware/ws.middleware";
 import { InjectModel } from "@nestjs/mongoose";
 import { Message } from "./message.schema";
 import { Model } from "mongoose";
+import { MessageDto } from "src/message/dto/message.dto";
 
 @WebSocketGateway({
 	namespace: "conversation",
@@ -28,8 +29,8 @@ export class ConversationGateway implements OnGatewayInit {
 	constructor(
 		private readonly usersService: UsersService,
 		@InjectModel(Message.name)
-		private readonly messageModel: Model<Message>
-	) {}
+		private readonly messageModel: Model<Message>,
+	) { }
 
 	afterInit(server: Server) {
 		server.use(SocketAuthMiddleware(this.usersService));
@@ -40,7 +41,7 @@ export class ConversationGateway implements OnGatewayInit {
 		client.join(conversationId);
 	}
 
-	emitNewMessage(conversationId: string, message: any) {
+	emitNewMessage(conversationId: string, message: MessageDto) {
 		this.server.to(conversationId).emit("message:new", message);
 	}
 

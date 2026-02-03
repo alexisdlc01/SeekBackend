@@ -7,7 +7,6 @@ import {
 } from "@nestjs/common";
 import { ApplicationService } from "../application.service";
 import { User } from "../../users/users.schema";
-import { Application } from "../application.schema";
 
 @Injectable()
 export class ApplicationOwnerGuard implements CanActivate {
@@ -22,12 +21,12 @@ export class ApplicationOwnerGuard implements CanActivate {
 
 		const applicationId = request.params.id;
 
-		const application: Application = await this.applicationService.findApplicationById(applicationId);
+		const application = await this.applicationService.findApplicationById(applicationId);
 		if (!application) {
 			throw new NotFoundException("Application not found.");
 		}
 
-		const isOwner = application.owner.toString() === user._id.toString();
+		const isOwner = application.owner === user._id.toString();
 		if (!isOwner) {
 			throw new ForbiddenException("You are not the application owner");
 		}

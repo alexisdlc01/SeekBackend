@@ -1,7 +1,8 @@
-import { Expose } from "class-transformer";
-import { IsEnum } from "class-validator";
+import { Expose, Type } from "class-transformer";
+import { IsEnum, ValidateNested } from "class-validator";
 import { ApiProperty } from "@nestjs/swagger";
 import { MessageType } from "../../conversation/message.schema";
+import { UserDto } from "src/users/dto/user.dto";
 
 export class MessageDto {
 	@ApiProperty()
@@ -10,7 +11,9 @@ export class MessageDto {
 
 	@ApiProperty()
 	@Expose()
-	sender: string;
+	@ValidateNested({ each: true })
+	@Type(() => UserDto)
+	sender: UserDto;
 
 	@ApiProperty({ enum: MessageType })
 	@IsEnum(MessageType)
