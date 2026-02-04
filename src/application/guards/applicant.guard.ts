@@ -9,7 +9,7 @@ import { User } from "../../users/users.schema";
 
 @Injectable()
 export class ApplicantGuard implements CanActivate {
-	constructor(private readonly applicationService: ApplicationService) {}
+	constructor(private readonly applicationService: ApplicationService) { }
 
 	async canActivate(context: ExecutionContext): Promise<boolean> {
 		const request = context.switchToHttp().getRequest();

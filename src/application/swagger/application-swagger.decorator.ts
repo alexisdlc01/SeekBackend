@@ -40,6 +40,7 @@ export const ApiGetApplicationById = () =>
 	applyDecorators(
 		ApiResponse({
 			status: 200,
+			type: ApplicationDto
 		}),
 		ApiResponse({
 			status: 401,
