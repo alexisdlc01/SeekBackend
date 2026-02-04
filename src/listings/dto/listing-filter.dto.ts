@@ -47,6 +47,7 @@ export class ListingFilterDto {
 	@IsNumber()
 	lat?: number;
 
+	@ApiProperty()
 	@IsOptional()
 	@Type(() => Number)
 	@IsNumber()
