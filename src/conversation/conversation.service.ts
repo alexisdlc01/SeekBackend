@@ -10,6 +10,7 @@ import { MessageDto } from "src/message/dto/message.dto";
 import { plainToInstance } from "class-transformer";
 import { ConversationDto } from "./dto/conversation.dto";
 import { NotFound } from "@aws-sdk/client-s3";
+import { ApplicationDto } from "src/application/dto/application.dto";
 
 @Injectable()
 export class ConversationService {
@@ -73,6 +74,7 @@ export class ConversationService {
 				path: "messages",
 				populate: { path: "sender" }
 			})
+			.populate("users")
 			.exec();
 		if (!conv) {
 			throw new NotFoundException("no such conversation exists");

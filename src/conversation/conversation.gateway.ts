@@ -38,6 +38,7 @@ export class ConversationGateway implements OnGatewayInit {
 
 	@SubscribeMessage("conversation:join")
 	joinConversation(client: Socket, conversationId: string) {
+		console.log("join event recieved");
 		client.join(conversationId);
 	}
 

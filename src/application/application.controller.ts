@@ -3,7 +3,7 @@ import { ApplicationService } from "./application.service";
 import { CreateApplicationDto } from "./dto/create-application.dto";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "../users/users.schema";
-import { LandlordAgency, Student } from "../auth/decorators/role-auth.decorator";
+import { LandlordAgency, Student, StudentOrLandlord } from "../auth/decorators/role-auth.decorator";
 import { Applicant } from "./decorators/applicant.decorator";
 import { OwnsListing } from "../listings/decorators/owns-listing.decorator";
 import { ApiCreateApplicationDocs, ApiGetAllMyApplicationsDocs, ApiGetApplicationById, ApiJoinApplication, ApiSendApplication } from "./swagger/application-swagger.decorator";
@@ -62,12 +62,20 @@ export class ApplicationController {
 	}
 
 
-	@OwnsListing()
+	@UseGuards(OwnsAppliedListingGuard)
 	@LandlordAgency()
 	@Get("listing/:id")
 	async getAllForListing(@Param("id") listingId: string) {
 		return this.applicationService.getAllByListing(listingId);
 	}
+
+	@ApiJoinApplication()
+	@StudentOrLandlord()
+	@Get("conversation/:id")
+	async getByConversation(@Param("id") conversationId: string) {
+		return this.applicationService.getByConversation(conversationId);
+	}
+
 
 
 	@ApiGetAllMyApplicationsDocs()

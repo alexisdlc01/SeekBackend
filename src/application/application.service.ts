@@ -87,7 +87,12 @@ export class ApplicationService {
 		const applications = await this.applicationModel
 			.find({ applicants: userId })
 			.populate("listing")
-			.populate("conversation")
+			.populate({
+				path: "conversation",
+				populate: {
+					path: "lastMessage",
+				}
+			})
 			.sort({ createdAt: -1 })
 			.exec() ?? [];
 		return applications.map(application => plainToInstance(ApplicationDto, application.toObject(), {
@@ -201,5 +206,17 @@ export class ApplicationService {
 		} else {
 			throw new BadRequestException("Application already send.");
 		}
+	}
+
+	async getByConversation(conversationId: string): Promise<ApplicationDto> {
+		const application = await this.applicationModel
+			.findOne({ conversation: conversationId })
+			.exec();
+		if (!application) {
+			throw new NotFoundException("Application not found");
+		}
+		return plainToInstance(ApplicationDto, application.toObject(), {
+			excludeExtraneousValues: true,
+		});
 	}
 }

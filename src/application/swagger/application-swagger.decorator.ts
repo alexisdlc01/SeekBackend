@@ -113,3 +113,20 @@ export const ApiAcceptApplication = () =>
 		})
 	);
 
+export const ApiByConversation = () =>
+	applyDecorators(
+		ApiResponse({
+			status: 200,
+			type: ApplicationDto
+		}),
+		ApiResponse({
+			status: 401,
+			type: ErrorDto
+		}),
+		ApiResponse({
+			status: 404,
+			type: ErrorDto
+		})
+	);
+
+
