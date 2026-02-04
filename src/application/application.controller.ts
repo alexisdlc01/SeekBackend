@@ -6,7 +6,7 @@ import { User } from "../users/users.schema";
 import { LandlordAgency, Student, StudentOrLandlord } from "../auth/decorators/role-auth.decorator";
 import { Applicant } from "./decorators/applicant.decorator";
 import { OwnsListing } from "../listings/decorators/owns-listing.decorator";
-import { ApiCreateApplicationDocs, ApiGetAllMyApplicationsDocs, ApiGetApplicationById, ApiJoinApplication, ApiSendApplication } from "./swagger/application-swagger.decorator";
+import { ApiByConversation, ApiCreateApplicationDocs, ApiGetAllMyApplicationsDocs, ApiGetApplicationById, ApiJoinApplication, ApiSendApplication } from "./swagger/application-swagger.decorator";
 import { OwnsAppliedListingGuard } from "./guards/owns-applied-listing.guard";
 import { ApplicationOwnerGuard } from "./guards/application-owner.guard";
 
@@ -69,7 +69,7 @@ export class ApplicationController {
 		return this.applicationService.getAllByListing(listingId);
 	}
 
-	@ApiJoinApplication()
+	@ApiByConversation()
 	@StudentOrLandlord()
 	@Get("conversation/:id")
 	async getByConversation(@Param("id") conversationId: string) {
