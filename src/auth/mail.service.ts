@@ -1,8 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import Mailgun from "mailgun.js";
-import { Listing } from "../listings/listings.schema";
 import { User } from "../users/users.schema";
+import { FlagCategory } from "../flags/enums/category";
+
 const formData = require("form-data");
 
 @Injectable()
@@ -68,6 +69,20 @@ export class MailService {
 			subject: "Message from Seek user",
 			text: `Message from ${name} | ${email}: ${message}`,
 			html: `<p>Message from ${name} | ${email}: ${message}</p>`
+		});
+	}
+
+	async sendFlagCreatedEmail(
+		createdByEmail: string,
+		reportedUserEmail: string,
+		message: { category: FlagCategory; text: string }
+	) {
+		await this.mail.messages.create(this.domain, {
+			from: "Seek <noreply@mail.seekapp.uk>",
+			to: ["admin@seekapp.uk"],
+			subject: "New flag created",
+			text: `New flag created | Reported user: ${reportedUserEmail} | Reported by: ${createdByEmail} | for ${message.category}, ${message.text}`,
+			html: `<p>New flag created | Reported user: ${reportedUserEmail} | Reported by: ${createdByEmail} | for ${message.category}, ${message.text}</p>`
 		});
 	}
 }

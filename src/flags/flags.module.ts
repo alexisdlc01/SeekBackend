@@ -5,6 +5,7 @@ import { MongooseModule } from "@nestjs/mongoose";
 import { Flag, FlagSchema } from "./flags.schema";
 import { SharedModule } from "src/shared/shared.module";
 import { User, UserSchema } from "src/users/users.schema";
+import { AuthModule } from "../auth/auth.module";
 
 @Module({
 	imports: [
@@ -18,7 +19,8 @@ import { User, UserSchema } from "src/users/users.schema";
 				schema: UserSchema
 			}
 		]),
-		SharedModule
+		SharedModule,
+		AuthModule
 	],
 	controllers: [FlagsController],
 	providers: [FlagsService]

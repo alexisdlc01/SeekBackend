@@ -31,3 +31,10 @@ export function StudentOrLandlord() {
 		UseGuards(JwtAuthGuard, RoleGuard)
 	);
 }
+
+export function StudentOrLandlordOrSuperuser() {
+	return applyDecorators(
+		Roles(Role.LANDLORD_AGENCY, Role.STUDENT, Role.SUPERUSER),
+		UseGuards(JwtAuthGuard, RoleGuard)
+	);
+}

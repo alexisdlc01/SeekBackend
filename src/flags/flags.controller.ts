@@ -10,7 +10,11 @@ import {
 import { FlagsService } from "./flags.service";
 import { CreateFlagDto } from "./dto/create-flag.dto";
 import { ResolveFlagDto } from "./dto/resolve-flag.dto";
-import { Student, Superuser } from "src/auth/decorators/role-auth.decorator";
+import {
+	Student,
+	StudentOrLandlordOrSuperuser,
+	Superuser
+} from "src/auth/decorators/role-auth.decorator";
 import { CreatedFlagOrSuperuser } from "./decorators/created-flag.decorator";
 import {
 	CreateFlagDocs,
@@ -26,9 +30,22 @@ export class FlagsController {
 
 	@CreateFlagDocs()
 	@Post()
-	@Student()
+	@StudentOrLandlordOrSuperuser()
 	create(@Body() createFlagDto: CreateFlagDto, @CurrentUser() user: User) {
 		return this.flagsService.create(createFlagDto, user);
+	}
+
+	@GetFlagDocs()
+	@Get("all")
+	getAll() {
+		return this.flagsService.getAll();
+	}
+
+	@ResolveFlagDocs()
+	@Patch("/resolve/:id")
+	@Superuser()
+	resolve(@Param("id") id: string, @Body() resolveFlagDto: ResolveFlagDto) {
+		return this.flagsService.resolve(id, resolveFlagDto);
 	}
 
 	@GetFlagDocs()
@@ -36,12 +53,5 @@ export class FlagsController {
 	@CreatedFlagOrSuperuser()
 	findOne(@Param("id") id: string) {
 		return this.flagsService.findOne(id);
-	}
-
-	@ResolveFlagDocs()
-	@Superuser()
-	@Patch("/resolve/:id")
-	resolve(@Param("id") id: string, @Body() resolveFlagDto: ResolveFlagDto) {
-		return this.flagsService.resolve(id, resolveFlagDto);
 	}
 }

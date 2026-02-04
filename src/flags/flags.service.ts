@@ -1,8 +1,4 @@
-import {
-	BadRequestException,
-	Injectable,
-	NotFoundException
-} from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { CreateFlagDto } from "./dto/create-flag.dto";
 import { ResolveFlagDto } from "./dto/resolve-flag.dto";
 import { Flag } from "./flags.schema";
@@ -10,6 +6,7 @@ import { Model, Types } from "mongoose";
 import { InjectModel } from "@nestjs/mongoose";
 import { User } from "src/users/users.schema";
 import { FlagStatus } from "./enums/flag-status";
+import { MailService } from "../auth/mail.service";
 
 @Injectable()
 export class FlagsService {
@@ -17,7 +14,8 @@ export class FlagsService {
 		@InjectModel(Flag.name)
 		private readonly flagModel: Model<Flag>,
 		@InjectModel(User.name)
-		private readonly userModel: Model<User>
+		private readonly userModel: Model<User>,
+		private readonly mailService: MailService
 	) {}
 
 	async create(createFlagDto: CreateFlagDto, user: User): Promise<Flag> {
@@ -43,6 +41,13 @@ export class FlagsService {
 			createdBy: user._id,
 			status: FlagStatus.UNDER_REVIEW
 		});
+
+		await this.mailService.sendFlagCreatedEmail(
+			user.email,
+			createFlagDto.reportedUser,
+			createFlagDto
+		);
+
 		return flag.toObject();
 	}
 
@@ -73,5 +78,9 @@ export class FlagsService {
 		if (!result) {
 			throw new NotFoundException("Flag not found");
 		}
+	}
+
+	async getAll(): Promise<Flag[]> {
+		return await this.flagModel.find({}).exec();
 	}
 }
