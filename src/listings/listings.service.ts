@@ -216,15 +216,30 @@ export class ListingsService {
 
 	async filters(filters: ListingFilterDto): Promise<Listing[]> {
 		const query: any = {};
+		const toNumber = (value: unknown): number | undefined => {
+			if (value === undefined || value === null || value === "") {
+				return undefined;
+			}
 
-		if (filters.lat && filters.lng) {
+			const numberValue = Number(value);
+			return Number.isFinite(numberValue) ? numberValue : undefined;
+		};
+		const lat = toNumber(filters.lat);
+		const lng = toNumber(filters.lng);
+		const radius = toNumber(filters.radius);
+		const numOfPeople = toNumber(filters.numOfPeople);
+		const monthlyRentMin = toNumber(filters.monthlyRentMin);
+		const monthlyRentMax = toNumber(filters.monthlyRentMax);
+		const sizeSqMeters = toNumber(filters.sizeSqMeters);
+
+		if (lat && lng) {
 			query.location = {
 				$near: {
 					$geometry: {
 						type: "Point",
-						coordinates: [filters.lng, filters.lat]
+						coordinates: [lng, lat]
 					},
-					$maxDistance: filters.radius ?? 5000
+					$maxDistance: radius ?? 5000
 				}
 			};
 		}
@@ -233,24 +248,24 @@ export class ListingsService {
 			query.propertyType = filters.propertyType;
 		}
 
-		if (filters.numOfPeople) {
-			query.numOfPeople = { $gte: filters.numOfPeople };
+		if (numOfPeople) {
+			query.numOfPeople = { $gte: numOfPeople };
 		}
 
-		if (filters.monthlyRentMin || filters.monthlyRentMax) {
+		if (monthlyRentMin || monthlyRentMax) {
 			query.monthlyRent = {};
 
-			if (filters.monthlyRentMin) {
-				query.monthlyRent.$gte = filters.monthlyRentMin;
+			if (monthlyRentMin) {
+				query.monthlyRent.$gte = monthlyRentMin;
 			}
 
-			if (filters.monthlyRentMax) {
-				query.monthlyRent.$lte = filters.monthlyRentMax;
+			if (monthlyRentMax) {
+				query.monthlyRent.$lte = monthlyRentMax;
 			}
 		}
 
-		if (filters.sizeSqMeters) {
-			query.sizeSqMeters = { $gte: filters.sizeSqMeters };
+		if (sizeSqMeters) {
+			query.sizeSqMeters = { $gte: sizeSqMeters };
 		}
 
 		if (filters.amenities && filters.amenities.length > 0) {
