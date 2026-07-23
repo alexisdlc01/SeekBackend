@@ -17,21 +17,25 @@ export class ListingFilterDto {
 
 	@ApiProperty()
 	@IsOptional()
+	@Type(() => Number)
 	@IsNumber()
 	numOfPeople: number;
 
 	@ApiProperty()
 	@IsOptional()
+	@Type(() => Number)
 	@IsNumber()
 	monthlyRentMin: number;
 
 	@ApiProperty()
 	@IsOptional()
+	@Type(() => Number)
 	@IsNumber()
 	monthlyRentMax: number;
 
 	@ApiProperty()
 	@IsOptional()
+	@Type(() => Number)
 	@IsNumber()
 	sizeSqMeters: number;
 
