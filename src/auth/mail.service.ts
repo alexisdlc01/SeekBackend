@@ -25,7 +25,7 @@ export class MailService {
 		const link: string = `${this.configService.getOrThrow("FRONTEND_URL")}/verify-email?token=${token}&userId=${userId}`;
 
 		await this.mail.messages.create(this.domain, {
-			from: "Seek <noreply@mail.seekapp.uk>",
+			from: `Seek <noreply@${this.domain}>`,
 			to: [email],
 			subject: "Verify your email",
 			text: `Click this link to verify your email: ${link}`,
@@ -35,7 +35,7 @@ export class MailService {
 
 	async sendOtpEmail(email: string, otp: string) {
 		await this.mail.messages.create(this.domain, {
-			from: "Seek <noreply@mail.seekapp.uk>",
+			from: `Seek <noreply@${this.domain}>`,
 			to: [email],
 			subject: "Activate your account",
 			text: `Use this code to verify your account: ${otp}`
@@ -44,7 +44,7 @@ export class MailService {
 
 	async sendNewListingEmail(user: User) {
 		await this.mail.messages.create(this.domain, {
-			from: "Seek <noreply@mail.seekapp.uk>",
+			from: `Seek <noreply@${this.domain}>`,
 			to: ["admin@seekapp.uk"],
 			subject: "New Listing Request",
 			text: `${user.name} wants to upload a new listing.`,
@@ -54,7 +54,7 @@ export class MailService {
 
 	async sendResetPasswordEmail(email: string, link: string) {
 		await this.mail.messages.create(this.domain, {
-			from: "Seek <noreply@mail.seekapp.uk>",
+			from: `Seek <noreply@${this.domain}>`,
 			to: [email],
 			subject: "Password reset",
 			text: `Click this link to reset your password: ${link}`,
@@ -64,7 +64,7 @@ export class MailService {
 
 	async sendContactEmail(name: string, email: string, message: string) {
 		await this.mail.messages.create(this.domain, {
-			from: "Seek <noreply@mail.seekapp.uk>",
+			from: `Seek <noreply@${this.domain}>`,
 			to: ["admin@seekapp.uk"],
 			subject: "Message from Seek user",
 			text: `Message from ${name} | ${email}: ${message}`,
@@ -78,7 +78,7 @@ export class MailService {
 		message: { category: FlagCategory; text: string }
 	) {
 		await this.mail.messages.create(this.domain, {
-			from: "Seek <noreply@mail.seekapp.uk>",
+			from: `Seek <noreply@${this.domain}>`,
 			to: ["admin@seekapp.uk"],
 			subject: "New flag created",
 			text: `New flag created | Reported user: ${reportedUserEmail} | Reported by: ${createdByEmail} | for ${message.category}, ${message.text}`,
