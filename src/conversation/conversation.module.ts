@@ -7,6 +7,8 @@ import { ConversationGateway } from "./conversation.gateway";
 import { ConversationService } from "./conversation.service";
 import { Message, MessageSchema } from "./message.schema";
 import { UsersModule } from "../users/users.module";
+import { Application, ApplicationSchema } from "../application/application.schema";
+import { ConversationAccessService } from "./conversation-access.service";
 
 @Module({
 	imports: [
@@ -20,12 +22,17 @@ import { UsersModule } from "../users/users.module";
 			{
 				name: Message.name,
 				schema: MessageSchema
+			},
+			{
+				name: Application.name,
+				schema: ApplicationSchema
 			}
 		]),
 		UsersModule,
 		SharedModule,
 	],
 	controllers: [ConversationController],
-	providers: [ConversationGateway, ConversationService],
+	providers: [ConversationAccessService, ConversationGateway, ConversationService],
+	exports: [ConversationAccessService],
 })
 export class ConversationModule { }

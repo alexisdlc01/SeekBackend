@@ -4,7 +4,7 @@ import { ResolveFlagDto } from "./dto/resolve-flag.dto";
 import { Flag } from "./flags.schema";
 import { Model, Types } from "mongoose";
 import { InjectModel } from "@nestjs/mongoose";
-import { User } from "src/users/users.schema";
+import { User } from "../users/users.schema";
 import { FlagStatus } from "./enums/flag-status";
 import { MailService } from "../auth/mail.service";
 

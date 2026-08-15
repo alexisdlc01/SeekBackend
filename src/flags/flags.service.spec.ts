@@ -1,18 +1,17 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { FlagsService } from './flags.service';
+import { FlagsService } from "./flags.service";
 
-describe('FlagsService', () => {
-  let service: FlagsService;
+describe("FlagsService", () => {
+	it("returns moderation reports from the model", async () => {
+		const reports = [{ _id: "flag-1" }];
+		const flagModel = {
+			find: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(reports) })
+		};
+		const service = new FlagsService(
+			flagModel as never,
+			{} as never,
+			{} as never
+		);
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [FlagsService],
-    }).compile();
-
-    service = module.get<FlagsService>(FlagsService);
-  });
-
-  it('should be defined', () => {
-    expect(service).toBeDefined();
-  });
+		await expect(service.getAll()).resolves.toBe(reports);
+	});
 });

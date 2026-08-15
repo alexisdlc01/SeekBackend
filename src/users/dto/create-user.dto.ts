@@ -5,6 +5,7 @@ import {
 	IsOptional,
 	IsString
 } from "class-validator";
+import { Transform } from "class-transformer";
 import { Role } from "../../auth/role.enum";
 import { ApiProperty } from "@nestjs/swagger";
 
@@ -15,9 +16,10 @@ export class CreateUserDto {
 
 	@ApiProperty()
 	@IsEmail()
+	@Transform(({ value }) => value?.trim().toLowerCase())
 	email: string;
 
-	@ApiProperty()
+	@ApiProperty({ enum: Role, required: false, default: Role.STUDENT })
 	@IsEnum(Role)
 	@IsOptional()
 	role?: Role;
@@ -30,19 +32,4 @@ export class CreateUserDto {
 	@ApiProperty()
 	@IsStrongPassword()
 	password: string;
-
-	@ApiProperty()
-	@IsString()
-	@IsOptional()
-	emailVerificationToken?: string;
-
-	@ApiProperty()
-	@IsString()
-	@IsOptional()
-	otpVerificationCode?: string;
-
-	@ApiProperty()
-	@IsString()
-	@IsOptional()
-	emailVerificationTokenExpires?: Date;
 }

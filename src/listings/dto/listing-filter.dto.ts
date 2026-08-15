@@ -6,57 +6,64 @@ import {
 	IsString
 } from "class-validator";
 import { PropertyType } from "../enums/propertyType.enum";
-import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { Type } from "class-transformer";
+import { ApiPropertyOptional } from "@nestjs/swagger";
+import { Transform, Type } from "class-transformer";
 
 export class ListingFilterDto {
-	@ApiProperty({ enum: PropertyType })
+	@ApiPropertyOptional({ enum: PropertyType })
 	@IsOptional()
 	@IsEnum(PropertyType)
 	propertyType: PropertyType;
 
-	@ApiProperty()
+	@ApiPropertyOptional()
 	@IsOptional()
 	@Type(() => Number)
 	@IsNumber()
 	numOfPeople: number;
 
-	@ApiProperty()
+	@ApiPropertyOptional()
 	@IsOptional()
 	@Type(() => Number)
 	@IsNumber()
 	monthlyRentMin: number;
 
-	@ApiProperty()
+	@ApiPropertyOptional()
 	@IsOptional()
 	@Type(() => Number)
 	@IsNumber()
 	monthlyRentMax: number;
 
-	@ApiProperty()
+	@ApiPropertyOptional()
 	@IsOptional()
 	@Type(() => Number)
 	@IsNumber()
 	sizeSqMeters: number;
 
-	@ApiProperty()
+	@ApiPropertyOptional({ type: [String] })
 	@IsOptional()
+	@Transform(({ value }) => {
+		if (value === undefined || value === null || value === "") {
+			return undefined;
+		}
+		return Array.isArray(value) ? value : [value];
+	})
 	@IsArray()
 	@IsString({ each: true })
 	amenities: string[];
 
-	@ApiProperty()
+	@ApiPropertyOptional()
 	@IsOptional()
 	@Type(() => Number)
 	@IsNumber()
 	lat?: number;
 
-	@ApiProperty()
+	@ApiPropertyOptional()
 	@IsOptional()
 	@Type(() => Number)
 	@IsNumber()
 	lng?: number;
 
+	@ApiPropertyOptional()
 	@IsOptional()
 	@Type(() => Number)
 	@IsNumber()

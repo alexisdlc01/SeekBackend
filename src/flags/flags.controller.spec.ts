@@ -1,20 +1,22 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { FlagsController } from './flags.controller';
-import { FlagsService } from './flags.service';
+import { ROLE_KEY } from "../auth/decorators/role.decorator";
+import { Role } from "../auth/role.enum";
+import { FlagsController } from "./flags.controller";
+import { FlagsService } from "./flags.service";
 
-describe('FlagsController', () => {
-  let controller: FlagsController;
+describe("FlagsController", () => {
+	it("marks the all-reports endpoint as superuser-only", () => {
+		const roles = Reflect.getMetadata(
+			ROLE_KEY,
+			FlagsController.prototype.getAll
+		);
+		expect(roles).toEqual([Role.SUPERUSER]);
+	});
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      controllers: [FlagsController],
-      providers: [FlagsService],
-    }).compile();
-
-    controller = module.get<FlagsController>(FlagsController);
-  });
-
-  it('should be defined', () => {
-    expect(controller).toBeDefined();
-  });
+	it("delegates report listing to the service", async () => {
+		const flagsService = {
+			getAll: jest.fn().mockResolvedValue([])
+		} as unknown as FlagsService;
+		const controller = new FlagsController(flagsService);
+		await expect(controller.getAll()).resolves.toEqual([]);
+	});
 });

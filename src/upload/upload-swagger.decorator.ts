@@ -1,6 +1,6 @@
 import { applyDecorators } from "@nestjs/common";
 import { ApiResponse } from "@nestjs/swagger";
-import { ErrorDto } from "src/dto/errorDto.dto";
+import { ErrorDto } from "../dto/errorDto.dto";
 import { PresignResDto } from "./dto/presign.dto";
 
 export const ApiPresignDocs = () =>

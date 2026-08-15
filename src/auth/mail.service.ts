@@ -58,7 +58,7 @@ export class MailService {
 			to: [email],
 			subject: "Password reset",
 			text: `Click this link to reset your password: ${link}`,
-			html: `<p>Click <a href="${link}">here</a> to verify your email address.</p>`
+			html: `<p>Click <a href="${link}">here</a> to reset your password.</p>`
 		});
 	}
 

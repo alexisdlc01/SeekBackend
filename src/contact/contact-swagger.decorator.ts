@@ -1,7 +1,7 @@
 import { applyDecorators } from "@nestjs/common";
 import { ApiBody, ApiResponse } from "@nestjs/swagger";
 import { ContactDto } from "./dto/contact.dto";
-import { ErrorDto } from "src/dto/errorDto.dto";
+import { ErrorDto } from "../dto/errorDto.dto";
 
 export const ApiContactDocs = () =>
 	applyDecorators(

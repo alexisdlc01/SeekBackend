@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { ForbiddenException, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
 	GetObjectCommand,
@@ -6,6 +6,12 @@ import {
 	S3Client
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { InjectModel } from "@nestjs/mongoose";
+import { Model } from "mongoose";
+import { Listing } from "../listings/listings.schema";
+import { User } from "../users/users.schema";
+import { Application } from "../application/application.schema";
+import { ApplicationStage } from "../application/enums/application-stage.enum";
 
 @Injectable()
 export class UploadService {
@@ -13,7 +19,15 @@ export class UploadService {
 	private readonly publicBucket: string;
 	private readonly privateBucket: string;
 
-	constructor(private readonly configService: ConfigService) {
+	constructor(
+		private readonly configService: ConfigService,
+		@InjectModel(Listing.name)
+		private readonly listingModel: Model<Listing>,
+		@InjectModel(User.name)
+		private readonly userModel: Model<User>,
+		@InjectModel(Application.name)
+		private readonly applicationModel: Model<Application>
+	) {
 		this.s3Client = new S3Client({
 			region: this.configService.getOrThrow("AWS_S3_REGION"),
 			credentials: {
@@ -33,7 +47,6 @@ export class UploadService {
 		fileType: string,
 		folder: "public" | "private"
 	) {
-		console.log(folder, folder === "private");
 		const bucket =
 			folder === "private" ? this.privateBucket : this.publicBucket;
 
@@ -74,5 +87,42 @@ export class UploadService {
 		});
 
 		return await getSignedUrl(this.s3Client, command, { expiresIn: 60 });
+	}
+
+	async getAuthorizedPrivateDownloadUrl(key: string, user: User) {
+		if (!key.startsWith("private/")) {
+			throw new ForbiddenException("File access is not allowed.");
+		}
+
+		const userId = user._id.toString();
+		const ownsListingDocument = await this.listingModel.exists({
+			landlord: userId,
+			registerOfTitleKey: key
+		});
+
+		if (!ownsListingDocument) {
+			const documentOwnerIds = await this.userModel.distinct("_id", {
+				"documents.key": key
+			});
+			const canReviewApplicantDocument = documentOwnerIds.length > 0
+				? await this.applicationModel.exists({
+					landlord: userId,
+					applicants: { $in: documentOwnerIds },
+					stage: {
+						$in: [
+							ApplicationStage.SENT,
+							ApplicationStage.ACCEPTED,
+							ApplicationStage.REJECTED
+						]
+					}
+				})
+				: null;
+
+			if (!canReviewApplicantDocument) {
+				throw new ForbiddenException("File access is not allowed.");
+			}
+		}
+
+		return this.getPresignedDownloadUrl(key, "private");
 	}
 }

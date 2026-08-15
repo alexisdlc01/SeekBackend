@@ -43,6 +43,7 @@ import {
 	ApiVerifyListingDocs
 } from "./swagger/listings-swagger.decorator";
 import { ListingFilterDto } from "./dto/listing-filter.dto";
+import { PublicEndpoint } from "../decorators/public-endpoint.decorator";
 
 @Controller("listings")
 export class ListingsController {
@@ -159,14 +160,14 @@ export class ListingsController {
 	}
 
 	@Get("allVerified")
-	@Student()
+	@PublicEndpoint("List published and verified properties")
 	@ApiGetAllVerifiedDocs()
 	async getAllVerifiedListings() {
 		return await this.listingsService.getAllVerifiedListings();
 	}
 
 	@Get("filter")
-	@Student()
+	@PublicEndpoint("Filter published and verified properties")
 	async getFilteredListings(@Query() filters: ListingFilterDto) {
 		return this.listingsService.filters(filters);
 	}
@@ -179,10 +180,10 @@ export class ListingsController {
 	}
 
 	@Get("/:id")
-	@Student()
+	@PublicEndpoint("Get a published and verified property")
 	@ApiGetByIdDocs()
 	async getById(@Param("id") id: string) {
-		return await this.listingsService.findListingById(id);
+		return await this.listingsService.findPublishedListingById(id);
 	}
 
 	@Patch("/verify/:id")

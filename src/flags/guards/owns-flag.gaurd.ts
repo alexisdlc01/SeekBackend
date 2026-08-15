@@ -5,8 +5,8 @@ import {
 	Injectable
 } from "@nestjs/common";
 import { FlagsService } from "../flags.service";
-import { User } from "src/users/users.schema";
-import { Role } from "src/auth/role.enum";
+import { User } from "../../users/users.schema";
+import { Role } from "../../auth/role.enum";
 
 @Injectable()
 export class CreatedFlagOrSuperuserGuard implements CanActivate {

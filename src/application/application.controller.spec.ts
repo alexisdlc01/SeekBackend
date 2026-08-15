@@ -1,20 +1,31 @@
-import { Test, TestingModule } from "@nestjs/testing";
+import { Types } from "mongoose";
 import { ApplicationController } from "./application.controller";
-import { ApplicationService } from "./application.service";
 
 describe("ApplicationController", () => {
 	let controller: ApplicationController;
+	let applicationService: { getByConversation: jest.Mock };
 
-	beforeEach(async () => {
-		const module: TestingModule = await Test.createTestingModule({
-			controllers: [ApplicationController],
-			providers: [ApplicationService]
-		}).compile();
-
-		controller = module.get<ApplicationController>(ApplicationController);
+	beforeEach(() => {
+		applicationService = { getByConversation: jest.fn() };
+		controller = new ApplicationController(applicationService as never);
 	});
 
 	it("should be defined", () => {
 		expect(controller).toBeDefined();
+	});
+
+	it("passes the authenticated user to conversation authorization", async () => {
+		const conversationId = new Types.ObjectId().toString();
+		const userId = new Types.ObjectId();
+
+		await controller.getByConversation(
+			conversationId,
+			{ _id: userId } as never,
+		);
+
+		expect(applicationService.getByConversation).toHaveBeenCalledWith(
+			conversationId,
+			userId.toString(),
+		);
 	});
 });

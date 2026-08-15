@@ -18,22 +18,54 @@ export class UserDocument {
 
 export const UserDocumentSchema = SchemaFactory.createForClass(UserDocument);
 
+@Schema({ _id: false })
+export class RefreshSession {
+	@Prop({ required: true })
+	sessionId: string;
+
+	@Prop({ required: true })
+	tokenHash: string;
+
+	@Prop({ required: true })
+	expiresAt: Date;
+
+	@Prop({ default: Date.now })
+	createdAt: Date;
+
+	@Prop({ default: Date.now })
+	lastUsedAt: Date;
+}
+
+export const RefreshSessionSchema = SchemaFactory.createForClass(RefreshSession);
+
 @Schema({ timestamps: true })
 export class User {
 	@Prop({ type: SchemaTypes.ObjectId, auto: true })
 	_id: Types.ObjectId;
 
-	@Prop({ unique: true })
+	@Prop({ unique: true, required: true, trim: true, lowercase: true })
 	email: string;
 
 	@Prop()
 	name: string;
 
+	@Prop({ unique: true, sparse: true, trim: true, lowercase: true })
+	username?: string;
+
+	@Prop({ trim: true })
+	phone?: string;
+
+	@Prop()
+	dateOfBirth?: Date;
+
+	@Prop({ trim: true })
+	universityDetails?: string;
+
 	@Prop()
 	profilePicUrl?: string;
 
-	@Prop()
-	refreshToken?: string;
+	@Prop({ type: [RefreshSessionSchema], default: [] })
+	refreshSessions: RefreshSession[];
 
 	@Prop()
 	password: string;
@@ -56,6 +88,18 @@ export class User {
 	@Prop()
 	emailVerificationTokenExpires?: Date;
 
+	@Prop({ default: 0 })
+	emailVerificationAttempts: number;
+
+	@Prop()
+	emailVerificationLastSentAt?: Date;
+
+	@Prop()
+	emailVerificationWindowStartedAt?: Date;
+
+	@Prop({ default: 0 })
+	emailVerificationSendCount: number;
+
 	@Prop({ default: false })
 	isGoogle: boolean;
 
@@ -64,6 +108,15 @@ export class User {
 
 	@Prop()
 	resetPasswordExpires?: Date;
+
+	@Prop()
+	resetPasswordLastSentAt?: Date;
+
+	@Prop()
+	resetPasswordWindowStartedAt?: Date;
+
+	@Prop({ default: 0 })
+	resetPasswordSendCount: number;
 
 	@Prop({ type: [UserDocumentSchema], default: [] })
 	documents: UserDocument[];

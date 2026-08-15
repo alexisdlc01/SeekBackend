@@ -16,6 +16,8 @@ import { ApplicationModule } from "./application/application.module";
 import { RedisModule } from "./redis/redis.module";
 import { FlagsModule } from './flags/flags.module';
 import * as morgan from "morgan";
+import { APP_GUARD } from "@nestjs/core";
+import { BrowserOriginGuard } from "./auth/guards/browser-origin.guard";
 
 @Module({
 	imports: [
@@ -40,7 +42,13 @@ import * as morgan from "morgan";
 		FlagsModule
 	],
 	controllers: [AppController],
-	providers: [AppService]
+	providers: [
+		AppService,
+		{
+			provide: APP_GUARD,
+			useClass: BrowserOriginGuard
+		}
+	]
 })
 export class AppModule implements NestModule {
 	configure(consumer: MiddlewareConsumer) {

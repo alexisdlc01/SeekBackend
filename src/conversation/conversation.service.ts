@@ -5,12 +5,11 @@ import { Model, Types } from "mongoose";
 import { SendMessageDto } from "./dto/send-message.dto";
 import { Message } from "./message.schema";
 import { ConversationGateway } from "./conversation.gateway";
-import { User } from "src/users/users.schema";
-import { MessageDto } from "src/message/dto/message.dto";
+import { User } from "../users/users.schema";
+import { MessageDto } from "../message/dto/message.dto";
 import { plainToInstance } from "class-transformer";
 import { ConversationDto } from "./dto/conversation.dto";
-import { NotFound } from "@aws-sdk/client-s3";
-import { ApplicationDto } from "src/application/dto/application.dto";
+import { ConversationAccessService } from "./conversation-access.service";
 
 @Injectable()
 export class ConversationService {
@@ -20,6 +19,7 @@ export class ConversationService {
 		@InjectModel(Message.name)
 		private readonly messageModel: Model<Message>,
 		private readonly conversationGateway: ConversationGateway,
+		private readonly conversationAccessService: ConversationAccessService,
 	) { }
 
 	async sendMessage(
@@ -27,6 +27,11 @@ export class ConversationService {
 		conversationId: string,
 		senderId: string
 	) {
+		await this.conversationAccessService.assertCanAccess(
+			conversationId,
+			senderId,
+		);
+
 		const message = await this.messageModel.create({
 			sender: senderId,
 			conversation: conversationId,
@@ -44,7 +49,7 @@ export class ConversationService {
 		const messageDto = plainToInstance(MessageDto, message.toObject(), {
 			excludeExtraneousValues: true,
 		})
-		this.conversationGateway.emitNewMessage(conversationId, messageDto);
+		await this.conversationGateway.emitNewMessage(conversationId, messageDto);
 	}
 
 	async create(
@@ -68,7 +73,8 @@ export class ConversationService {
 		}))
 	}
 
-	async getById(id: string): Promise<ConversationDto> {
+	async getById(id: string, userId: string): Promise<ConversationDto> {
+		await this.conversationAccessService.assertCanAccess(id, userId);
 		const conv = await this.conversationModel.findById(new Types.ObjectId(id))
 			.populate({
 				path: "messages",

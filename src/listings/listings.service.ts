@@ -102,7 +102,7 @@ export class ListingsService {
 		}
 
 		await this.listingModel.deleteOne({ _id: listingId });
-		this.listingsGateway.emitListingDeleted(listingId);
+		this.listingsGateway.emitListingDeleted(listing);
 		return { message: "Listing successfully deleted" };
 	}
 
@@ -118,6 +118,7 @@ export class ListingsService {
 	async getAllVerifiedListings(): Promise<Listing[]> {
 		const listings = await this.listingModel
 			.find({ isVerified: true, isDraft: false })
+			.select("-registerOfTitleKey -registrationNumber -likedBy")
 			.exec();
 		return listings;
 	}
@@ -137,6 +138,7 @@ export class ListingsService {
 		if (!listing) {
 			throw new NotFoundException("Listing not found");
 		}
+		this.listingsGateway.emitListingUpdated(listing);
 		return listing;
 	}
 
@@ -151,14 +153,33 @@ export class ListingsService {
 		return listing;
 	}
 
+	async findPublishedListingById(id: string): Promise<Listing> {
+		if (!Types.ObjectId.isValid(id)) {
+			throw new BadRequestException("Invalid listing ID");
+		}
+		const listing = await this.listingModel
+			.findOne({
+				_id: id,
+				isVerified: true,
+				isDraft: false
+			})
+			.select("-registerOfTitleKey -registrationNumber -likedBy")
+			.exec();
+		if (!listing) {
+			throw new NotFoundException("Listing not found");
+		}
+		return listing;
+	}
+
 	async likeListing(id: string, user: User): Promise<void> {
 		if (!Types.ObjectId.isValid(id)) {
 			throw new BadRequestException("Invalid listing ID");
 		}
 		const listing = await this.listingModel
-			.findByIdAndUpdate(id, {
-				$addToSet: { likedBy: user._id }
-			})
+			.findOneAndUpdate(
+				{ _id: id, isVerified: true, isDraft: false },
+				{ $addToSet: { likedBy: user._id } }
+			)
 			.exec();
 		if (!listing) {
 			throw new NotFoundException("Listing not found");
@@ -170,9 +191,10 @@ export class ListingsService {
 			throw new BadRequestException("Invalid listing ID");
 		}
 		const listing = await this.listingModel
-			.findByIdAndUpdate(id, {
-				$pull: { likedBy: user._id }
-			})
+			.findOneAndUpdate(
+				{ _id: id, isVerified: true, isDraft: false },
+				{ $pull: { likedBy: user._id } }
+			)
 			.exec();
 		if (!listing) {
 			throw new NotFoundException("Listing not found");
@@ -181,7 +203,12 @@ export class ListingsService {
 
 	async getLiked(user: User): Promise<LikedListingsDto> {
 		const listings = await this.listingModel
-			.find({ likedBy: user._id })
+			.find({
+				likedBy: user._id,
+				isVerified: true,
+				isDraft: false
+			})
+			.select("-registerOfTitleKey -registrationNumber -likedBy")
 			.exec();
 		return {
 			data: listings,
@@ -215,7 +242,10 @@ export class ListingsService {
 	}
 
 	async filters(filters: ListingFilterDto): Promise<Listing[]> {
-		const query: any = {};
+		const query: any = {
+			isDraft: false,
+			isVerified: true
+		};
 		const toNumber = (value: unknown): number | undefined => {
 			if (value === undefined || value === null || value === "") {
 				return undefined;
@@ -224,6 +254,8 @@ export class ListingsService {
 			const numberValue = Number(value);
 			return Number.isFinite(numberValue) ? numberValue : undefined;
 		};
+		const isPositive = (value: number | undefined): value is number =>
+			value !== undefined && value > 0;
 		const lat = toNumber(filters.lat);
 		const lng = toNumber(filters.lng);
 		const radius = toNumber(filters.radius);
@@ -232,14 +264,14 @@ export class ListingsService {
 		const monthlyRentMax = toNumber(filters.monthlyRentMax);
 		const sizeSqMeters = toNumber(filters.sizeSqMeters);
 
-		if (lat && lng) {
+		if (lat !== undefined && lng !== undefined) {
 			query.location = {
 				$near: {
 					$geometry: {
 						type: "Point",
 						coordinates: [lng, lat]
 					},
-					$maxDistance: radius ?? 5000
+					$maxDistance: isPositive(radius) ? radius : 5000
 				}
 			};
 		}
@@ -248,23 +280,23 @@ export class ListingsService {
 			query.propertyType = filters.propertyType;
 		}
 
-		if (numOfPeople) {
+		if (isPositive(numOfPeople)) {
 			query.numOfPeople = { $gte: numOfPeople };
 		}
 
-		if (monthlyRentMin || monthlyRentMax) {
+		if (isPositive(monthlyRentMin) || isPositive(monthlyRentMax)) {
 			query.monthlyRent = {};
 
-			if (monthlyRentMin) {
+			if (isPositive(monthlyRentMin)) {
 				query.monthlyRent.$gte = monthlyRentMin;
 			}
 
-			if (monthlyRentMax) {
+			if (isPositive(monthlyRentMax)) {
 				query.monthlyRent.$lte = monthlyRentMax;
 			}
 		}
 
-		if (sizeSqMeters) {
+		if (isPositive(sizeSqMeters)) {
 			query.sizeSqMeters = { $gte: sizeSqMeters };
 		}
 
@@ -272,6 +304,9 @@ export class ListingsService {
 			query.amenities = { $all: filters.amenities };
 		}
 
-		return this.listingModel.find(query).exec();
+		return this.listingModel
+			.find(query)
+			.select("-registerOfTitleKey -registrationNumber -likedBy")
+			.exec();
 	}
 }

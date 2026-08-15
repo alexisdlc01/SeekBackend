@@ -1,11 +1,8 @@
 import {
 	IsEmail,
-	IsStrongPassword,
-	IsEnum,
 	IsOptional,
 	IsString
 } from "class-validator";
-import { Role } from "../role.enum";
 import { ApiProperty } from "@nestjs/swagger";
 
 export class GoogleUserDto {
@@ -18,12 +15,10 @@ export class GoogleUserDto {
 	email: string;
 
 	@ApiProperty()
-	@IsEnum(Role)
-	@IsOptional()
-	role?: Role;
-
-	@ApiProperty()
 	@IsString()
 	@IsOptional()
-	imageUrl?: string;
+	profilePicUrl?: string;
+
+	isGoogle?: boolean;
+	isVerified?: boolean;
 }
