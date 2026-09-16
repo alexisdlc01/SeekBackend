@@ -39,6 +39,12 @@ export const ApiSignupDocs = () =>
 			schema: {
 				type: "object",
 				properties: {
+					verificationRequired: {
+						type: "boolean"
+					},
+					userId: {
+						type: "string"
+					},
 					access_token: {
 						type: "string"
 					},
@@ -54,6 +60,10 @@ export const ApiSignupDocs = () =>
 		}),
 		ApiResponse({
 			status: 409,
+			type: ErrorDto
+		}),
+		ApiResponse({
+			status: 403,
 			type: ErrorDto
 		})
 	);
@@ -79,38 +89,41 @@ export const ApiVerifyEmailDocs = () =>
 			status: 400,
 			type: ErrorDto
 		}),
-		ApiResponse({
-			status: 404,
-			type: ErrorDto
-		})
+		ApiResponse({ status: 429, type: ErrorDto })
 	);
 
 export const ApiForgotPasswordDocs = () =>
 	applyDecorators(
 		ApiBody({ type: ForgotPasswordDto }),
-		ApiResponse({ status: 201 }),
+		ApiResponse({
+			status: 201,
+			schema: {
+				type: "object",
+				properties: { message: { type: "string" } }
+			}
+		}),
 		ApiResponse({
 			status: 400,
 			type: ErrorDto
 		}),
-		ApiResponse({
-			status: 404,
-			type: ErrorDto
-		})
+		ApiResponse({ status: 429, type: ErrorDto })
 	);
 
 export const ApiConfirmPasswordDocs = () =>
 	applyDecorators(
 		ApiBody({ type: ConfirmPasswordResetDto }),
-		ApiResponse({ status: 201 }),
+		ApiResponse({
+			status: 201,
+			schema: {
+				type: "object",
+				properties: { message: { type: "string" } }
+			}
+		}),
 		ApiResponse({
 			status: 400,
 			type: ErrorDto
 		}),
-		ApiResponse({
-			status: 404,
-			type: ErrorDto
-		})
+		ApiResponse({ status: 429, type: ErrorDto })
 	);
 
 export const ApiGoogleDocs = () =>
@@ -147,7 +160,13 @@ export const ApiRefreshDocs = () =>
 	applyDecorators(
 		ApiResponse({
 			status: 201,
-			type: UserDto
+			schema: {
+				type: "object",
+				properties: {
+					access_token: { type: "string" },
+					refresh_token: { type: "string" }
+				}
+			}
 		}),
 		ApiResponse({
 			status: 401,
@@ -157,13 +176,44 @@ export const ApiRefreshDocs = () =>
 
 export const ApiLogoutDocs = () =>
 	applyDecorators(
-		ApiResponse({ status: 201 }),
+		ApiResponse({
+			status: 201,
+			schema: {
+				type: "object",
+				properties: { message: { type: "string" } }
+			}
+		}),
 		ApiResponse({
 			status: 401,
 			type: ErrorDto
-		}),
-		ApiResponse({
-			status: 404,
-			type: ErrorDto
 		})
+	)
+
+export const ApiResendOtpDocs = () =>
+	applyDecorators(
+		ApiResponse({
+			status: 200,
+			schema: {
+				type: "object",
+				properties: {
+					message: { type: "string" },
+					expiresInSeconds: { type: "number" }
+				}
+			}
+		}),
+		ApiResponse({ status: 400, type: ErrorDto }),
+		ApiResponse({ status: 429, type: ErrorDto })
+	)
+
+export const ApiChangePasswordDocs = () =>
+	applyDecorators(
+		ApiResponse({
+			status: 200,
+			schema: {
+				type: "object",
+				properties: { message: { type: "string" } }
+			}
+		}),
+		ApiResponse({ status: 400, type: ErrorDto }),
+		ApiResponse({ status: 401, type: ErrorDto })
 	)

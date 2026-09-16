@@ -6,6 +6,7 @@ import { CreateUserDto } from "../dto/create-user.dto";
 import { SetProfilePicDto } from "../dto/set-profile-pic.dto";
 import { SetUsernameDto } from "../dto/set-username.dto";
 import { DocumentTypesDto } from "../dto/provided-docs.dto";
+import { UpdateUserProfileDto } from "../dto/update-user-profile.dto";
 
 export const ApiGetUserDocs = () =>
 	applyDecorators(
@@ -78,6 +79,16 @@ export const ApiSetUsernameDocs = () =>
 		})
 	);
 
+export const ApiUpdateCurrentUserDocs = () =>
+	applyDecorators(
+		ApiBody({ type: UpdateUserProfileDto }),
+		ApiResponse({ status: 200, type: UserDto }),
+		ApiResponse({ status: 400, type: ErrorDto }),
+		ApiResponse({ status: 401, type: ErrorDto }),
+		ApiResponse({ status: 404, type: ErrorDto }),
+		ApiResponse({ status: 409, type: ErrorDto })
+	);
+
 export const ApiGetAllUsersDocs = () =>
 	applyDecorators(
 		ApiResponse({
@@ -114,4 +125,3 @@ export const ApiGetDocumentTypes = () =>
 			type: ErrorDto
 		})
 	);
-

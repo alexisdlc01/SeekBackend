@@ -1,18 +1,21 @@
-import { Test, TestingModule } from "@nestjs/testing";
+import { Types } from "mongoose";
 import { UploadController } from "./upload.controller";
+import { UploadService } from "./upload.service";
 
 describe("UploadController", () => {
-	let controller: UploadController;
+	it("authorizes private downloads through the resource-aware service", async () => {
+		const uploadService = {
+			getAuthorizedPrivateDownloadUrl: jest.fn()
+				.mockResolvedValue("https://signed.example/file")
+		} as unknown as UploadService;
+		const controller = new UploadController(uploadService);
+		const user = { _id: new Types.ObjectId() } as any;
 
-	beforeEach(async () => {
-		const module: TestingModule = await Test.createTestingModule({
-			controllers: [UploadController]
-		}).compile();
-
-		controller = module.get<UploadController>(UploadController);
-	});
-
-	it("should be defined", () => {
-		expect(controller).toBeDefined();
+		await expect(controller.download(
+			{ key: "private/document.pdf" },
+			user
+		)).resolves.toBe("https://signed.example/file");
+		expect(uploadService.getAuthorizedPrivateDownloadUrl)
+			.toHaveBeenCalledWith("private/document.pdf", user);
 	});
 });

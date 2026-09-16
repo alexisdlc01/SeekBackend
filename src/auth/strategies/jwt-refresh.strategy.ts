@@ -2,7 +2,6 @@ import { Injectable } from "@nestjs/common";
 import { PassportStrategy } from "@nestjs/passport";
 import { ExtractJwt, Strategy } from "passport-jwt";
 import { ConfigService } from "@nestjs/config";
-import UsersService from "../../users/users.service";
 import { Request } from "express";
 import { TokenPayload } from "../token-payload.interface";
 import { AuthService } from "../auth.service";
@@ -14,7 +13,6 @@ export class JwtRefreshStrategy extends PassportStrategy(
 ) {
 	constructor(
 		private readonly configService: ConfigService,
-		private readonly usersService: UsersService,
 		private readonly authService: AuthService
 	) {
 		super({
@@ -48,6 +46,10 @@ export class JwtRefreshStrategy extends PassportStrategy(
 						.replace(/^Bearer\s/, "")
 				: req.cookies?.Refresh;
 
-		return this.authService.verifyUserRefreshToken(token, payload.userId);
+		return this.authService.verifyUserRefreshToken(
+			token,
+			payload.userId,
+			payload.sessionId
+		);
 	}
 }

@@ -2,6 +2,12 @@
 /dist
 /node_modules
 /build
+*.tsbuildinfo
+
+# Tool caches
+/.cache
+/.npm
+.eslintcache
 
 # Logs
 logs
@@ -37,12 +43,15 @@ lerna-debug.log*
 !.vscode/launch.json
 !.vscode/extensions.json
 
-# dotenv environment variable files
+# Environment files and private credentials
 .env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
 
 # temp directory
 .temp

@@ -3,14 +3,13 @@ import {
 	Controller,
 	Get,
 	Param,
+	Patch,
 	Post,
 	Put,
 	UseGuards
 } from "@nestjs/common";
 import { CreateUserDto } from "./dto/create-user.dto";
 import UsersService from "./users.service";
-import { Serialize } from "../interceptors/serialize.interceptor";
-import { UserDto } from "./dto/user.dto";
 import { Student, Superuser } from "../auth/decorators/role-auth.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "./users.schema";
@@ -24,12 +23,13 @@ import {
 	ApiGetDocumentTypes,
 	ApiGetUserDocs,
 	ApiSetProfilePicDocs,
-	ApiSetUsernameDocs
+	ApiSetUsernameDocs,
+	ApiUpdateCurrentUserDocs
 } from "./swagger/users-swagger.decorator";
 import { AddDocumentDto } from "./dto/add-document.dto";
+import { UpdateUserProfileDto } from "./dto/update-user-profile.dto";
 
 @Controller("users")
-@Serialize(UserDto)
 export class UsersController {
 	constructor(private readonly usersService: UsersService) { }
 
@@ -41,9 +41,10 @@ export class UsersController {
 	}
 
 	@Post()
+	@Superuser()
 	@ApiCreateUserDocs()
 	async create(@Body() body: CreateUserDto) {
-		await this.usersService.create(body);
+		return this.usersService.create(body);
 	}
 
 	@Put("setProfilePic")
@@ -61,6 +62,19 @@ export class UsersController {
 	@ApiSetUsernameDocs()
 	async setUsername(@Body() body: SetUsernameDto, @CurrentUser() user: User) {
 		return await this.usersService.setUsername(body.name, user);
+	}
+
+	@Patch("me")
+	@UseGuards(JwtAuthGuard)
+	@ApiUpdateCurrentUserDocs()
+	async updateCurrentUser(
+		@Body() body: UpdateUserProfileDto,
+		@CurrentUser() user: User
+	) {
+		return await this.usersService.updateProfile(
+			user._id.toString(),
+			body
+		);
 	}
 
 	@Get()

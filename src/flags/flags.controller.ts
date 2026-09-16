@@ -11,18 +11,17 @@ import { FlagsService } from "./flags.service";
 import { CreateFlagDto } from "./dto/create-flag.dto";
 import { ResolveFlagDto } from "./dto/resolve-flag.dto";
 import {
-	Student,
 	StudentOrLandlordOrSuperuser,
 	Superuser
-} from "src/auth/decorators/role-auth.decorator";
+} from "../auth/decorators/role-auth.decorator";
 import { CreatedFlagOrSuperuser } from "./decorators/created-flag.decorator";
 import {
 	CreateFlagDocs,
 	GetFlagDocs,
 	ResolveFlagDocs
 } from "./decorators/flags-swagger.decorator";
-import { User } from "src/users/users.schema";
-import { CurrentUser } from "src/auth/decorators/current-user.decorator";
+import { User } from "../users/users.schema";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
 
 @Controller("flags")
 export class FlagsController {
@@ -37,6 +36,7 @@ export class FlagsController {
 
 	@GetFlagDocs()
 	@Get("all")
+	@Superuser()
 	getAll() {
 		return this.flagsService.getAll();
 	}

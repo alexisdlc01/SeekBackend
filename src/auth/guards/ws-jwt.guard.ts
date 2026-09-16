@@ -23,23 +23,32 @@ export class WsJwtGuard implements CanActivate {
 	}
 
 	static async validateToken(server: Socket, usersService: UsersService) {
-		const token = this.extractToken(server) as string;
-		const payload = verify(
-			token,
-			process.env.JWT_ACCESS_TOKEN_SECRET as string
-		) as TokenPayload;
-
-		if (!payload)
+		const token = this.extractToken(server);
+		if (!token || !process.env.JWT_ACCESS_TOKEN_SECRET) {
 			throw new UnauthorizedException("Invalid or missing token");
+		}
 
-		const userId = payload.userId;
 		try {
-			const user = await usersService.getUserById(userId);
-			if (user) {
-				server.data.user = user;
+			const payload = verify(
+				token,
+				process.env.JWT_ACCESS_TOKEN_SECRET
+			) as TokenPayload;
+			if (!payload.userId || !payload.sessionId) {
+				throw new UnauthorizedException("Invalid or missing token");
 			}
+
+			const user = await usersService.getUserForSession(
+				payload.userId,
+				payload.sessionId
+			);
+			const verificationEnabled =
+				process.env.AUTH_EMAIL_VERIFICATION_ENABLED === "true";
+			if (verificationEnabled && !user.isVerified) {
+				throw new UnauthorizedException("Email verification is required.");
+			}
+			server.data.user = user;
 		} catch (err) {
-			throw new UnauthorizedException("User not found or deleted.");
+			throw new UnauthorizedException("Session is not valid.");
 		}
 		return true;
 	}

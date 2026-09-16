@@ -28,7 +28,7 @@ export class ApplicationController {
 	@Student()
 	@Patch(":id/join")
 	async joinApplication(@CurrentUser() user: User, @Param("id") id: string) {
-		this.applicationService.join(id, user._id.toString());
+		return await this.applicationService.join(id, user._id.toString());
 	}
 
 	@ApiSendApplication()
@@ -43,14 +43,14 @@ export class ApplicationController {
 	@LandlordAgency()
 	@Patch(":id/approve")
 	async approveApplication(@Param("id") id: string) {
-		this.applicationService.approve(id);
+		return await this.applicationService.approve(id);
 	}
 
 	@UseGuards(OwnsAppliedListingGuard)
 	@LandlordAgency()
 	@Patch(":id/reject")
 	async rejectApplication(@Param("id") id: string) {
-		this.applicationService.reject(id);
+		return await this.applicationService.reject(id);
 	}
 
 	@ApiJoinApplication()
@@ -72,8 +72,14 @@ export class ApplicationController {
 	@ApiByConversation()
 	@StudentOrLandlord()
 	@Get("conversation/:id")
-	async getByConversation(@Param("id") conversationId: string) {
-		return this.applicationService.getByConversation(conversationId);
+	async getByConversation(
+		@Param("id") conversationId: string,
+		@CurrentUser() user: User,
+	) {
+		return this.applicationService.getByConversation(
+			conversationId,
+			user._id.toString(),
+		);
 	}
 
 

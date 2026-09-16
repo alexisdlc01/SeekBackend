@@ -13,9 +13,29 @@ export class UserDto {
 	@Expose()
 	name: string;
 
+	@ApiProperty({ required: false })
+	@IsOptional()
+	@Expose()
+	username?: string;
+
 	@ApiProperty()
 	@Expose()
 	email: string;
+
+	@ApiProperty({ required: false })
+	@IsOptional()
+	@Expose()
+	phone?: string;
+
+	@ApiProperty({ required: false, type: String, format: "date" })
+	@IsOptional()
+	@Expose()
+	dateOfBirth?: Date;
+
+	@ApiProperty({ required: false })
+	@IsOptional()
+	@Expose()
+	universityDetails?: string;
 
 	@ApiProperty({ enum: Role })
 	@Expose()
@@ -28,7 +48,7 @@ export class UserDto {
 
 	@ApiProperty()
 	@Expose()
-	isVerified: string;
+	isVerified: boolean;
 
 	@ApiProperty()
 	@Expose()

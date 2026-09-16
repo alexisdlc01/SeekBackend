@@ -25,16 +25,12 @@ Use `npm run db:seed` when you want to upsert the seed records without deleting 
 
 Use `npm run db:indexes` when you only want to recreate indexes.
 
-## Temporarily bypass auth locally
+## Test authentication locally
 
-For local app browsing without logging in, set this in `SeekBackend/.env`:
-
-```bash
-DEV_AUTH_BYPASS=true
-DEV_AUTH_BYPASS_USER_ID=665000000000000000000002
-```
-
-Then restart the backend. The bypass only works when `NODE_ENV` is not `production`. It makes protected endpoints behave as if `student@seek.local` is the current user.
+The backend no longer supports an authentication bypass. Use one of the seeded
+accounts below to exercise the real login, refresh, role-authorization, and
+logout paths. Public listing list, filter, and detail endpoints remain available
+without signing in.
 
 ## Seed accounts
 

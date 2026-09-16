@@ -1,8 +1,8 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { Expose, Transform, Type } from "class-transformer";
 import { IsOptional, ValidateNested } from "class-validator";
-import { MessageDto } from "src/message/dto/message.dto";
-import { UserDto } from "src/users/dto/user.dto";
+import { MessageDto } from "../../message/dto/message.dto";
+import { UserDto } from "../../users/dto/user.dto";
 
 export class ConversationDto {
 	@ApiProperty()

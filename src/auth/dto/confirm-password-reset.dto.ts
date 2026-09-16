@@ -1,9 +1,9 @@
-import { IsString, IsStrongPassword } from "class-validator";
+import { IsMongoId, IsString, IsStrongPassword } from "class-validator";
 import { ApiProperty } from "@nestjs/swagger";
 
 export class ConfirmPasswordResetDto {
 	@ApiProperty({ example: "687135f38c94f12e3657f3b2" })
-	@IsString()
+	@IsMongoId()
 	userId: string;
 
 	@ApiProperty({

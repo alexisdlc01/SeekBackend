@@ -22,6 +22,12 @@ export class Application {
 	@Prop({ type: SchemaTypes.ObjectId })
 	owner: Types.ObjectId;
 
+	// New applications carry a stable key so concurrent/retried requests for the
+	// same listing and owner resolve to one application. Sparse indexing keeps
+	// existing records deployable while they are gradually reconciled.
+	@Prop({ type: String })
+	applicationKey?: string;
+
 	@Prop({ default: Date.now, index: true })
 	createdAt: Date;
 
@@ -32,4 +38,4 @@ export class Application {
 export const ApplicationSchema = SchemaFactory.createForClass(Application);
 
 ApplicationSchema.index({ applicants: 1 });
-
+ApplicationSchema.index({ applicationKey: 1 }, { unique: true, sparse: true });

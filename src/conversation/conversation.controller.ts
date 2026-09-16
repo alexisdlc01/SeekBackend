@@ -29,7 +29,8 @@ export class ConversationController {
 	@StudentOrLandlord()
 	async getConversation(
 		@Param("id") id: string,
+		@CurrentUser() user: User,
 	) {
-		return await this.conversationService.getById(id);
+		return await this.conversationService.getById(id, user._id.toString());
 	}
 }

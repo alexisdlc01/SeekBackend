@@ -26,7 +26,7 @@ export class ApplicationOwnerGuard implements CanActivate {
 			throw new NotFoundException("Application not found.");
 		}
 
-		const isOwner = application.owner === user._id.toString();
+		const isOwner = application.owner?.toString() === user._id.toString();
 		if (!isOwner) {
 			throw new ForbiddenException("You are not the application owner");
 		}
