@@ -5,6 +5,8 @@ import { ApiAccessDocs, ApiPresignDocs } from "./upload-swagger.decorator";
 import { PresignReqDto } from "./dto/presign.dto";
 import { AccessReqDto } from "./dto/access.dto";
 import { StudentOrLandlord } from "../auth/decorators/role-auth.decorator";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { User } from "../users/users.schema";
 
 @Controller("upload")
 export class UploadController {
@@ -26,7 +28,10 @@ export class UploadController {
 	@ApiAccessDocs()
 	@Get("access")
 	@LandlordAgency()
-	async download(@Query() { key }: AccessReqDto) {
-		return this.uploadService.getPresignedDownloadUrl(key, "private");
+	async download(
+		@Query() { key }: AccessReqDto,
+		@CurrentUser() user: User
+	) {
+		return this.uploadService.getAuthorizedPrivateDownloadUrl(key, user);
 	}
 }

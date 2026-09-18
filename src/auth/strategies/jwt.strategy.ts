@@ -3,10 +3,9 @@ import { Request } from "express";
 import { ExtractJwt, Strategy } from "passport-jwt";
 import { ConfigService } from "@nestjs/config";
 import { TokenPayload } from "../token-payload.interface";
-import UsersService from "../../users/users.service";
-import { Injectable, NotFoundException } from "@nestjs/common";
-import { User } from "src/users/users.schema";
-import { UsersRepository } from "src/users/users.repository";
+import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { UsersRepository } from "../../users/users.repository";
+import type { AuthenticatedUser } from "../auth.service";
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -36,10 +35,30 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 	}
 
 	async validate(payload: TokenPayload) {
-		const user = this.usersRepo.getUserById(payload.userId);
-		if (!user) {
-			throw new NotFoundException("User not found.");
+		const user = await this.usersRepo.getUserById(payload.userId);
+		const session = user?.refreshSessions?.find(
+			candidate => candidate.sessionId === payload.sessionId
+		);
+		const verificationEnabled =
+			this.configService.get<string | boolean>(
+				"AUTH_EMAIL_VERIFICATION_ENABLED"
+			) === true ||
+			this.configService.get<string | boolean>(
+				"AUTH_EMAIL_VERIFICATION_ENABLED"
+			) === "true";
+
+		if (
+			!user ||
+			!payload.sessionId ||
+			!session ||
+			session.expiresAt <= new Date() ||
+			(verificationEnabled && !user.isVerified)
+		) {
+			throw new UnauthorizedException("Session is not valid.");
 		}
-		return user;
+
+		return Object.assign(user, {
+			authSessionId: payload.sessionId
+		}) as AuthenticatedUser;
 	}
 }

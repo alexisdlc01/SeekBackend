@@ -1,4 +1,4 @@
-import { IsString } from "class-validator";
+import { IsMongoId, IsString } from "class-validator";
 import { ApiProperty } from "@nestjs/swagger";
 
 export class VerifyEmailDto {
@@ -7,6 +7,6 @@ export class VerifyEmailDto {
 	token: string;
 
 	@ApiProperty()
-	@IsString()
+	@IsMongoId()
 	userId: string;
 }

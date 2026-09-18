@@ -1,105 +1,250 @@
-import { Test, TestingModule } from "@nestjs/testing";
-import { getModelToken } from "@nestjs/mongoose";
 import { Types } from "mongoose";
 import { ApplicationService } from "./application.service";
-import { Application } from "./application.schema";
+import { User } from "../users/users.schema";
+import { ForbiddenException, NotFoundException } from "@nestjs/common";
 import { ApplicationStage } from "./enums/application-stage.enum";
-import { Conversation } from "src/conversation/converstaion.schema";
-import { ListingsService } from "../listings/listings.service";
-import { UsersRepository } from "src/users/users.repository";
+
+function documentFrom(value: Record<string, unknown>) {
+	return {
+		...value,
+		toObject: () => value,
+	};
+}
 
 describe("ApplicationService", () => {
+	const listingId = new Types.ObjectId();
+	const userId = new Types.ObjectId();
+	const landlordId = new Types.ObjectId();
+	const conversationId = new Types.ObjectId();
+	const applicationId = new Types.ObjectId();
+	const listing = {
+		_id: listingId,
+		landlord: landlordId,
+		propertyTitle: "Market Street Flat",
+	};
+	const user = {
+		_id: userId,
+		name: "Student",
+	} as User;
+
+	let applicationModel: {
+		findOne: jest.Mock;
+		findById: jest.Mock;
+		findOneAndUpdate: jest.Mock;
+		create: jest.Mock;
+	};
+	let conversationModel: {
+		create: jest.Mock;
+		deleteOne: jest.Mock;
+		updateOne: jest.Mock;
+	};
+	let listingService: {
+		findPublishedListingById: jest.Mock;
+	};
+	let conversationAccessService: {
+		assertCanAccess: jest.Mock;
+	};
 	let service: ApplicationService;
 
-	beforeEach(async () => {
-		const module: TestingModule = await Test.createTestingModule({
-			providers: [
-				ApplicationService,
-				{ provide: getModelToken(Application.name), useValue: {} },
-				{ provide: getModelToken(Conversation.name), useValue: {} },
-				{ provide: ListingsService, useValue: {} },
-				{ provide: UsersRepository, useValue: {} }
-			]
-		}).compile();
-
-		service = module.get<ApplicationService>(ApplicationService);
-	});
-
-	it("should be defined", () => {
-		expect(service).toBeDefined();
-	});
-});
-
-const doc = (plain: any) => ({ ...plain, toObject: () => plain });
-
-describe("ApplicationService.getAllByListing", () => {
-	const listing = new Types.ObjectId();
-	const conversation = new Types.ObjectId();
-	const landlord = new Types.ObjectId();
-	const applicant = {
-		_id: new Types.ObjectId(),
-		name: "Emma Smith",
-		email: "emma@example.com",
-		password: "$2a$10$hashedsecret",
-		refreshToken: "should-not-leak"
-	};
-
-	const query = {
-		populate: jest.fn().mockReturnThis(),
-		sort: jest.fn().mockReturnThis(),
-		exec: jest.fn().mockResolvedValue([
-			doc({
-				_id: new Types.ObjectId(),
-				listing,
-				conversation,
-				landlord,
-				applicants: [applicant],
-				owner: applicant._id,
-				createdAt: new Date(),
-				stage: ApplicationStage.SENT
-			})
-		])
-	};
-	const applicationModel = { find: jest.fn().mockReturnValue(query) };
-
-	const service = new ApplicationService(
-		applicationModel as any,
-		{} as any,
-		{} as any,
-		{} as any
-	);
-
-	it("only returns applications the student has actually sent", async () => {
-		await service.getAllByListing(listing.toHexString());
-
-		const [filter] = applicationModel.find.mock.calls[0];
-		expect(filter.listing).toBe(listing.toHexString());
-		expect(filter.$or.map((c: any) => c.stage).sort()).toEqual(
-			["ACCEPTED", "REJECTED", "SENT"]
+	beforeEach(() => {
+		applicationModel = {
+			findOne: jest.fn(),
+			findById: jest.fn(),
+			findOneAndUpdate: jest.fn(),
+			create: jest.fn(),
+		};
+		conversationModel = {
+			create: jest.fn(),
+			deleteOne: jest.fn().mockResolvedValue(undefined),
+			updateOne: jest.fn(),
+		};
+		listingService = {
+			findPublishedListingById: jest.fn().mockResolvedValue(listing),
+		};
+		conversationAccessService = {
+			assertCanAccess: jest.fn().mockResolvedValue(undefined),
+		};
+		service = new ApplicationService(
+			applicationModel as never,
+			conversationModel as never,
+			listingService as never,
+			{} as never,
+			conversationAccessService as never,
 		);
 	});
 
-	it("exposes populated applicants safely and keeps applicant ids intact", async () => {
-		const [application] = await service.getAllByListing(listing.toHexString());
-
-		expect(query.populate).toHaveBeenCalledWith({
-			path: "applicants",
-			select: "name email profilePicUrl"
+	it("rejects a new application when a required document is missing", async () => {
+		applicationModel.findOne.mockReturnValue({
+			exec: jest.fn().mockResolvedValue(null),
 		});
-		// Ids must survive serialisation as the *same* ids (class-transformer
-		// otherwise re-instantiates ObjectIds into fresh random ones).
-		expect(application.applicants).toEqual([applicant._id.toHexString()]);
-		expect(application.owner).toBe(applicant._id.toHexString());
-		expect(application.landlord).toBe(landlord.toHexString());
+		listingService.findPublishedListingById.mockResolvedValue({
+			...listing,
+			requirements: [
+				{
+					name: "Identification",
+					desc: "National ID or Passport",
+					required: true,
+				},
+			],
+		});
 
-		const [user] = application.applicantUsers! as any[];
-		expect(user._id).toBe(applicant._id.toHexString());
-		expect(user.name).toBe("Emma Smith");
-		expect(user.email).toBe("emma@example.com");
-		expect(user.password).toBeUndefined();
-		expect(user.refreshToken).toBeUndefined();
+		await expect(service.create(listingId.toString(), user)).rejects.toThrow(
+			"Missing required documents: Identification",
+		);
+		expect(conversationModel.create).not.toHaveBeenCalled();
+	});
 
-		expect(application.conversation._id).toBe(conversation.toHexString());
-		expect(application.stage).toBe(ApplicationStage.SENT);
+	it("rejects applications for listings that are not published and verified", async () => {
+		listingService.findPublishedListingById.mockRejectedValue(
+			new NotFoundException("Listing not found"),
+		);
+
+		await expect(service.create(listingId.toString(), user)).rejects.toThrow(
+			"Listing not found",
+		);
+		expect(applicationModel.findOne).not.toHaveBeenCalled();
+		expect(conversationModel.create).not.toHaveBeenCalled();
+	});
+
+	it("returns the existing application without creating another chat", async () => {
+		const existing = documentFrom({
+			_id: applicationId,
+			listing: listingId,
+			owner: userId,
+			conversation: conversationId,
+			applicants: [userId],
+			landlord: landlordId,
+		});
+		applicationModel.findOne.mockReturnValue({
+			exec: jest.fn().mockResolvedValue(existing),
+		});
+
+		const result = await service.create(listingId.toString(), user);
+
+		expect(result._id).toBe(applicationId.toString());
+		expect(conversationModel.create).not.toHaveBeenCalled();
+		expect(applicationModel.create).not.toHaveBeenCalled();
+	});
+
+	it("creates one keyed application and one conversation", async () => {
+		applicationModel.findOne.mockReturnValue({
+			exec: jest.fn().mockResolvedValue(null),
+		});
+		conversationModel.create.mockResolvedValue({ _id: conversationId });
+		applicationModel.create.mockResolvedValue(
+			documentFrom({
+				_id: applicationId,
+				listing: listingId,
+				owner: userId,
+				conversation: conversationId,
+				applicants: [userId],
+				landlord: landlordId,
+			}),
+		);
+
+		await service.create(listingId.toString(), user);
+
+		expect(conversationModel.create).toHaveBeenCalledTimes(1);
+		expect(applicationModel.create).toHaveBeenCalledWith(
+			expect.objectContaining({
+				applicationKey: `${listingId.toString()}:${userId.toString()}`,
+			}),
+		);
+	});
+
+	it("returns the winner and removes its unused chat when requests race", async () => {
+		const winner = documentFrom({
+			_id: applicationId,
+			listing: listingId,
+			owner: userId,
+			conversation: conversationId,
+			applicants: [userId],
+			landlord: landlordId,
+		});
+		applicationModel.findOne
+			.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(null) })
+			.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(winner) });
+		conversationModel.create.mockResolvedValue({ _id: conversationId });
+		applicationModel.create.mockRejectedValue({ code: 11000 });
+
+		const result = await service.create(listingId.toString(), user);
+
+		expect(result._id).toBe(applicationId.toString());
+		expect(conversationModel.deleteOne).toHaveBeenCalledWith({
+			_id: conversationId,
+		});
+	});
+
+	it("returns a linked application to an authorized conversation participant", async () => {
+		applicationModel.findOne.mockReturnValue({
+			exec: jest.fn().mockResolvedValue(documentFrom({
+				_id: applicationId,
+				listing: {
+					_id: listingId,
+					propertyTitle: "Market Street Flat",
+					registerOfTitleKey: "private-title-key",
+					registrationNumber: "private-registration",
+					likedBy: [userId],
+				},
+				conversation: conversationId,
+				owner: userId,
+				applicants: [userId],
+				landlord: landlordId,
+			})),
+		});
+
+		const result = await service.getByConversation(
+			conversationId.toString(),
+			userId.toString(),
+		);
+
+		expect(conversationAccessService.assertCanAccess).toHaveBeenCalledWith(
+			conversationId.toString(),
+			userId.toString(),
+		);
+		expect(result.listing.registerOfTitleKey).toBeUndefined();
+		expect(result.listing.registrationNumber).toBeUndefined();
+		expect(result.listing.likedBy).toBeUndefined();
+	});
+
+	it("does not return a linked application to a conversation outsider", async () => {
+		applicationModel.findOne.mockReturnValue({
+			exec: jest.fn().mockResolvedValue(documentFrom({
+				_id: applicationId,
+				listing: listingId,
+				conversation: conversationId,
+				owner: userId,
+				applicants: [userId],
+				landlord: landlordId,
+			})),
+		});
+		conversationAccessService.assertCanAccess.mockRejectedValue(
+			new ForbiddenException("You are not a member of this conversation"),
+		);
+
+		await expect(service.getByConversation(
+			conversationId.toString(),
+			new Types.ObjectId().toString(),
+		)).rejects.toBeInstanceOf(ForbiddenException);
+	});
+
+	it("adds a joined applicant to both the application and conversation", async () => {
+		const joinedUserId = new Types.ObjectId();
+		applicationModel.findById.mockResolvedValue({
+			_id: applicationId,
+			conversation: conversationId,
+			stage: ApplicationStage.NOT_SENT,
+		});
+		applicationModel.findOneAndUpdate.mockResolvedValue({ _id: applicationId });
+		conversationModel.updateOne.mockReturnValue({
+			exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
+		});
+
+		await service.join(applicationId.toString(), joinedUserId.toString());
+
+		expect(conversationModel.updateOne).toHaveBeenCalledWith(
+			{ _id: conversationId },
+			{ $addToSet: { users: joinedUserId } },
+		);
 	});
 });

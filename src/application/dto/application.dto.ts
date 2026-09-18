@@ -2,9 +2,7 @@ import { ApiProperty } from "@nestjs/swagger";
 import { Expose, Transform, Type } from "class-transformer";
 import { Listing } from "../../listings/listings.schema";
 import { ApplicationStage } from "../enums/application-stage.enum";
-import { ConversationDto } from "src/conversation/dto/conversation.dto";
-import { UserDto } from "src/users/dto/user.dto";
-import { ObjectIdString } from "src/shared/object-id.transform";
+import { ConversationDto } from "../../conversation/dto/conversation.dto";
 import { ValidateNested } from "class-validator";
 
 export class ApplicationDto {

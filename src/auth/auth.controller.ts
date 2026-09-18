@@ -2,6 +2,7 @@ import {
 	Body,
 	Controller,
 	Get,
+	Patch,
 	Post,
 	Req,
 	Res,
@@ -33,10 +34,15 @@ import {
 	ApiLoginDocs,
 	ApiLogoutDocs,
 	ApiRefreshDocs,
+	ApiResendOtpDocs,
+	ApiChangePasswordDocs,
 	ApiSignupDocs,
 	ApiVerifyEmailDocs
 } from "./swagger/auth-swagger.decorator";
 import { plainToInstance } from "class-transformer";
+import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
+import { ResendOtpDto } from "./dto/resend-otp.dto";
+import { ChangePasswordDto } from "./dto/change-password.dto";
 
 @ApiTags("Auth")
 @Controller("auth")
@@ -47,7 +53,8 @@ export class AuthController {
 	) { }
 
 	@Post("/login")
-	@UseGuards(LocalAuthGuard)
+	@Throttle({ auth: { limit: 10, ttl: 60_000, blockDuration: 60_000 } })
+	@UseGuards(ThrottlerGuard, LocalAuthGuard)
 	@ApiLoginDocs()
 	async login(
 		@CurrentUser() user: User,
@@ -59,13 +66,33 @@ export class AuthController {
 	}
 
 	@Post("/signup")
+	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60_000 } })
+	@UseGuards(ThrottlerGuard)
 	@ApiSignupDocs()
-	async signup(@Body() body: CreateUserDto, @Req() request: Request) {
+	async signup(
+		@Body() body: CreateUserDto,
+		@Req() request: Request,
+		@Res({ passthrough: true }) response: Response
+	) {
 		const isMobile = request.headers.platform === "mobile";
-		return await this.authService.signup(body, isMobile);
+		const result = await this.authService.signup(body, isMobile);
+		if (result.verificationRequired) {
+			return result;
+		}
+
+		const tokens = await this.authService.login(
+			result.user,
+			response,
+			isMobile
+		);
+		return tokens
+			? { verificationRequired: false, ...tokens }
+			: { verificationRequired: false };
 	}
 
 	@Post("/verify-email")
+	@Throttle({ auth: { limit: 10, ttl: 60_000, blockDuration: 60_000 } })
+	@UseGuards(ThrottlerGuard)
 	@ApiVerifyEmailDocs()
 	async verifyEmail(
 		@Body() body: VerifyEmailDto,
@@ -77,20 +104,60 @@ export class AuthController {
 		return this.authService.login(user, response, isMobile);
 	}
 
+	@Patch("/resend-otp")
+	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60_000 } })
+	@UseGuards(ThrottlerGuard)
+	@ApiResendOtpDocs()
+	async resendOtp(@Body() body: ResendOtpDto) {
+		return this.authService.resendOtp(body.userId);
+	}
+
 	@Post("/forgot-password")
+	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60_000 } })
+	@UseGuards(ThrottlerGuard)
 	@ApiForgotPasswordDocs()
-	async forgotPassword(@Body() body: ForgotPasswordDto) {
-		await this.authService.resetPassword(body.email);
+	async forgotPassword(
+		@Body() body: ForgotPasswordDto,
+		@Req() request: Request
+	) {
+		const isMobile = request.headers.platform === "mobile";
+		return this.authService.resetPassword(body.email, isMobile);
 	}
 
 	@Post("/confirmPasswordReset")
+	@Throttle({ auth: { limit: 10, ttl: 60 * 60_000, blockDuration: 60_000 } })
+	@UseGuards(ThrottlerGuard)
 	@ApiConfirmPasswordDocs()
-	async confirmPasswordReset(@Body() body: ConfirmPasswordResetDto) {
-		await this.authService.confirmResetPassword(
+	async confirmPasswordReset(
+		@Body() body: ConfirmPasswordResetDto,
+		@Req() request: Request,
+		@Res({ passthrough: true }) response: Response
+	) {
+		const result = await this.authService.confirmResetPassword(
 			body.userId,
 			body.token,
 			body.newPassword
 		);
+		if (request.headers.platform !== "mobile") {
+			this.authService.clearAuthCookies(response);
+		}
+		return result;
+	}
+
+	@Patch("/password")
+	@UseGuards(JwtAuthGuard)
+	@ApiChangePasswordDocs()
+	async changePassword(
+		@Body() body: ChangePasswordDto,
+		@CurrentUser() user: User,
+		@Req() request: Request,
+		@Res({ passthrough: true }) response: Response
+	) {
+		const result = await this.authService.changePassword(user, body);
+		if (request.headers.platform !== "mobile") {
+			this.authService.clearAuthCookies(response);
+		}
+		return result;
 	}
 
 	@Get("/google")
@@ -128,7 +195,8 @@ export class AuthController {
 	}
 
 	@Post("/refresh")
-	@UseGuards(JwtRefreshGuard)
+	@Throttle({ auth: { limit: 30, ttl: 60_000, blockDuration: 60_000 } })
+	@UseGuards(ThrottlerGuard, JwtRefreshGuard)
 	@ApiRefreshDocs()
 	async refreshToken(
 		@CurrentUser() user: User,
@@ -148,6 +216,6 @@ export class AuthController {
 		@Res({ passthrough: true }) response: Response
 	) {
 		const isMobile = request.headers.platform === "mobile";
-		await this.authService.logout(user, response, isMobile);
+		return this.authService.logout(user, response, isMobile);
 	}
 }
