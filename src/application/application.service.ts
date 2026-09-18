@@ -328,6 +328,16 @@ export class ApplicationService {
 			delete safeListing.likedBy;
 			value.listing = safeListing;
 		}
+		// When applicants were populated, expose them as users too; the DTO
+		// reduces `applicants` itself back to ids for existing consumers.
+		if (
+			Array.isArray(value.applicants) &&
+			value.applicants.some(
+				a => a && typeof a === "object" && !(a instanceof Types.ObjectId)
+			)
+		) {
+			value.applicantUsers = value.applicants;
+		}
 		return plainToInstance(ApplicationDto, value, {
 			excludeExtraneousValues: true,
 		});

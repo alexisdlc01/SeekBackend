@@ -4,6 +4,8 @@ import { Listing } from "../../listings/listings.schema";
 import { ApplicationStage } from "../enums/application-stage.enum";
 import { ConversationDto } from "../../conversation/dto/conversation.dto";
 import { ValidateNested } from "class-validator";
+import { ObjectIdString } from "src/shared/object-id.transform";
+import { UserDto } from "src/users/dto/user.dto";
 
 export class ApplicationDto {
 	@ApiProperty()
