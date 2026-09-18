@@ -2,12 +2,15 @@ import {
 	CanActivate,
 	ExecutionContext,
 	ForbiddenException,
+	Injectable,
 	NotFoundException
 } from "@nestjs/common";
 import { ListingsService } from "../../listings/listings.service";
 import { ApplicationService } from "../application.service";
-import { UsersRepository } from "../../users/users.repository";
 
+// @Injectable() is required for Nest to inject the constructor dependencies;
+// without it the guard is constructed with them undefined.
+@Injectable()
 export class OwnsAppliedListingGuard implements CanActivate {
 	constructor(
 		private readonly listingService: ListingsService,
