@@ -113,11 +113,21 @@ export class ApplicationService {
 					stage: ApplicationStage.ACCEPTED,
 				}]
 			})
+			.populate({ path: "applicants", select: "name email profilePicUrl" })
 			.sort({ createdAt: -1 })
 			.exec() ?? [];
-		return applications.map(application => plainToInstance(ApplicationDto, application.toObject(), {
-			excludeExtraneousValues: true
-		}));
+		return applications.map(application => {
+			const obj = application.toObject();
+			// `applicants` stays an id array for existing consumers (the DTO
+			// reduces populated docs to their ids); the populated users are
+			// exposed separately so landlords can see who applied.
+			return plainToInstance(ApplicationDto, {
+				...obj,
+				applicantUsers: obj.applicants
+			}, {
+				excludeExtraneousValues: true
+			});
+		});
 	}
 
 	async approve(applicationId: string): Promise<void> {

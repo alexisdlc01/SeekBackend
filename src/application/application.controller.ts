@@ -43,14 +43,14 @@ export class ApplicationController {
 	@LandlordAgency()
 	@Patch(":id/approve")
 	async approveApplication(@Param("id") id: string) {
-		this.applicationService.approve(id);
+		await this.applicationService.approve(id);
 	}
 
 	@UseGuards(OwnsAppliedListingGuard)
 	@LandlordAgency()
 	@Patch(":id/reject")
 	async rejectApplication(@Param("id") id: string) {
-		this.applicationService.reject(id);
+		await this.applicationService.reject(id);
 	}
 
 	@ApiJoinApplication()
@@ -62,8 +62,9 @@ export class ApplicationController {
 	}
 
 
-	@UseGuards(OwnsAppliedListingGuard)
-	@LandlordAgency()
+	// `:id` here is a *listing* id, so use the listing-ownership guard rather than
+	// OwnsAppliedListingGuard, which treats `:id` as an application id.
+	@OwnsListing()
 	@Get("listing/:id")
 	async getAllForListing(@Param("id") listingId: string) {
 		return this.applicationService.getAllByListing(listingId);

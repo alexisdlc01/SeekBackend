@@ -3,6 +3,7 @@ import { IsEnum, ValidateNested } from "class-validator";
 import { ApiProperty } from "@nestjs/swagger";
 import { MessageType } from "../../conversation/message.schema";
 import { UserDto } from "src/users/dto/user.dto";
+import { ObjectIdString } from "src/shared/object-id.transform";
 
 export class MessageDto {
 	@ApiProperty()
@@ -31,13 +32,16 @@ export class MessageDto {
 
 	@ApiProperty()
 	@Expose()
+	@ObjectIdString()
 	conversation: string;
 
 	@ApiProperty()
 	@Expose()
+	@ObjectIdString()
 	seenUsers: string[];
 
 	@ApiProperty()
 	@Expose()
+	@ObjectIdString()
 	deliveredTo: string[];
 }

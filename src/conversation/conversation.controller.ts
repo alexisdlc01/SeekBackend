@@ -24,6 +24,12 @@ export class ConversationController {
 		);
 	}
 
+	@Get()
+	@StudentOrLandlord()
+	async getMyConversations(@CurrentUser() user: User) {
+		return await this.conversationService.getAllForUser(user._id.toString());
+	}
+
 	@GetConversationApiDocs()
 	@Get(":id")
 	@StudentOrLandlord()

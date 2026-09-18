@@ -50,24 +50,30 @@ export class ConversationGateway implements OnGatewayInit {
 		this.server.to(conversationId).emit("conversation:seen", { userId });
 	}
 
+	// SocketAuthMiddleware stores the authenticated user on `client.data.user`.
+	private userIdOf(client: Socket): string | undefined {
+		return client.data?.user?._id?.toString();
+	}
+
 	@SubscribeMessage("message:delivered")
 	async markDelivered(client: Socket, messageId: string) {
+		const userId = this.userIdOf(client);
+		if (!userId) return;
 		await this.messageModel.updateOne(
 			{ _id: messageId },
-			// @ts-ignore
-			{ $addToSet: { deliveredTo: client.userId } }
+			{ $addToSet: { deliveredTo: userId } }
 		);
 	}
 
 	@SubscribeMessage("conversation:seen")
 	async markSeen(client: Socket, conversationId: string) {
+		const userId = this.userIdOf(client);
+		if (!userId) return;
 		await this.messageModel.updateMany(
 			{ conversation: conversationId },
-			// @ts-ignore
-			{ $addToSet: { seenUsers: client.userId } }
+			{ $addToSet: { seenUsers: userId } }
 		);
 
-		// @ts-ignore
-		this.emitSeen(conversationId, client.userId);
+		this.emitSeen(conversationId, userId);
 	}
 }
