@@ -103,6 +103,29 @@ export class User {
 	@Prop({ default: false })
 	isGoogle: boolean;
 
+	/**
+	 * A requested new address, held here until the owner proves control of it.
+	 * It is never promoted to `email` without a matching confirmation token, so
+	 * a verified account can only ever hold an address it has proven.
+	 */
+	@Prop({ trim: true, lowercase: true })
+	pendingEmail?: string;
+
+	@Prop()
+	pendingEmailToken?: string;
+
+	@Prop()
+	pendingEmailExpires?: Date;
+
+	@Prop()
+	pendingEmailLastSentAt?: Date;
+
+	@Prop()
+	pendingEmailWindowStartedAt?: Date;
+
+	@Prop({ default: 0 })
+	pendingEmailSendCount: number;
+
 	@Prop()
 	resetPasswordToken?: string;
 

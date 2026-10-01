@@ -14,16 +14,16 @@ export class CreatedFlagOrSuperuserGuard implements CanActivate {
 
 	async canActivate(context: ExecutionContext): Promise<boolean> {
 		const request = context.switchToHttp().getRequest();
-		const user: User = request.user;
+		const user: User | undefined = request.user;
 
-		// if superuser allow access
-		if (user.role === Role.SUPERUSER) {
-			return true;
+		// Check the user resolved before reading anything off it, so an
+		// unauthenticated request is a clean 403 rather than a 500.
+		if (!user?._id) {
+			throw new ForbiddenException("User not authenticated");
 		}
 
-		// ensure the user is authenticated and the owner
-		if (!user || !user._id) {
-			throw new ForbiddenException("User not authenticated");
+		if (user.role === Role.SUPERUSER) {
+			return true;
 		}
 
 		const flagId = request.params.id;

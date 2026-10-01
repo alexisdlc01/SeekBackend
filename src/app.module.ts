@@ -18,10 +18,20 @@ import { FlagsModule } from './flags/flags.module';
 import * as morgan from "morgan";
 import { APP_GUARD } from "@nestjs/core";
 import { BrowserOriginGuard } from "./auth/guards/browser-origin.guard";
+import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 
 @Module({
 	imports: [
 		ConfigModule.forRoot({ isGlobal: true }),
+		// One place owns rate limiting. Both throttlers carry a permissive
+		// baseline that applies to every route; auth endpoints tighten the
+		// "auth" bucket with @Throttle. Note ttl is milliseconds in v6.
+		ThrottlerModule.forRoot({
+			throttlers: [
+				{ name: "default", ttl: 60_000, limit: 120 },
+				{ name: "auth", ttl: 60_000, limit: 120 }
+			]
+		}),
 		MongooseModule.forRootAsync({
 			useFactory: (config: ConfigService) => ({
 				uri: config.getOrThrow("MONGODB_URI")
@@ -44,6 +54,10 @@ import { BrowserOriginGuard } from "./auth/guards/browser-origin.guard";
 	controllers: [AppController],
 	providers: [
 		AppService,
+		{
+			provide: APP_GUARD,
+			useClass: ThrottlerGuard
+		},
 		{
 			provide: APP_GUARD,
 			useClass: BrowserOriginGuard

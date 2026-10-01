@@ -59,6 +59,65 @@ describe("ListingsService", () => {
 		expect(gateway.emitListingUpdated).toHaveBeenCalledWith(listing);
 	});
 
+	describe("filters", () => {
+		let query: Record<string, jest.Mock>;
+
+		beforeEach(() => {
+			query = {
+				select: jest.fn(),
+				sort: jest.fn(),
+				skip: jest.fn(),
+				limit: jest.fn(),
+				exec: jest.fn().mockResolvedValue([])
+			};
+			for (const step of ["select", "sort", "skip", "limit"]) {
+				query[step].mockReturnValue(query);
+			}
+			listingModel.find = jest.fn().mockReturnValue(query);
+		});
+
+		it("sorts nearest first without a distance cutoff unless a radius is given", async () => {
+			await service.filters({ lat: 56.34, lng: -2.79 } as never);
+
+			const [mongoQuery] = listingModel.find.mock.calls[0];
+			expect(mongoQuery.location.$near.$geometry.coordinates).toEqual([
+				-2.79, 56.34
+			]);
+			expect(mongoQuery.location.$near.$maxDistance).toBeUndefined();
+		});
+
+		it("keeps an explicit radius", async () => {
+			await service.filters({ lat: 56.34, lng: -2.79, radius: 2000 } as never);
+
+			const [mongoQuery] = listingModel.find.mock.calls[0];
+			expect(mongoQuery.location.$near.$maxDistance).toBe(2000);
+		});
+
+		it("returns one page of results when a page size is given", async () => {
+			await service.filters({ lat: 56.34, lng: -2.79, page: 3, limit: 5 } as never);
+
+			expect(query.skip).toHaveBeenCalledWith(10);
+			expect(query.limit).toHaveBeenCalledWith(5);
+			// $near already orders by distance; a sort would override it.
+			expect(query.sort).not.toHaveBeenCalled();
+		});
+
+		it("pages in a stable order when there is no location", async () => {
+			await service.filters({ page: 1, limit: 5 } as never);
+
+			expect(query.sort).toHaveBeenCalledWith({ _id: -1 });
+			expect(query.skip).toHaveBeenCalledWith(0);
+			expect(query.limit).toHaveBeenCalledWith(5);
+		});
+
+		it("returns everything when no page size is given", async () => {
+			await service.filters({} as never);
+
+			expect(query.skip).not.toHaveBeenCalled();
+			expect(query.limit).not.toHaveBeenCalled();
+		});
+	});
+
 	function makeLandlord(): User {
 		return { _id: new Types.ObjectId("64b64b64b64b64b64b64b64b") } as User;
 	}

@@ -1,4 +1,8 @@
-import { ForbiddenException, Injectable } from "@nestjs/common";
+import {
+	BadRequestException,
+	ForbiddenException,
+	Injectable
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
 	GetObjectCommand,
@@ -8,10 +12,16 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
+import { randomUUID } from "node:crypto";
 import { Listing } from "../listings/listings.schema";
 import { User } from "../users/users.schema";
 import { Application } from "../application/application.schema";
 import { ApplicationStage } from "../application/enums/application-stage.enum";
+import {
+	ALLOWED_UPLOAD_TYPES,
+	MAX_UPLOAD_BYTES
+} from "./dto/presign.dto";
+import { ownerIdFromKey } from "./object-key";
 
 @Injectable()
 export class UploadService {
@@ -43,14 +53,25 @@ export class UploadService {
 	}
 
 	async getPresignedUploadUrl(
-		fileName: string,
 		fileType: string,
-		folder: "public" | "private"
+		folder: "public" | "private",
+		ownerId: string,
+		fileSize: number
 	) {
+		if (fileSize > MAX_UPLOAD_BYTES) {
+			throw new BadRequestException(
+				`Files must be ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB or smaller.`
+			);
+		}
+
 		const bucket =
 			folder === "private" ? this.privateBucket : this.publicBucket;
 
-		const key = `${folder}/${Date.now()}-${fileName}`;
+		// The key is derived entirely from server-side values. The client's
+		// filename is never interpolated, so it cannot steer the object
+		// anywhere — including into another user's namespace.
+		const extension = ALLOWED_UPLOAD_TYPES[fileType];
+		const key = `${folder}/${ownerId}/${randomUUID()}.${extension}`;
 
 		const command =
 			folder === "private"
@@ -58,16 +79,21 @@ export class UploadService {
 					Bucket: bucket,
 					Key: key,
 					ContentType: fileType,
+					ContentLength: fileSize,
 					ACL: "private"
 				})
 				: new PutObjectCommand({
 					Bucket: bucket,
 					Key: key,
-					ContentType: fileType
+					ContentType: fileType,
+					ContentLength: fileSize
 				});
 
+		// Content type and length are signed into the URL, so S3 itself rejects
+		// a PUT that swaps the type or sends a body of a different size.
 		const uploadUrl = await getSignedUrl(this.s3Client, command, {
-			expiresIn: 60 // 1 min
+			expiresIn: 60, // 1 min
+			signableHeaders: new Set(["content-type", "content-length"])
 		});
 
 		const fileUrl = `https://${bucket}.s3.${this.configService.get(
@@ -101,9 +127,19 @@ export class UploadService {
 		});
 
 		if (!ownsListingDocument) {
-			const documentOwnerIds = await this.userModel.distinct("_id", {
+			const claimedOwnerIds = await this.userModel.distinct("_id", {
 				"documents.key": key
 			});
+
+			// An owner-scoped key resolves only to the user it was issued to.
+			// This makes the download path agree with the upload path, so a
+			// claim recorded before keys were bound to a user cannot widen
+			// access to somebody else's document.
+			const keyOwnerId = ownerIdFromKey(key);
+			const documentOwnerIds = keyOwnerId
+				? claimedOwnerIds.filter(id => id.toString() === keyOwnerId)
+				: claimedOwnerIds;
+
 			const canReviewApplicantDocument = documentOwnerIds.length > 0
 				? await this.applicationModel.exists({
 					landlord: userId,

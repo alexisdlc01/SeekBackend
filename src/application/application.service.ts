@@ -1,5 +1,6 @@
 import {
 	BadRequestException,
+	ForbiddenException,
 	Injectable,
 	NotFoundException
 } from "@nestjs/common";
@@ -15,6 +16,10 @@ import { ApplicationDto } from "./dto/application.dto";
 import { plainToInstance } from "class-transformer";
 import { DocumentType } from "../users/types/document-type";
 import { ConversationAccessService } from "../conversation/conversation-access.service";
+import { generateToken, hashToken, tokensMatch } from "../shared/tokens";
+
+/** How long a shared invite link stays usable. */
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const REQUIRED_DOCUMENT_RULES: {
 	type: DocumentType;
@@ -121,7 +126,7 @@ export class ApplicationService {
 		applicationId: string,
 		newOwner: string
 	): Promise<void> {
-		const user = this.userSevice.getUserById(newOwner);
+		const user = await this.userSevice.getUserById(newOwner);
 		if (!user) {
 			throw new NotFoundException("no such user exists for transfer.");
 		}
@@ -243,10 +248,48 @@ export class ApplicationService {
 		return this.toDto(application);
 	}
 
+	/**
+	 * Mints a fresh invite secret for an application and returns it once.
+	 * Admins (creator, and landlord once sent) can invite at any stage.
+	 *
+	 * Rotating on every share means a link that has been passed around beyond
+	 * the intended group can be revoked simply by sharing again.
+	 */
+	async createInvite(applicationId: string): Promise<{
+		inviteToken: string;
+		expiresAt: Date;
+	}> {
+		if (!Types.ObjectId.isValid(applicationId)) {
+			throw new BadRequestException("Invalid application ID");
+		}
+
+		const inviteToken = generateToken();
+		const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
+		const updated = await this.applicationModel.findOneAndUpdate(
+			{ _id: applicationId },
+			{
+				$set: {
+					inviteTokenHash: hashToken(inviteToken),
+					inviteTokenExpires: expiresAt
+				}
+			}
+		);
+		if (!updated) {
+			throw new NotFoundException("Application not found");
+		}
+
+		return { inviteToken, expiresAt };
+	}
+
 	async join(
 		applicationId: string,
-		userId: string
+		userId: string,
+		inviteToken: string
 	): Promise<void> {
+		if (!Types.ObjectId.isValid(applicationId)) {
+			throw new BadRequestException("Invalid application id");
+		}
+
 		const application: Application | null =
 			await this.applicationModel.findById(applicationId);
 
@@ -254,8 +297,16 @@ export class ApplicationService {
 			throw new BadRequestException("Invalid application id");
 		}
 
-		if (application.stage !== ApplicationStage.NOT_SENT) {
-			throw new BadRequestException("Application already sent.");
+		// The application id travels in shareable chat URLs, so it cannot be the
+		// thing that authorizes joining. A valid, unexpired invite must be
+		// presented as well.
+		if (
+			!application.inviteTokenHash ||
+			!application.inviteTokenExpires ||
+			application.inviteTokenExpires <= new Date() ||
+			!tokensMatch(inviteToken, application.inviteTokenHash)
+		) {
+			throw new ForbiddenException("Invite is not valid or has expired.");
 		}
 
 		const updatedApplication: Application | null =
@@ -271,6 +322,34 @@ export class ApplicationService {
 		await this.converstaionModel.updateOne(
 			{ _id: application.conversation },
 			{ $addToSet: { users: new Types.ObjectId(userId) } }
+		).exec();
+	}
+
+	/** A member leaves the group. The creator deletes the application instead. */
+	async leave(applicationId: string, userId: string): Promise<void> {
+		if (!Types.ObjectId.isValid(applicationId)) {
+			throw new BadRequestException("Invalid application id");
+		}
+
+		const application: Application | null =
+			await this.applicationModel.findById(applicationId);
+		if (!application) {
+			throw new NotFoundException("Application not found");
+		}
+		if (application.owner?.toString() === userId) {
+			throw new BadRequestException(
+				"The creator can't leave their application; delete it instead."
+			);
+		}
+
+		const member = new Types.ObjectId(userId);
+		await this.applicationModel.findOneAndUpdate(
+			{ _id: applicationId },
+			{ $pull: { applicants: member } },
+		);
+		await this.converstaionModel.updateOne(
+			{ _id: application.conversation },
+			{ $pull: { users: member } }
 		).exec();
 	}
 

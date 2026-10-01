@@ -28,6 +28,15 @@ export class Application {
 	@Prop({ type: String })
 	applicationKey?: string;
 
+	// An invite is a capability: joining requires this secret, not merely the
+	// application id, which is a route parameter and therefore not secret.
+	// Stored as a digest and rotated whenever a new invite is shared.
+	@Prop({ type: String })
+	inviteTokenHash?: string;
+
+	@Prop()
+	inviteTokenExpires?: Date;
+
 	@Prop({ default: Date.now, index: true })
 	createdAt: Date;
 

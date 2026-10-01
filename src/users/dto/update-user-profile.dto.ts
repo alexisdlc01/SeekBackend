@@ -1,6 +1,5 @@
 import {
 	IsDateString,
-	IsEmail,
 	IsOptional,
 	IsString,
 	Matches,
@@ -30,12 +29,6 @@ export class UpdateUserProfileDto {
 			"username must be 3-30 characters and contain only letters, numbers, dots, underscores, or hyphens"
 	})
 	username?: string;
-
-	@ApiPropertyOptional()
-	@IsOptional()
-	@IsEmail()
-	@MaxLength(254)
-	email?: string;
 
 	@ApiPropertyOptional({ description: "Send an empty string to clear it." })
 	@IsOptional()

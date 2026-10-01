@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { ApplicationService } from "./application.service";
 import { CreateApplicationDto } from "./dto/create-application.dto";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
@@ -9,6 +9,9 @@ import { OwnsListing } from "../listings/decorators/owns-listing.decorator";
 import { ApiByConversation, ApiCreateApplicationDocs, ApiGetAllMyApplicationsDocs, ApiGetApplicationById, ApiJoinApplication, ApiSendApplication } from "./swagger/application-swagger.decorator";
 import { OwnsAppliedListingGuard } from "./guards/owns-applied-listing.guard";
 import { ApplicationOwnerGuard } from "./guards/application-owner.guard";
+import { ApplicationAdminGuard } from "./guards/application-admin.guard";
+import { OwnsListingParamGuard } from "./guards/owns-listing-param.guard";
+import { JoinApplicationDto } from "./dto/join-application.dto";
 
 @Controller("application")
 export class ApplicationController {
@@ -27,8 +30,34 @@ export class ApplicationController {
 	@ApiJoinApplication()
 	@Student()
 	@Patch(":id/join")
-	async joinApplication(@CurrentUser() user: User, @Param("id") id: string) {
-		return await this.applicationService.join(id, user._id.toString());
+	async joinApplication(
+		@CurrentUser() user: User,
+		@Param("id") id: string,
+		@Query() { invite }: JoinApplicationDto
+	) {
+		return await this.applicationService.join(
+			id,
+			user._id.toString(),
+			invite
+		);
+	}
+
+	// Admin-only (creator, or landlord once sent): invites stay under the
+	// control of the group's admins rather than anyone who was invited.
+	@UseGuards(ApplicationAdminGuard)
+	@StudentOrLandlord()
+	@Post(":id/invite")
+	async createInvite(@Param("id") id: string) {
+		return await this.applicationService.createInvite(id);
+	}
+
+	@Applicant()
+	@Patch(":id/leave")
+	async leaveApplication(
+		@CurrentUser() user: User,
+		@Param("id") id: string
+	) {
+		return this.applicationService.leave(id, user._id.toString());
 	}
 
 	@ApiSendApplication()
@@ -62,7 +91,7 @@ export class ApplicationController {
 	}
 
 
-	@UseGuards(OwnsAppliedListingGuard)
+	@UseGuards(OwnsListingParamGuard)
 	@LandlordAgency()
 	@Get("listing/:id")
 	async getAllForListing(@Param("id") listingId: string) {

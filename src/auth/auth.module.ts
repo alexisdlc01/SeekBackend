@@ -10,17 +10,13 @@ import { JwtRefreshStrategy } from "./strategies/jwt-refresh.strategy";
 import { MailService } from "./mail.service";
 import { GoogleStrategy } from "./strategies/google.strategy";
 import { RedisModule } from "../redis/redis.module";
-import { ThrottlerModule } from "@nestjs/throttler";
 
 @Module({
 	imports: [
 		UsersModule,
 		PassportModule,
 		JwtModule,
-		RedisModule,
-		ThrottlerModule.forRoot({
-			throttlers: [{ name: "auth", ttl: 60_000, limit: 20 }]
-		})
+		RedisModule
 	],
 	providers: [
 		AuthService,

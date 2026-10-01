@@ -6,7 +6,6 @@ import {
 } from "@nestjs/common";
 import { ListingsService } from "../../listings/listings.service";
 import { ApplicationService } from "../application.service";
-import { UsersRepository } from "../../users/users.repository";
 
 export class OwnsAppliedListingGuard implements CanActivate {
 	constructor(

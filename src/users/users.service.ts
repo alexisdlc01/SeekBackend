@@ -17,6 +17,7 @@ import { UsersRepository } from "./users.repository";
 import { DocumentTypesDto } from "./dto/provided-docs.dto";
 import { UpdateUserProfileDto } from "./dto/update-user-profile.dto";
 import { Role } from "../auth/role.enum";
+import { isKeyOwnedBy } from "../upload/object-key";
 
 @Injectable()
 class UsersService {
@@ -130,9 +131,6 @@ class UsersService {
 		if (data.name !== undefined) {
 			set.name = data.name.trim();
 		}
-		if (data.email !== undefined) {
-			set.email = data.email.trim().toLowerCase();
-		}
 
 		const optionalTextFields = [
 			"username",
@@ -211,6 +209,15 @@ class UsersService {
 	}
 
 	async addDocument(userId: string, documentType: DocumentType, url: string, key: string) {
+		// Document access is resolved by looking up who holds a key, so a user
+		// must not be able to record a key that was issued to somebody else.
+		// Only keys minted for this user by the presign endpoint are accepted.
+		if (!isKeyOwnedBy(key, userId)) {
+			throw new BadRequestException(
+				"Document key was not issued to this account."
+			);
+		}
+
 		const result = await this.userModel.bulkWrite([
 			{
 				updateOne: {

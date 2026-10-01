@@ -1,5 +1,6 @@
 import {
 	BadRequestException,
+	ConflictException,
 	ForbiddenException,
 	HttpException,
 	HttpStatus,
@@ -16,6 +17,7 @@ import { RefreshSession, User } from "../users/users.schema";
 import { UsersRepository } from "../users/users.repository";
 import { CreateUserDto } from "../users/dto/create-user.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
+import { ChangeEmailDto } from "./dto/change-email.dto";
 import { GoogleUserDto } from "./dto/google-user.dto";
 import { MailService } from "./mail.service";
 import { Role } from "./role.enum";
@@ -418,9 +420,12 @@ export class AuthService {
 			}
 		);
 
+		// An https App Link is verified against the domain, so only our app can
+		// claim it. A custom scheme is first-come on Android and would let any
+		// installed app intercept the reset token.
 		const baseUrl = isMobile
 			? this.configService.get<string>("MOBILE_PASSWORD_RESET_URL") ??
-				"seekapp://link/reset-password"
+				"https://www.seekapp.uk/link/reset-password"
 			: this.configService.get<string>("FRONTEND_PASSWORD_RESET_URL") ??
 				`${this.configService.getOrThrow("FRONTEND_URL")}/confirmResetPassword`;
 		const separator = baseUrl.includes("?") ? "&" : "?";
@@ -459,6 +464,128 @@ export class AuthService {
 		}
 
 		return { message: "Password successfully reset." };
+	}
+
+	/**
+	 * Records a requested address and mails a confirmation token to it. Nothing
+	 * on the account changes until that token comes back, so a caller can never
+	 * take ownership of an address they cannot receive mail at.
+	 */
+	async requestEmailChange(user: User, body: ChangeEmailDto) {
+		if (user.isGoogle && !user.password) {
+			throw new BadRequestException(
+				"This account signs in with Google. Change the address on your Google account instead."
+			);
+		}
+		// Re-authenticate before a change of identity, so a borrowed session is
+		// not enough on its own.
+		if (!user.password || !(await compare(body.currentPassword, user.password))) {
+			throw new UnauthorizedException("Current password is not valid.");
+		}
+
+		const newEmail = this.normalizeEmail(body.newEmail);
+		if (newEmail === user.email) {
+			throw new BadRequestException(
+				"New email must be different from the current email."
+			);
+		}
+
+		const now = new Date();
+		const cooldownMs = this.emailChangeCooldownMs();
+		if (
+			user.pendingEmailLastSentAt &&
+			now.getTime() - user.pendingEmailLastSentAt.getTime() < cooldownMs
+		) {
+			throw new HttpException(
+				"Please wait before requesting another confirmation email.",
+				HttpStatus.TOO_MANY_REQUESTS
+			);
+		}
+
+		const windowMs = this.emailChangeRateWindowMs();
+		const existingWindowIsActive = Boolean(
+			user.pendingEmailWindowStartedAt &&
+			now.getTime() - user.pendingEmailWindowStartedAt.getTime() < windowMs
+		);
+		const sendCount = existingWindowIsActive
+			? (user.pendingEmailSendCount ?? 0)
+			: 0;
+		if (sendCount >= this.emailChangeMaxSendsPerWindow()) {
+			throw new HttpException(
+				"Too many email change requests. Try again later.",
+				HttpStatus.TOO_MANY_REQUESTS
+			);
+		}
+
+		// Checked here for a clean error message; the unique index on `email` is
+		// what actually decides the race at confirmation time.
+		const existing = await this.usersRepo.getUserByEmail(newEmail);
+		if (existing) {
+			throw new ConflictException("Email already in use.");
+		}
+
+		const rawToken = randomBytes(32).toString("hex");
+		await this.usersService.updateUser(
+			{ _id: user._id },
+			{
+				$set: {
+					pendingEmail: newEmail,
+					pendingEmailToken: this.hashToken(rawToken),
+					pendingEmailExpires: new Date(
+						now.getTime() + this.emailChangeTtlMs()
+					),
+					pendingEmailLastSentAt: now,
+					pendingEmailWindowStartedAt: existingWindowIsActive
+						? user.pendingEmailWindowStartedAt
+						: now,
+					pendingEmailSendCount: sendCount + 1
+				}
+			}
+		);
+
+		await this.mailService.sendEmailChangeConfirmation(
+			newEmail,
+			rawToken,
+			user._id.toString()
+		);
+		// The current address is told what was requested, so the real owner
+		// finds out even if somebody else is driving the session.
+		await this.mailService.sendEmailChangeNotice(user.email, newEmail);
+
+		return {
+			message:
+				"Confirm the change from the link sent to your new email address.",
+			expiresInSeconds: Math.floor(this.emailChangeTtlMs() / 1000)
+		};
+	}
+
+	async confirmEmailChange(userId: string, token: string) {
+		const user = await this.usersRepo.getUserById(userId);
+		if (
+			!user?.pendingEmail ||
+			!user.pendingEmailToken ||
+			!user.pendingEmailExpires ||
+			user.pendingEmailExpires <= new Date() ||
+			!this.tokensMatch(token, user.pendingEmailToken)
+		) {
+			throw new BadRequestException("Invalid or expired confirmation token.");
+		}
+
+		const result = await this.usersRepo.consumeEmailChange(
+			userId,
+			user.pendingEmailToken,
+			user.pendingEmail
+		);
+		if (result === "conflict") {
+			throw new ConflictException("Email already in use.");
+		}
+		if (result === "invalid") {
+			throw new BadRequestException("Invalid or expired confirmation token.");
+		}
+
+		return {
+			message: "Email successfully changed. Please sign in again."
+		};
 	}
 
 	async changePassword(user: User, body: ChangePasswordDto) {
@@ -583,7 +710,7 @@ export class AuthService {
 	}
 
 	private isEmailVerificationEnabled() {
-		return this.booleanConfig("AUTH_EMAIL_VERIFICATION_ENABLED", false);
+		return this.booleanConfig("AUTH_EMAIL_VERIFICATION_ENABLED", true);
 	}
 
 	private booleanConfig(key: string, fallback: boolean) {
@@ -656,5 +783,21 @@ export class AuthService {
 
 	private passwordResetMaxSendsPerWindow() {
 		return this.numericConfig("AUTH_PASSWORD_RESET_MAX_SENDS_PER_WINDOW", 5, 10);
+	}
+
+	private emailChangeTtlMs() {
+		return this.numericConfig("AUTH_EMAIL_CHANGE_TTL_MS", 30 * 60 * 1000);
+	}
+
+	private emailChangeCooldownMs() {
+		return this.numericConfig("AUTH_EMAIL_CHANGE_COOLDOWN_MS", 60 * 1000);
+	}
+
+	private emailChangeRateWindowMs() {
+		return this.numericConfig("AUTH_EMAIL_CHANGE_RATE_WINDOW_MS", 60 * 60 * 1000);
+	}
+
+	private emailChangeMaxSendsPerWindow() {
+		return this.numericConfig("AUTH_EMAIL_CHANGE_MAX_SENDS_PER_WINDOW", 5, 10);
 	}
 }

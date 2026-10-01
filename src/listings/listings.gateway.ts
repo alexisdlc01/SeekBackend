@@ -120,7 +120,9 @@ export class ListingsGateway
 			throw new Error("Missing token");
 		}
 
-		const payload = verify(token, secret) as TokenPayload & JwtPayload;
+		const payload = verify(token, secret, {
+			algorithms: ["HS256"]
+		}) as TokenPayload & JwtPayload;
 		if (!payload.userId || !payload.sessionId || !payload.exp) {
 			throw new Error("Invalid token payload");
 		}

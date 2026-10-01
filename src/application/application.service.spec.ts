@@ -1,8 +1,9 @@
 import { Types } from "mongoose";
 import { ApplicationService } from "./application.service";
 import { User } from "../users/users.schema";
-import { ForbiddenException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { ApplicationStage } from "./enums/application-stage.enum";
+import { hashToken } from "../shared/tokens";
 
 function documentFrom(value: Record<string, unknown>) {
 	return {
@@ -228,23 +229,151 @@ describe("ApplicationService", () => {
 		)).rejects.toBeInstanceOf(ForbiddenException);
 	});
 
-	it("adds a joined applicant to both the application and conversation", async () => {
-		const joinedUserId = new Types.ObjectId();
-		applicationModel.findById.mockResolvedValue({
-			_id: applicationId,
-			conversation: conversationId,
-			stage: ApplicationStage.NOT_SENT,
-		});
-		applicationModel.findOneAndUpdate.mockResolvedValue({ _id: applicationId });
-		conversationModel.updateOne.mockReturnValue({
-			exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
+	describe("join", () => {
+		const VALID_INVITE = "a".repeat(64);
+
+		function mockApplication(overrides: Record<string, unknown> = {}) {
+			applicationModel.findById.mockResolvedValue({
+				_id: applicationId,
+				conversation: conversationId,
+				stage: ApplicationStage.NOT_SENT,
+				inviteTokenHash: hashToken(VALID_INVITE),
+				inviteTokenExpires: new Date(Date.now() + 60_000),
+				...overrides,
+			});
+			applicationModel.findOneAndUpdate.mockResolvedValue({ _id: applicationId });
+			conversationModel.updateOne.mockReturnValue({
+				exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
+			});
+		}
+
+		it("adds a joined applicant to both the application and conversation", async () => {
+			const joinedUserId = new Types.ObjectId();
+			mockApplication();
+
+			await service.join(
+				applicationId.toString(),
+				joinedUserId.toString(),
+				VALID_INVITE,
+			);
+
+			expect(conversationModel.updateOne).toHaveBeenCalledWith(
+				{ _id: conversationId },
+				{ $addToSet: { users: joinedUserId } },
+			);
 		});
 
-		await service.join(applicationId.toString(), joinedUserId.toString());
+		it("refuses to join on the application id alone", async () => {
+			mockApplication();
 
-		expect(conversationModel.updateOne).toHaveBeenCalledWith(
-			{ _id: conversationId },
-			{ $addToSet: { users: joinedUserId } },
-		);
+			// The id travels in shareable chat URLs, so knowing it must not be
+			// enough to join and read the conversation.
+			await expect(service.join(
+				applicationId.toString(),
+				new Types.ObjectId().toString(),
+				"b".repeat(64),
+			)).rejects.toBeInstanceOf(ForbiddenException);
+			expect(conversationModel.updateOne).not.toHaveBeenCalled();
+		});
+
+		it("refuses an expired invite", async () => {
+			mockApplication({ inviteTokenExpires: new Date(Date.now() - 1) });
+
+			await expect(service.join(
+				applicationId.toString(),
+				new Types.ObjectId().toString(),
+				VALID_INVITE,
+			)).rejects.toBeInstanceOf(ForbiddenException);
+			expect(conversationModel.updateOne).not.toHaveBeenCalled();
+		});
+
+		it("lets an invited user join after the application has been sent", async () => {
+			const joinedUserId = new Types.ObjectId();
+			mockApplication({ stage: ApplicationStage.SENT });
+
+			await service.join(
+				applicationId.toString(),
+				joinedUserId.toString(),
+				VALID_INVITE,
+			);
+
+			expect(conversationModel.updateOne).toHaveBeenCalledWith(
+				{ _id: conversationId },
+				{ $addToSet: { users: joinedUserId } },
+			);
+		});
+
+		it("refuses when no invite has ever been issued", async () => {
+			mockApplication({ inviteTokenHash: undefined, inviteTokenExpires: undefined });
+
+			await expect(service.join(
+				applicationId.toString(),
+				new Types.ObjectId().toString(),
+				VALID_INVITE,
+			)).rejects.toBeInstanceOf(ForbiddenException);
+			expect(conversationModel.updateOne).not.toHaveBeenCalled();
+		});
+	});
+	describe("createInvite", () => {
+		it("mints an invite after the application has been sent", async () => {
+			applicationModel.findOneAndUpdate.mockResolvedValue({ _id: applicationId });
+
+			const { inviteToken } = await service.createInvite(applicationId.toString());
+
+			expect(inviteToken).toHaveLength(64);
+			const [filter, update] = applicationModel.findOneAndUpdate.mock.calls[0];
+			expect(filter).toEqual({ _id: applicationId.toString() });
+			expect(update.$set.inviteTokenHash).toBe(hashToken(inviteToken));
+		});
+
+		it("reports a missing application", async () => {
+			applicationModel.findOneAndUpdate.mockResolvedValue(null);
+
+			await expect(
+				service.createInvite(applicationId.toString()),
+			).rejects.toBeInstanceOf(NotFoundException);
+		});
+	});
+
+	describe("leave", () => {
+		const memberId = new Types.ObjectId();
+
+		function mockApplication(overrides: Record<string, unknown> = {}) {
+			applicationModel.findById.mockResolvedValue({
+				_id: applicationId,
+				conversation: conversationId,
+				owner: userId,
+				applicants: [userId, memberId],
+				...overrides,
+			});
+			applicationModel.findOneAndUpdate.mockResolvedValue({ _id: applicationId });
+			conversationModel.updateOne.mockReturnValue({
+				exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
+			});
+		}
+
+		it("removes a member from the application and its conversation", async () => {
+			mockApplication();
+
+			await service.leave(applicationId.toString(), memberId.toString());
+
+			expect(applicationModel.findOneAndUpdate).toHaveBeenCalledWith(
+				{ _id: applicationId.toString() },
+				{ $pull: { applicants: memberId } },
+			);
+			expect(conversationModel.updateOne).toHaveBeenCalledWith(
+				{ _id: conversationId },
+				{ $pull: { users: memberId } },
+			);
+		});
+
+		it("does not let the creator leave their own application", async () => {
+			mockApplication();
+
+			await expect(
+				service.leave(applicationId.toString(), userId.toString()),
+			).rejects.toBeInstanceOf(BadRequestException);
+			expect(conversationModel.updateOne).not.toHaveBeenCalled();
+		});
 	});
 });

@@ -1,4 +1,4 @@
-import { IsEnum, IsOptional, IsString, IsUrl } from "class-validator";
+import { IsEnum, IsString, IsUrl } from "class-validator";
 import { DocumentType } from "../types/document-type";
 import { ApiProperty } from "@nestjs/swagger";
 
@@ -11,8 +11,10 @@ export class AddDocumentDto {
 	@IsUrl()
 	url: string;
 
-	@ApiProperty({ required: false })
-	@IsOptional()
+	@ApiProperty({
+		description:
+			"Object key returned by /upload/presign. Must have been issued to the calling account."
+	})
 	@IsString()
 	key: string;
 }
