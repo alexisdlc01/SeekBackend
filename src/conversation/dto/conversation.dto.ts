@@ -17,7 +17,13 @@ export class ConversationDto {
 	@ApiProperty({ required: false })
 	@IsOptional()
 	@Expose()
+	@Type(() => MessageDto)
 	lastMessage?: MessageDto;
+
+	@ApiProperty({ required: false })
+	@IsOptional()
+	@Expose()
+	unreadCount?: number;
 
 	@ApiProperty()
 	@Expose()

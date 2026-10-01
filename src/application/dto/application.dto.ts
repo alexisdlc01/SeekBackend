@@ -4,6 +4,8 @@ import { Listing } from "../../listings/listings.schema";
 import { ApplicationStage } from "../enums/application-stage.enum";
 import { ConversationDto } from "../../conversation/dto/conversation.dto";
 import { ValidateNested } from "class-validator";
+import { ObjectIdString } from "src/shared/object-id.transform";
+import { UserDto } from "src/users/dto/user.dto";
 
 export class ApplicationDto {
 	@ApiProperty()
@@ -25,11 +27,18 @@ export class ApplicationDto {
 
 	@ApiProperty()
 	@Expose()
+	@ObjectIdString()
 	landlord: string;
 
 	@ApiProperty({ isArray: true, type: String })
 	@Expose()
+	@ObjectIdString()
 	applicants: string[];
+
+	@ApiProperty({ type: UserDto, isArray: true, required: false })
+	@Expose()
+	@Type(() => UserDto)
+	applicantUsers?: UserDto[];
 
 	@ApiProperty()
 	@Expose()
@@ -37,6 +46,7 @@ export class ApplicationDto {
 
 	@ApiProperty()
 	@Expose()
+	@ObjectIdString()
 	owner: string;
 
 	@ApiProperty({ enum: ApplicationStage })
