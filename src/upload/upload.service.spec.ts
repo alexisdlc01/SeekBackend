@@ -88,4 +88,54 @@ describe("UploadService private-file authorization", () => {
 			{ _id: new Types.ObjectId() } as any
 		)).rejects.toBeInstanceOf(ForbiddenException);
 	});
+
+	it("resolves an owner-scoped key only to the user it was issued to", async () => {
+		const { service, listingModel, userModel, applicationModel } = setup();
+		const realOwner = new Types.ObjectId();
+		const claimant = new Types.ObjectId();
+		listingModel.exists.mockResolvedValue(null);
+		// Both users hold the key — the claimant recorded it against their own
+		// profile. Only the owner named in the key may resolve it.
+		userModel.distinct.mockResolvedValue([realOwner, claimant]);
+		applicationModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+
+		await service.getAuthorizedPrivateDownloadUrl(
+			`private/${realOwner.toHexString()}/123e4567-e89b-12d3-a456-426614174000.pdf`,
+			{ _id: new Types.ObjectId() } as any
+		);
+
+		expect(applicationModel.exists).toHaveBeenCalledWith(
+			expect.objectContaining({ applicants: { $in: [realOwner] } })
+		);
+	});
+
+	describe("presigned uploads", () => {
+		const ownerId = "507f1f77bcf86cd799439011";
+
+		it("derives the key from the owner, never the client filename", async () => {
+			const { service } = setup();
+
+			const { key } = await service.getPresignedUploadUrl(
+				"application/pdf",
+				"private",
+				ownerId,
+				1024
+			);
+
+			expect(key).toMatch(
+				new RegExp(`^private/${ownerId}/[0-9a-f-]{36}\\.pdf$`)
+			);
+		});
+
+		it("rejects a file above the size ceiling", async () => {
+			const { service } = setup();
+
+			await expect(service.getPresignedUploadUrl(
+				"image/png",
+				"public",
+				ownerId,
+				50 * 1024 * 1024
+			)).rejects.toThrow(/15MB or smaller/);
+		});
+	});
 });

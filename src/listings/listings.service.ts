@@ -271,7 +271,8 @@ export class ListingsService {
 						type: "Point",
 						coordinates: [lng, lat]
 					},
-					$maxDistance: isPositive(radius) ? radius : 5000
+					// Nearest first; only cut off by distance when asked to.
+					...(isPositive(radius) ? { $maxDistance: radius } : {})
 				}
 			};
 		}
@@ -304,9 +305,20 @@ export class ListingsService {
 			query.amenities = { $all: filters.amenities };
 		}
 
-		return this.listingModel
+		let results = this.listingModel
 			.find(query)
-			.select("-registerOfTitleKey -registrationNumber -likedBy")
-			.exec();
+			.select("-registerOfTitleKey -registrationNumber -likedBy");
+
+		const limit = toNumber(filters.limit);
+		if (isPositive(limit)) {
+			const page = Math.max(1, toNumber(filters.page) ?? 1);
+			// $near already orders by distance; otherwise page in a stable order.
+			if (!query.location) {
+				results = results.sort({ _id: -1 });
+			}
+			results = results.skip((page - 1) * limit).limit(limit);
+		}
+
+		return results.exec();
 	}
 }

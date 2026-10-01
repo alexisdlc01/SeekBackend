@@ -1,9 +1,12 @@
 import {
 	IsArray,
 	IsEnum,
+	IsInt,
 	IsNumber,
 	IsOptional,
-	IsString
+	IsString,
+	Max,
+	Min
 } from "class-validator";
 import { PropertyType } from "../enums/propertyType.enum";
 import { ApiPropertyOptional } from "@nestjs/swagger";
@@ -68,4 +71,19 @@ export class ListingFilterDto {
 	@Type(() => Number)
 	@IsNumber()
 	radius?: number;
+
+	@ApiPropertyOptional({ minimum: 1, description: "1-based page; needs limit" })
+	@IsOptional()
+	@Type(() => Number)
+	@IsInt()
+	@Min(1)
+	page?: number;
+
+	@ApiPropertyOptional({ minimum: 1, maximum: 50 })
+	@IsOptional()
+	@Type(() => Number)
+	@IsInt()
+	@Min(1)
+	@Max(50)
+	limit?: number;
 }

@@ -31,7 +31,8 @@ export class WsJwtGuard implements CanActivate {
 		try {
 			const payload = verify(
 				token,
-				process.env.JWT_ACCESS_TOKEN_SECRET
+				process.env.JWT_ACCESS_TOKEN_SECRET,
+				{ algorithms: ["HS256"] }
 			) as TokenPayload;
 			if (!payload.userId || !payload.sessionId) {
 				throw new UnauthorizedException("Invalid or missing token");

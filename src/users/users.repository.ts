@@ -104,6 +104,53 @@ export class UsersRepository {
 		);
 	}
 
+	/**
+	 * Promotes a pending address to the account's real email in one atomic
+	 * update, gated on the confirmation token still matching and being unexpired.
+	 * All refresh sessions are dropped, since the account's identity changed.
+	 *
+	 * Returns "conflict" when the address was claimed by somebody else between
+	 * the request and the confirmation.
+	 */
+	async consumeEmailChange(
+		userId: string,
+		pendingEmailTokenHash: string,
+		newEmail: string
+	): Promise<"ok" | "invalid" | "conflict"> {
+		try {
+			const updated = await this.userModel.findOneAndUpdate(
+				{
+					_id: userId,
+					pendingEmailToken: pendingEmailTokenHash,
+					pendingEmail: newEmail,
+					pendingEmailExpires: { $gt: new Date() }
+				},
+				{
+					$set: {
+						email: newEmail,
+						isVerified: true,
+						refreshSessions: []
+					},
+					$unset: {
+						pendingEmail: 1,
+						pendingEmailToken: 1,
+						pendingEmailExpires: 1,
+						pendingEmailLastSentAt: 1,
+						pendingEmailWindowStartedAt: 1,
+						pendingEmailSendCount: 1
+					}
+				}
+			);
+
+			return updated !== null ? "ok" : "invalid";
+		} catch (err) {
+			if (err.code === 11000 && err.keyPattern?.email) {
+				return "conflict";
+			}
+			throw err;
+		}
+	}
+
 	async consumePasswordReset(
 		userId: string,
 		resetTokenHash: string,

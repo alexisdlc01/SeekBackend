@@ -22,7 +22,14 @@ export class RoleGuard implements CanActivate {
 		);
 
 		const request = context.switchToHttp().getRequest();
-		const user = request["user"] as UserDto;
+		const user = request["user"] as UserDto | undefined;
+
+		// A handler with no @Roles metadata, or a request that never resolved a
+		// user, is a misconfiguration — deny explicitly rather than throwing a
+		// TypeError that surfaces as an opaque 500.
+		if (!requiredRoles?.length || !user?.role) {
+			return false;
+		}
 
 		for (let role of requiredRoles) {
 			const result = this.accessControlService.isAuthorized({

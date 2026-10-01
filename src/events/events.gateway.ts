@@ -1,32 +1,40 @@
 import {
-	ConnectedSocket,
-	MessageBody,
 	SubscribeMessage,
 	WebSocketGateway,
-	WebSocketServer
+	WebSocketServer,
+	OnGatewayInit
 } from "@nestjs/websockets";
-import { Server, Socket } from "socket.io";
-import { InjectModel } from "@nestjs/mongoose";
-import Redis from "ioredis";
+import { UseGuards } from "@nestjs/common";
+import { Server } from "socket.io";
+import { WsJwtGuard } from "../auth/guards/ws-jwt.guard";
+import UsersService from "../users/users.service";
+import { SocketAuthMiddleware } from "../auth/middleware/ws.middleware";
 
-@WebSocketGateway({ namespace: "events" })
-export class EventsGateway {
+/**
+ * Namespace scaffolding. It carries no real handlers yet, but it is
+ * authenticated on the same terms as the other gateways so that whatever is
+ * added here inherits a verified session rather than an open socket.
+ */
+@WebSocketGateway({
+	namespace: "events",
+	cors: {
+		origin: process.env.FRONTEND_URL,
+		credentials: true
+	}
+})
+@UseGuards(WsJwtGuard)
+export class EventsGateway implements OnGatewayInit {
 	@WebSocketServer()
 	server: Server;
 
-	// constructor(@InjectModel("REDIS_CLIENT") private readonly redis: Redis) {}
+	constructor(private readonly usersService: UsersService) {}
 
-	@SubscribeMessage("message")
-	handleMessage(client: any, payload: any): string {
-		return "Hello world!";
+	afterInit(server: Server) {
+		server.use(SocketAuthMiddleware(this.usersService));
 	}
 
-	// Need user's id
-	// @SubscribeMessage("typing")
-	// handleTyping(
-	// 	@ConnectedSocket() client: Socket,
-	// 	@MessageBody() payload: { isTyping: boolean }
-	// ) {
-	//
-	// }
+	@SubscribeMessage("message")
+	handleMessage(): string {
+		return "Hello world!";
+	}
 }

@@ -168,7 +168,16 @@ function listing({
 }
 
 async function seed(db) {
-	const password = await hash("Password123!", 10);
+	// No default. A password baked into a committed file becomes a known
+	// credential on every database this script is ever pointed at.
+	const seedPassword = process.env.SEED_PASSWORD;
+	if (!seedPassword) {
+		throw new Error(
+			"SEED_PASSWORD must be set. Choose a local development password; " +
+			"it is used for every seeded account, including the superuser."
+		);
+	}
+	const password = await hash(seedPassword, 10);
 	const now = new Date();
 
 	const users = [
@@ -519,11 +528,52 @@ async function reset(db) {
 	console.log(`Cleared collections: ${COLLECTIONS.join(", ")}`);
 }
 
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "mongo"]);
+
+/**
+ * These commands wipe collections and create a superuser, so they must never
+ * run against a shared database. The check is on the connection target rather
+ * than on NODE_ENV alone, because the destructive case is a developer whose
+ * .env points somewhere real.
+ */
+function assertLocalTarget(uri) {
+	if (process.env.ALLOW_REMOTE_DB_SCRIPTS === "true") {
+		console.warn("ALLOW_REMOTE_DB_SCRIPTS is set — skipping the local-target check.");
+		return;
+	}
+
+	let hosts;
+	try {
+		// mongodb+srv and comma-separated seed lists both parse through the URL
+		// class once the scheme is normalised.
+		const normalised = uri.replace(/^mongodb(\+srv)?:\/\//, "http://");
+		hosts = new URL(normalised).host
+			.split(",")
+			.map(host => host.split(":")[0].trim().toLowerCase())
+			.filter(Boolean);
+	} catch {
+		throw new Error(`Could not parse MONGODB_URI, refusing to continue.`);
+	}
+
+	const remote = hosts.filter(host => !LOCAL_HOSTS.has(host));
+	if (remote.length > 0) {
+		throw new Error(
+			`Refusing to run against non-local database host(s): ${remote.join(", ")}. ` +
+			"These commands delete every collection and create a superuser. " +
+			"Set ALLOW_REMOTE_DB_SCRIPTS=true only if you are certain."
+		);
+	}
+}
+
 async function main() {
 	loadEnv();
 
 	const command = process.argv[2] || "seed";
 	const uri = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/seek";
+
+	if (command !== "indexes") {
+		assertLocalTarget(uri);
+	}
 
 	await mongoose.connect(uri);
 	const db = mongoose.connection.db;

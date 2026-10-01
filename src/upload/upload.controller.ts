@@ -1,4 +1,5 @@
 import { Controller, Get, Query } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { UploadService } from "./upload.service";
 import { LandlordAgency } from "../auth/decorators/role-auth.decorator";
 import { ApiAccessDocs, ApiPresignDocs } from "./upload-swagger.decorator";
@@ -14,14 +15,17 @@ export class UploadController {
 
 	@ApiPresignDocs()
 	@Get("presign")
+	@Throttle({ default: { limit: 20, ttl: 60_000 } })
 	@StudentOrLandlord()
 	async getPresignedUrl(
-		@Query() { filename, fileType, folder }: PresignReqDto
+		@Query() { fileType, folder, fileSize }: PresignReqDto,
+		@CurrentUser() user: User
 	) {
 		return await this.uploadService.getPresignedUploadUrl(
-			filename,
 			fileType,
-			folder
+			folder,
+			user._id.toString(),
+			fileSize
 		);
 	}
 

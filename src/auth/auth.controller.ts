@@ -40,9 +40,11 @@ import {
 	ApiVerifyEmailDocs
 } from "./swagger/auth-swagger.decorator";
 import { plainToInstance } from "class-transformer";
-import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
+import { Throttle } from "@nestjs/throttler";
 import { ResendOtpDto } from "./dto/resend-otp.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
+import { ChangeEmailDto } from "./dto/change-email.dto";
+import { ConfirmEmailChangeDto } from "./dto/confirm-email-change.dto";
 
 @ApiTags("Auth")
 @Controller("auth")
@@ -54,7 +56,7 @@ export class AuthController {
 
 	@Post("/login")
 	@Throttle({ auth: { limit: 10, ttl: 60_000, blockDuration: 60_000 } })
-	@UseGuards(ThrottlerGuard, LocalAuthGuard)
+	@UseGuards(LocalAuthGuard)
 	@ApiLoginDocs()
 	async login(
 		@CurrentUser() user: User,
@@ -67,7 +69,6 @@ export class AuthController {
 
 	@Post("/signup")
 	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60_000 } })
-	@UseGuards(ThrottlerGuard)
 	@ApiSignupDocs()
 	async signup(
 		@Body() body: CreateUserDto,
@@ -92,7 +93,6 @@ export class AuthController {
 
 	@Post("/verify-email")
 	@Throttle({ auth: { limit: 10, ttl: 60_000, blockDuration: 60_000 } })
-	@UseGuards(ThrottlerGuard)
 	@ApiVerifyEmailDocs()
 	async verifyEmail(
 		@Body() body: VerifyEmailDto,
@@ -106,7 +106,6 @@ export class AuthController {
 
 	@Patch("/resend-otp")
 	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60_000 } })
-	@UseGuards(ThrottlerGuard)
 	@ApiResendOtpDocs()
 	async resendOtp(@Body() body: ResendOtpDto) {
 		return this.authService.resendOtp(body.userId);
@@ -114,7 +113,6 @@ export class AuthController {
 
 	@Post("/forgot-password")
 	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60_000 } })
-	@UseGuards(ThrottlerGuard)
 	@ApiForgotPasswordDocs()
 	async forgotPassword(
 		@Body() body: ForgotPasswordDto,
@@ -126,7 +124,6 @@ export class AuthController {
 
 	@Post("/confirmPasswordReset")
 	@Throttle({ auth: { limit: 10, ttl: 60 * 60_000, blockDuration: 60_000 } })
-	@UseGuards(ThrottlerGuard)
 	@ApiConfirmPasswordDocs()
 	async confirmPasswordReset(
 		@Body() body: ConfirmPasswordResetDto,
@@ -154,6 +151,34 @@ export class AuthController {
 		@Res({ passthrough: true }) response: Response
 	) {
 		const result = await this.authService.changePassword(user, body);
+		if (request.headers.platform !== "mobile") {
+			this.authService.clearAuthCookies(response);
+		}
+		return result;
+	}
+
+	@Post("/change-email")
+	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60_000 } })
+	@UseGuards(JwtAuthGuard)
+	async requestEmailChange(
+		@Body() body: ChangeEmailDto,
+		@CurrentUser() user: User
+	) {
+		return this.authService.requestEmailChange(user, body);
+	}
+
+	@Post("/confirmEmailChange")
+	@Throttle({ auth: { limit: 10, ttl: 60 * 60_000, blockDuration: 60_000 } })
+	async confirmEmailChange(
+		@Body() body: ConfirmEmailChangeDto,
+		@Req() request: Request,
+		@Res({ passthrough: true }) response: Response
+	) {
+		const result = await this.authService.confirmEmailChange(
+			body.userId,
+			body.token
+		);
+		// Sessions were dropped server-side; clear the browser's copies too.
 		if (request.headers.platform !== "mobile") {
 			this.authService.clearAuthCookies(response);
 		}
@@ -196,7 +221,7 @@ export class AuthController {
 
 	@Post("/refresh")
 	@Throttle({ auth: { limit: 30, ttl: 60_000, blockDuration: 60_000 } })
-	@UseGuards(ThrottlerGuard, JwtRefreshGuard)
+	@UseGuards(JwtRefreshGuard)
 	@ApiRefreshDocs()
 	async refreshToken(
 		@CurrentUser() user: User,

@@ -1,5 +1,6 @@
 import {
 	BadRequestException,
+	ConflictException,
 	ForbiddenException,
 	UnauthorizedException
 } from "@nestjs/common";
@@ -57,7 +58,8 @@ describe("AuthService", () => {
 			rotateRefreshSession: jest.fn().mockResolvedValue(true),
 			removeRefreshSession: jest.fn().mockResolvedValue(undefined),
 			clearRefreshSessions: jest.fn().mockResolvedValue(undefined),
-			consumePasswordReset: jest.fn().mockResolvedValue(true)
+			consumePasswordReset: jest.fn().mockResolvedValue(true),
+			consumeEmailChange: jest.fn().mockResolvedValue("ok")
 		};
 		usersService = {
 			updateUser: jest.fn().mockResolvedValue({})
@@ -65,7 +67,9 @@ describe("AuthService", () => {
 		mailService = {
 			sendOtpEmail: jest.fn().mockResolvedValue(undefined),
 			sendVerificationEmail: jest.fn().mockResolvedValue(undefined),
-			sendResetPasswordEmail: jest.fn().mockResolvedValue(undefined)
+			sendResetPasswordEmail: jest.fn().mockResolvedValue(undefined),
+			sendEmailChangeConfirmation: jest.fn().mockResolvedValue(undefined),
+			sendEmailChangeNotice: jest.fn().mockResolvedValue(undefined)
 		};
 		jwtService = {
 			sign: jest.fn().mockImplementation((_payload, options) =>
@@ -89,7 +93,7 @@ describe("AuthService", () => {
 		);
 	});
 
-	it("creates only a normalized student account and skips verification by default", async () => {
+	it("creates a normalized student account and requires verification by default", async () => {
 		usersRepo.create.mockImplementation(async data => makeUser(data));
 
 		const result = await service.signup({
@@ -98,14 +102,33 @@ describe("AuthService", () => {
 			password: "Str0ng!Password"
 		}, true);
 
-		expect(result.verificationRequired).toBe(false);
+		// Verification is on unless explicitly disabled, so a deployment that
+		// forgets the flag does not silently accept unverified accounts.
+		expect(result.verificationRequired).toBe(true);
 		expect(usersRepo.create).toHaveBeenCalledWith(expect.objectContaining({
 			name: "Ada",
 			email: "ada@example.com",
 			role: Role.STUDENT,
-			isVerified: true
+			isVerified: false
 		}));
 		expect(usersRepo.create.mock.calls[0][0].password).not.toBe("Str0ng!Password");
+		expect(mailService.sendOtpEmail).toHaveBeenCalled();
+	});
+
+	it("skips verification only when the flag is explicitly disabled", async () => {
+		config.AUTH_EMAIL_VERIFICATION_ENABLED = false;
+		usersRepo.create.mockImplementation(async data => makeUser(data));
+
+		const result = await service.signup({
+			name: "Ada",
+			email: "ada@example.com",
+			password: "Str0ng!Password"
+		}, true);
+
+		expect(result.verificationRequired).toBe(false);
+		expect(usersRepo.create).toHaveBeenCalledWith(expect.objectContaining({
+			isVerified: true
+		}));
 		expect(mailService.sendOtpEmail).not.toHaveBeenCalled();
 	});
 
@@ -232,7 +255,7 @@ describe("AuthService", () => {
 		expect(mailService.sendOtpEmail).not.toHaveBeenCalled();
 	});
 
-	it("blocks login for an unverified account only when the flag is enabled", async () => {
+	it("blocks login for an unverified account unless the flag is disabled", async () => {
 		const password = await hash("Str0ng!Password", 4);
 		usersRepo.getUserByEmail.mockResolvedValue(makeUser({
 			password,
@@ -242,12 +265,12 @@ describe("AuthService", () => {
 		await expect(service.verifyUser(
 			"STUDENT@EXAMPLE.COM",
 			"Str0ng!Password"
-		)).resolves.toBeDefined();
-		config.AUTH_EMAIL_VERIFICATION_ENABLED = true;
+		)).rejects.toBeInstanceOf(UnauthorizedException);
+		config.AUTH_EMAIL_VERIFICATION_ENABLED = false;
 		await expect(service.verifyUser(
 			"student@example.com",
 			"Str0ng!Password"
-		)).rejects.toBeInstanceOf(UnauthorizedException);
+		)).resolves.toBeDefined();
 	});
 
 	it("creates a per-device session and caps an unsafe access-token lifetime", async () => {
@@ -385,5 +408,136 @@ describe("AuthService", () => {
 			"session-a"
 		);
 		expect(usersRepo.clearRefreshSessions).not.toHaveBeenCalled();
+	});
+	describe("email change", () => {
+		const CURRENT_PASSWORD = "Str0ng!Password";
+
+		async function userWithPassword(overrides: Partial<User> = {}) {
+			return makeUser({
+				password: await hash(CURRENT_PASSWORD, 4),
+				...overrides
+			});
+		}
+
+		it("stores only a hashed token and mails both addresses", async () => {
+			const user = await userWithPassword();
+			usersRepo.getUserByEmail.mockResolvedValue(null);
+
+			await service.requestEmailChange(user, {
+				currentPassword: CURRENT_PASSWORD,
+				newEmail: "  NEW@Example.COM "
+			});
+
+			const [, update] = usersService.updateUser.mock.calls[0];
+			expect(update.$set.pendingEmail).toBe("new@example.com");
+			// The raw token must never be persisted.
+			const rawToken = mailService.sendEmailChangeConfirmation.mock.calls[0][1];
+			expect(update.$set.pendingEmailToken).toBe(tokenHash(rawToken));
+			expect(update.$set.pendingEmailToken).not.toBe(rawToken);
+			// The existing address is told, so the real owner learns about it.
+			expect(mailService.sendEmailChangeNotice).toHaveBeenCalledWith(
+				user.email,
+				"new@example.com"
+			);
+		});
+
+		it("requires the current password, so a borrowed session is not enough", async () => {
+			const user = await userWithPassword();
+			usersRepo.getUserByEmail.mockResolvedValue(null);
+
+			await expect(service.requestEmailChange(user, {
+				currentPassword: "wrong-password",
+				newEmail: "new@example.com"
+			})).rejects.toBeInstanceOf(UnauthorizedException);
+			expect(usersService.updateUser).not.toHaveBeenCalled();
+			expect(mailService.sendEmailChangeConfirmation).not.toHaveBeenCalled();
+		});
+
+		it("refuses an address already in use", async () => {
+			const user = await userWithPassword();
+			usersRepo.getUserByEmail.mockResolvedValue(makeUser());
+
+			await expect(service.requestEmailChange(user, {
+				currentPassword: CURRENT_PASSWORD,
+				newEmail: "taken@example.com"
+			})).rejects.toBeInstanceOf(ConflictException);
+			expect(mailService.sendEmailChangeConfirmation).not.toHaveBeenCalled();
+		});
+
+		it("enforces the resend cooldown", async () => {
+			const user = await userWithPassword({
+				pendingEmailLastSentAt: new Date()
+			});
+			usersRepo.getUserByEmail.mockResolvedValue(null);
+
+			await expect(service.requestEmailChange(user, {
+				currentPassword: CURRENT_PASSWORD,
+				newEmail: "new@example.com"
+			})).rejects.toMatchObject({ status: 429 });
+		});
+
+		it("refuses to move a Google account with no password", async () => {
+			const user = makeUser({ isGoogle: true, password: undefined as never });
+
+			await expect(service.requestEmailChange(user, {
+				currentPassword: "",
+				newEmail: "new@example.com"
+			})).rejects.toBeInstanceOf(BadRequestException);
+		});
+
+		it("confirms only with a token matching the stored digest", async () => {
+			const rawToken = "f".repeat(64);
+			usersRepo.getUserById.mockResolvedValue(makeUser({
+				pendingEmail: "new@example.com",
+				pendingEmailToken: tokenHash(rawToken),
+				pendingEmailExpires: new Date(Date.now() + 60_000)
+			}));
+
+			await expect(
+				service.confirmEmailChange("user-1", rawToken)
+			).resolves.toMatchObject({ message: expect.any(String) });
+			expect(usersRepo.consumeEmailChange).toHaveBeenCalledWith(
+				"user-1",
+				tokenHash(rawToken),
+				"new@example.com"
+			);
+		});
+
+		it("rejects a wrong or expired confirmation token", async () => {
+			const rawToken = "f".repeat(64);
+			usersRepo.getUserById.mockResolvedValue(makeUser({
+				pendingEmail: "new@example.com",
+				pendingEmailToken: tokenHash(rawToken),
+				pendingEmailExpires: new Date(Date.now() + 60_000)
+			}));
+
+			await expect(
+				service.confirmEmailChange("user-1", "e".repeat(64))
+			).rejects.toBeInstanceOf(BadRequestException);
+
+			usersRepo.getUserById.mockResolvedValue(makeUser({
+				pendingEmail: "new@example.com",
+				pendingEmailToken: tokenHash(rawToken),
+				pendingEmailExpires: new Date(Date.now() - 1)
+			}));
+			await expect(
+				service.confirmEmailChange("user-1", rawToken)
+			).rejects.toBeInstanceOf(BadRequestException);
+			expect(usersRepo.consumeEmailChange).not.toHaveBeenCalled();
+		});
+
+		it("surfaces a conflict when the address is claimed before confirmation", async () => {
+			const rawToken = "f".repeat(64);
+			usersRepo.getUserById.mockResolvedValue(makeUser({
+				pendingEmail: "new@example.com",
+				pendingEmailToken: tokenHash(rawToken),
+				pendingEmailExpires: new Date(Date.now() + 60_000)
+			}));
+			usersRepo.consumeEmailChange.mockResolvedValue("conflict");
+
+			await expect(
+				service.confirmEmailChange("user-1", rawToken)
+			).rejects.toBeInstanceOf(ConflictException);
+		});
 	});
 });
