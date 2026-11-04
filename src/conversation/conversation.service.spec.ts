@@ -56,6 +56,56 @@ describe("ConversationService authorization", () => {
 		)).rejects.toBeInstanceOf(ForbiddenException);
 		expect(conversationModel.findById).not.toHaveBeenCalled();
 	});
+
+	it.each(["STUDENT", "LANDLORD"])(
+		"includes the %s sender's name in the live message without a conversation reload",
+		async (role) => {
+			const sender = {
+				_id: userId,
+				name: role === "LANDLORD" ? "Landlord" : "Student",
+				email: "sender@example.com",
+				role,
+				password: "private-password-hash",
+				refreshToken: "private-refresh-token",
+			};
+			const plainMessage = {
+				_id: new Types.ObjectId(),
+				sender: userId as unknown,
+				conversation: conversationId,
+				messageType: "Text",
+				data: "Hello from another member",
+				createdAt: new Date(),
+				deliveredTo: [],
+				seenUsers: [],
+			};
+			messageModel.create.mockResolvedValue({
+				_id: plainMessage._id,
+				populate: jest.fn().mockImplementation(async () => {
+					await Promise.resolve();
+					plainMessage.sender = sender;
+				}),
+				toObject: () => plainMessage,
+			});
+
+			await service.sendMessage(
+				{ message: plainMessage.data },
+				conversationId.toString(),
+				userId.toString(),
+			);
+
+			expect(gateway.emitNewMessage).toHaveBeenCalledTimes(1);
+			const [room, payload] = gateway.emitNewMessage.mock.calls[0];
+			expect(room).toBe(conversationId.toString());
+			expect(payload).toMatchObject({
+				_id: plainMessage._id.toString(),
+				conversation: conversationId.toString(),
+				data: plainMessage.data,
+				sender: { _id: userId.toString(), name: sender.name, role },
+			});
+			expect(payload.sender.password).toBeUndefined();
+			expect(payload.sender.refreshToken).toBeUndefined();
+		},
+	);
 });
 
 // Mimics a populated mongoose document: toObject() returns the plain shape,

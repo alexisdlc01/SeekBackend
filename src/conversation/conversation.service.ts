@@ -46,6 +46,7 @@ export class ConversationService {
 			{ lastMessage: message._id }
 		);
 
+		await message.populate("sender");
 		const messageDto = plainToInstance(MessageDto, message.toObject(), {
 			excludeExtraneousValues: true,
 		})
