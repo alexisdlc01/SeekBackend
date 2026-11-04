@@ -32,7 +32,9 @@ export class OwnsAppliedListingGuard implements CanActivate {
 		if (!application) {
 			throw new NotFoundException("Application not found");
 		}
-		const listingId = application.listing.toString();
+		// findApplicationById returns a DTO, so `listing` is a Listing instance
+		// rather than the stored ObjectId, and its toString() is "[object Object]".
+		const listingId = application.listing._id.toString();
 
 		const listing = await this.listingService.findListingById(listingId);
 
