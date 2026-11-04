@@ -21,12 +21,40 @@ describe("OwnsAppliedListingGuard", () => {
 	const listingId = new Types.ObjectId();
 	const applicationId = new Types.ObjectId();
 
-	const applicationService = {
-		findApplicationById: jest.fn().mockResolvedValue({ listing: listingId })
+	// Only the models are faked. The real services run so the guard sees what it
+	// gets in production: findApplicationById returns a serialised DTO, in which
+	// `listing` is a Listing instance rather than the stored ObjectId.
+	const applicationModel = {
+		findById: jest.fn().mockReturnValue({
+			exec: jest.fn().mockResolvedValue({
+				toObject: () => ({
+					_id: applicationId,
+					listing: listingId,
+					landlord: landlordId,
+					conversation: new Types.ObjectId(),
+					applicants: [new Types.ObjectId()],
+					owner: new Types.ObjectId()
+				})
+			})
+		})
 	};
-	const listingService = {
-		findListingById: jest.fn().mockResolvedValue({ landlord: landlordId })
+	const listingModel = {
+		findById: jest.fn().mockReturnValue({
+			exec: jest.fn().mockResolvedValue({ landlord: landlordId })
+		})
 	};
+	const applicationService = new ApplicationService(
+		applicationModel as never,
+		{} as never,
+		{} as never,
+		{} as never,
+		{} as never
+	);
+	const listingService = new ListingsService(
+		listingModel as never,
+		{} as never,
+		{} as never
+	);
 
 	// Resolve the guard through Nest's injector, the way @UseGuards() does in
 	// production, so missing constructor metadata (no @Injectable) would show
@@ -48,10 +76,10 @@ describe("OwnsAppliedListingGuard", () => {
 		await expect(
 			guard.canActivate(contextFor(landlordId, applicationId))
 		).resolves.toBe(true);
-		expect(applicationService.findApplicationById).toHaveBeenCalledWith(
+		expect(applicationModel.findById).toHaveBeenCalledWith(
 			applicationId.toString()
 		);
-		expect(listingService.findListingById).toHaveBeenCalledWith(
+		expect(listingModel.findById).toHaveBeenCalledWith(
 			listingId.toString()
 		);
 	});
