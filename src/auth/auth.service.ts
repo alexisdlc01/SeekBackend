@@ -1,3 +1,4 @@
+import { TeamScope } from "../users/types/team-scope";
 import {
 	BadRequestException,
 	ConflictException,
@@ -30,9 +31,15 @@ const MAX_REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const GENERIC_RESET_RESPONSE =
 	"If an account exists, a password reset link has been sent.";
 
+/** Set on a landlord's team member: whose account they help run, and how. */
+export type TeamMembership = { owner: User; scopes: TeamScope[] };
+
 export type AuthenticatedUser = User & {
 	authSessionId?: string;
 	refreshTokenHash?: string;
+	teamMembership?: TeamMembership;
+	/** Public summary for /auth/currentUser. */
+	teamOf?: { ownerId: string; ownerName: string; scopes: TeamScope[] } | null;
 };
 
 type SignupResult =

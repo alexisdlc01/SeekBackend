@@ -1,7 +1,8 @@
+import { TeamAccess } from "../auth/decorators/team-access.decorator";
+import { TeamScope } from "../users/types/team-scope";
 import { Controller, Get, Query } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import { UploadService } from "./upload.service";
-import { LandlordAgency } from "../auth/decorators/role-auth.decorator";
 import { ApiAccessDocs, ApiPresignDocs } from "./upload-swagger.decorator";
 import { PresignReqDto } from "./dto/presign.dto";
 import { AccessReqDto } from "./dto/access.dto";
@@ -30,8 +31,9 @@ export class UploadController {
 	}
 
 	@ApiAccessDocs()
+	@TeamAccess(TeamScope.APPLICATIONS, TeamScope.VIEWINGS_INBOX, TeamScope.TENANCIES)
 	@Get("access")
-	@LandlordAgency()
+	@StudentOrLandlord()
 	async download(
 		@Query() { key }: AccessReqDto,
 		@CurrentUser() user: User

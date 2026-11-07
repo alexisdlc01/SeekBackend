@@ -33,6 +33,6 @@ import { ConversationAccessService } from "./conversation-access.service";
 	],
 	controllers: [ConversationController],
 	providers: [ConversationAccessService, ConversationGateway, ConversationService],
-	exports: [ConversationAccessService],
+	exports: [ConversationAccessService, ConversationService],
 })
 export class ConversationModule { }

@@ -2,7 +2,9 @@ import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { SchemaTypes, Types } from "mongoose";
 import { Role } from "../auth/role.enum";
 import { Listing } from "../listings/listings.schema";
-import { DocumentType } from "./types/document-type";
+import { DocumentStatus, DocumentType } from "./types/document-type";
+import { RegistrationKind } from "./types/landlord-registration";
+import { TeamScope } from "./types/team-scope";
 
 @Schema({ _id: false })
 export class UserDocument {
@@ -14,9 +16,78 @@ export class UserDocument {
 
 	@Prop({ required: false })
 	key: string;
+
+	@Prop({ enum: DocumentStatus, default: DocumentStatus.PENDING })
+	status: DocumentStatus;
+
+	@Prop()
+	label?: string;
+
+	@Prop({ type: Date, default: null })
+	expiresAt?: Date | null;
+
+	@Prop({ default: Date.now })
+	uploadedAt?: Date;
 }
 
 export const UserDocumentSchema = SchemaFactory.createForClass(UserDocument);
+
+@Schema({ _id: false })
+export class LandlordRegistration {
+	@Prop({ enum: RegistrationKind, required: true })
+	kind: RegistrationKind;
+
+	@Prop({ required: true, trim: true })
+	number: string;
+
+	// Set by Seek once the number has been checked against the register; a
+	// landlord cannot mark their own registration as verified.
+	@Prop({ default: false })
+	verified: boolean;
+}
+
+export const LandlordRegistrationSchema =
+	SchemaFactory.createForClass(LandlordRegistration);
+
+@Schema({ _id: false })
+export class NotificationPrefs {
+	@Prop({ default: 3 })
+	rentReminderDaysBefore: number;
+
+	@Prop({ default: true })
+	receiptEveryPayment: boolean;
+
+	@Prop({ default: true })
+	landlordEveryPayment: boolean;
+
+	@Prop({ default: true })
+	newQualifiedHousehold: boolean;
+
+	@Prop({ default: true })
+	complianceDue: boolean;
+
+	@Prop({ default: false })
+	weeklySummary: boolean;
+}
+
+export const NotificationPrefsSchema =
+	SchemaFactory.createForClass(NotificationPrefs);
+
+/** When Seek nudges this landlord's tenants about rent. */
+@Schema({ _id: false })
+export class RentReminderSchedule {
+	@Prop({ default: true })
+	beforeDue: boolean;
+
+	@Prop({ default: true })
+	onDueDay: boolean;
+
+	@Prop({ default: true })
+	lateAfterThreeDays: boolean;
+}
+
+export const RentReminderScheduleSchema =
+	SchemaFactory.createForClass(RentReminderSchedule);
 
 @Schema({ _id: false })
 export class RefreshSession {
@@ -37,6 +108,58 @@ export class RefreshSession {
 }
 
 export const RefreshSessionSchema = SchemaFactory.createForClass(RefreshSession);
+
+/** Someone a landlord invited to help run their account (never payouts). */
+@Schema()
+export class TeamMember {
+	@Prop({ type: SchemaTypes.ObjectId, auto: true })
+	_id: Types.ObjectId;
+
+	@Prop({ required: true, trim: true, lowercase: true })
+	email: string;
+
+	@Prop({ type: [String], enum: TeamScope, default: [] })
+	scopes: TeamScope[];
+
+	/** The invitee's Seek account, when one exists for the email. */
+	@Prop({ type: SchemaTypes.ObjectId, ref: "User", default: null })
+	user: Types.ObjectId | null;
+
+	@Prop({ default: Date.now })
+	invitedAt: Date;
+}
+
+export const TeamMemberSchema = SchemaFactory.createForClass(TeamMember);
+
+/** What the connected mailboxes import (PATCH /connectors/settings). */
+@Schema({ _id: false })
+export class ConnectorSettings {
+	/** Legacy: ignored. Connectors always import housing emails only. */
+	@Prop({ default: true })
+	housingOnly: boolean;
+
+	/** File leases, certificates and bills found in attachments automatically. */
+	@Prop({ default: true })
+	autoFileAttachments: boolean;
+
+	/** Students: add references found in emails to the Seek Passport. */
+	@Prop({ default: true })
+	addReferencesToProfile: boolean;
+
+	/** Read utility bills from emails so they can be split. */
+	@Prop({ default: true })
+	readUtilityBills: boolean;
+
+	/** File signed tenancy agreements in the tenancy. */
+	@Prop({ default: true })
+	copySignedContracts: boolean;
+
+	/** Suggest replies in the inbox. */
+	@Prop({ default: true })
+	aiDraftReplies: boolean;
+}
+
+export const ConnectorSettingsSchema = SchemaFactory.createForClass(ConnectorSettings);
 
 @Schema({ timestamps: true })
 export class User {
@@ -143,9 +266,45 @@ export class User {
 
 	@Prop({ type: [UserDocumentSchema], default: [] })
 	documents: UserDocument[];
+
+	@Prop({ trim: true })
+	companyName?: string;
+
+	@Prop({ type: [LandlordRegistrationSchema], default: [] })
+	registrations: LandlordRegistration[];
+
+	@Prop({ type: NotificationPrefsSchema, default: () => ({}) })
+	notificationPrefs: NotificationPrefs;
+
+	@Prop({ type: RentReminderScheduleSchema, default: () => ({}) })
+	rentReminderSchedule: RentReminderSchedule;
+
+	@Prop({ type: ConnectorSettingsSchema, default: () => ({}) })
+	connectorSettings: ConnectorSettings;
+
+	@Prop({ type: [TeamMemberSchema], default: [] })
+	team: TeamMember[];
+
+	/** Set by DELETE /users/me. The email is replaced so the address can sign up again. */
+	@Prop({ type: Date, default: null })
+	deletedAt?: Date | null;
+
+	// Stripe Connect account that receives rent payouts (landlords only).
+	@Prop({ trim: true })
+	stripeAccountId?: string;
+
+	// Stripe customer that holds a tenant's saved card for autopay.
+	@Prop({ trim: true })
+	stripeCustomerId?: string;
+
+	/** Bank account the landlord's payouts go to, refreshed from Stripe on connect status. */
+	@Prop({ type: Object })
+	payoutBank?: { last4: string | null; bankName: string | null; verified: boolean };
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
+
+UserSchema.index({ "team.user": 1 }, { sparse: true });
 
 UserSchema.virtual("listings", {
 	ref: Listing.name,

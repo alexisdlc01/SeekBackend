@@ -1,8 +1,11 @@
+import { TeamAccess } from "../auth/decorators/team-access.decorator";
+import { TeamScope } from "../users/types/team-scope";
 import {
 	Body,
 	Controller,
 	Delete,
 	Get,
+	Logger,
 	Param,
 	Patch,
 	Post,
@@ -18,6 +21,7 @@ import {
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "../users/users.schema";
 import { ListingsService } from "./listings.service";
+import { Listing } from "./listings.schema";
 import {
 	LandlordAgency,
 	Student,
@@ -31,6 +35,7 @@ import {
 	ApiCreateStep3Docs,
 	ApiDeleteListingDocs,
 	ApiDraftDocs,
+	ApiFilterListingsDocs,
 	ApiGetAllUnverifiedDocs,
 	ApiGetAllVerifiedDocs,
 	ApiGetByIdDocs,
@@ -44,14 +49,18 @@ import {
 } from "./swagger/listings-swagger.decorator";
 import { ListingFilterDto } from "./dto/listing-filter.dto";
 import { PublicEndpoint } from "../decorators/public-endpoint.decorator";
+import { requiredDocuments } from "../application/required-documents";
 
 @Controller("listings")
 export class ListingsController {
+	private readonly logger = new Logger(ListingsController.name);
+
 	constructor(
 		private readonly listingsService: ListingsService,
 		private readonly mailService: MailService
 	) { }
 
+	@TeamAccess(TeamScope.LISTINGS)
 	@Post("/draft")
 	@LandlordAgency()
 	@ApiDraftDocs()
@@ -59,6 +68,7 @@ export class ListingsController {
 		return await this.listingsService.createDraft(user);
 	}
 
+	@TeamAccess(TeamScope.LISTINGS)
 	@Patch(":id/createStep1")
 	@OwnsListing()
 	@ApiCreateStep1Docs()
@@ -67,9 +77,10 @@ export class ListingsController {
 		@Param("id") listingId: string,
 		@Body() body: Step1ListingDto
 	) {
-		return await this.listingsService.updateDraft(listingId, user, body);
+		return await this.listingsService.updateDraft(listingId, user, { ...body, draftStep: 1 });
 	}
 
+	@TeamAccess(TeamScope.LISTINGS)
 	@Patch(":id/createStep2")
 	@OwnsListing()
 	@ApiCreateStep2Docs()
@@ -78,9 +89,10 @@ export class ListingsController {
 		@Param("id") listingId: string,
 		@Body() body: Step2ListingDto
 	) {
-		return this.listingsService.updateDraft(listingId, user, body);
+		return this.listingsService.updateDraft(listingId, user, { ...body, draftStep: 2 });
 	}
 
+	@TeamAccess(TeamScope.LISTINGS)
 	@Patch(":id/createStep3")
 	@OwnsListing()
 	@ApiCreateStep3Docs()
@@ -89,9 +101,10 @@ export class ListingsController {
 		@Param("id") listingId: string,
 		@Body() body: Step3ListingDto
 	) {
-		return this.listingsService.updateDraft(listingId, user, body);
+		return this.listingsService.updateDraft(listingId, user, { ...body, draftStep: 3 });
 	}
 
+	@TeamAccess(TeamScope.LISTINGS)
 	@Patch(":id/createStep4")
 	@OwnsListing()
 	async createStep4(
@@ -99,9 +112,10 @@ export class ListingsController {
 		@Param("id") listingId: string,
 		@Body() body: Step4ListingDto
 	) {
-		return this.listingsService.updateDraft(listingId, user, body);
+		return this.listingsService.updateDraft(listingId, user, { ...body, draftStep: 4 });
 	}
 
+	@TeamAccess(TeamScope.LISTINGS)
 	@Post(":id/publish")
 	@OwnsListing()
 	@ApiPublishDocs()
@@ -118,16 +132,25 @@ export class ListingsController {
 		);
 		await this.listingsService.updateDraft(listingId, user, {
 			...body,
-			formatted_address: addressData.formatted_address,
-			location: {
-				type: "Point",
-				coordinates: [addressData.lng, addressData.lat]
-			}
+			...(addressData
+				? {
+					formatted_address: addressData.formatted_address,
+					location: {
+						type: "Point",
+						coordinates: [addressData.lng, addressData.lat]
+					}
+				}
+				: {})
 		});
-		await this.mailService.sendNewListingEmail(user);
-		return this.listingsService.publishDraft(listingId, user);
+		const listing = await this.listingsService.publishDraft(listingId, user);
+		// The admin email is a heads-up only: an email outage must never block publishing.
+		await this.mailService.sendNewListingEmail(user).catch((error: Error) =>
+			this.logger.error(`New listing email failed for ${listingId}: ${error?.message}`)
+		);
+		return listing;
 	}
 
+	@TeamAccess(TeamScope.LISTINGS)
 	@Delete(":id")
 	@OwnsListing()
 	@ApiDeleteListingDocs()
@@ -138,6 +161,7 @@ export class ListingsController {
 		return await this.listingsService.deleteListing(listingId, user);
 	}
 
+	@TeamAccess(TeamScope.LISTINGS)
 	@Get("/mine")
 	@LandlordAgency()
 	@ApiMyListingsDocs()
@@ -145,6 +169,7 @@ export class ListingsController {
 		return await this.listingsService.findByLandlord(user._id.toString());
 	}
 
+	@TeamAccess(TeamScope.LISTINGS)
 	@Get("/mine/:id")
 	@OwnsListing()
 	@ApiGetListingDocs()
@@ -168,6 +193,7 @@ export class ListingsController {
 
 	@Get("filter")
 	@PublicEndpoint("Filter published and verified properties")
+	@ApiFilterListingsDocs()
 	async getFilteredListings(@Query() filters: ListingFilterDto) {
 		return this.listingsService.filters(filters);
 	}
@@ -183,7 +209,14 @@ export class ListingsController {
 	@PublicEndpoint("Get a published and verified property")
 	@ApiGetByIdDocs()
 	async getById(@Param("id") id: string) {
-		return await this.listingsService.findPublishedListingById(id);
+		const listing = await this.listingsService.findPublishedListingById(id);
+		void this.listingsService.recordView(id);
+		const viewingSlotAvailability = await this.listingsService.viewingSlotAvailability(listing);
+		return {
+			...(listing as unknown as { toObject(): Listing }).toObject(),
+			viewingSlotAvailability,
+			requiredDocuments: requiredDocuments(listing)
+		};
 	}
 
 	@Patch("/verify/:id")

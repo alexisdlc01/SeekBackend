@@ -11,16 +11,19 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { InjectModel } from "@nestjs/mongoose";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
 import { randomUUID } from "node:crypto";
 import { Listing } from "../listings/listings.schema";
 import { User } from "../users/users.schema";
-import { Application } from "../application/application.schema";
-import { ApplicationStage } from "../application/enums/application-stage.enum";
+import { DocumentShare } from "../users/shares/document-share.schema";
+import { DocumentAccess } from "../users/shares/document-access.schema";
+import { Tenancy } from "../tenancies/tenancy.schema";
+import { Contract } from "../contracts/contract.schema";
 import {
 	ALLOWED_UPLOAD_TYPES,
 	MAX_UPLOAD_BYTES
 } from "./dto/presign.dto";
+import { Role } from "../auth/role.enum";
 import { ownerIdFromKey } from "./object-key";
 
 @Injectable()
@@ -35,8 +38,14 @@ export class UploadService {
 		private readonly listingModel: Model<Listing>,
 		@InjectModel(User.name)
 		private readonly userModel: Model<User>,
-		@InjectModel(Application.name)
-		private readonly applicationModel: Model<Application>
+		@InjectModel(DocumentShare.name)
+		private readonly shareModel: Model<DocumentShare>,
+		@InjectModel(Tenancy.name)
+		private readonly tenancyModel: Model<Tenancy>,
+		@InjectModel(Contract.name)
+		private readonly contractModel: Model<Contract>,
+		@InjectModel(DocumentAccess.name)
+		private readonly accessModel: Model<DocumentAccess>
 	) {
 		this.s3Client = new S3Client({
 			region: this.configService.getOrThrow("AWS_S3_REGION"),
@@ -103,6 +112,28 @@ export class UploadService {
 		return { uploadUrl, fileUrl, key };
 	}
 
+	/**
+	 * Stores a file the server received itself (e.g. an email attachment) in
+	 * the private bucket under the owner's namespace.
+	 */
+	async putPrivateObject(ownerId: string, body: Buffer, contentType: string, extension: string) {
+		const key = `private/${ownerId}/${randomUUID()}.${extension}`;
+		await this.s3Client.send(
+			new PutObjectCommand({
+				Bucket: this.privateBucket,
+				Key: key,
+				Body: body,
+				ContentType: contentType,
+				ContentLength: body.length,
+				ACL: "private"
+			})
+		);
+		const url = `https://${this.privateBucket}.s3.${this.configService.get(
+			"AWS_S3_REGION"
+		)}.amazonaws.com/${key}`;
+		return { key, url };
+	}
+
 	async getPresignedDownloadUrl(key: string, folder: "private" | "public") {
 		const bucket =
 			folder === "private" ? this.privateBucket : this.publicBucket;
@@ -126,7 +157,7 @@ export class UploadService {
 			registerOfTitleKey: key
 		});
 
-		if (!ownsListingDocument) {
+		if (!ownsListingDocument && !(await this.isTenancyDocument(key, userId))) {
 			const claimedOwnerIds = await this.userModel.distinct("_id", {
 				"documents.key": key
 			});
@@ -140,25 +171,56 @@ export class UploadService {
 				? claimedOwnerIds.filter(id => id.toString() === keyOwnerId)
 				: claimedOwnerIds;
 
-			const canReviewApplicantDocument = documentOwnerIds.length > 0
-				? await this.applicationModel.exists({
-					landlord: userId,
-					applicants: { $in: documentOwnerIds },
-					stage: {
-						$in: [
-							ApplicationStage.SENT,
-							ApplicationStage.ACCEPTED,
-							ApplicationStage.REJECTED
-						]
-					}
+			// A key minted for this user is theirs even before it is filed on the profile.
+			const isOwnDocument = keyOwnerId === userId || documentOwnerIds.some(
+				id => id.toString() === userId
+			);
+
+			// Landlords see an applicant's files only while the student's share
+			// is live: 14 days from sending the application, unless revoked.
+			// Nobody else (another student, a stranger) can use a share.
+			const activeShare = !isOwnDocument && user.role === Role.LANDLORD_AGENCY && documentOwnerIds.length > 0
+				? await this.shareModel.exists({
+					viewer: userId,
+					owner: { $in: documentOwnerIds },
+					revokedAt: null,
+					expiresAt: { $gt: new Date() }
 				})
 				: null;
 
-			if (!canReviewApplicantDocument) {
+			if (!isOwnDocument && !activeShare) {
 				throw new ForbiddenException("File access is not allowed.");
+			}
+
+			if (activeShare) {
+				await this.recordAccess(documentOwnerIds, userId, key, activeShare._id);
 			}
 		}
 
 		return this.getPresignedDownloadUrl(key, "private");
+	}
+
+	/**
+	 * Tenancy files (agreement, deposit certificate, compliance certificates)
+	 * belong to the tenancy, not to whoever uploaded them: the landlord and
+	 * every tenant on it may open them.
+	 */
+	private async isTenancyDocument(key: string, userId: string) {
+		if (!Types.ObjectId.isValid(userId)) return false;
+		const member = {
+			$or: [{ landlord: new Types.ObjectId(userId) }, { tenants: new Types.ObjectId(userId) }]
+		};
+		if (await this.tenancyModel.exists({ ...member, "documents.key": key })) return true;
+		const contracts = await this.contractModel.find({ key }).select("tenancy").lean().exec();
+		if (!contracts.length) return false;
+		return Boolean(
+			await this.tenancyModel.exists({ ...member, _id: { $in: contracts.map(contract => contract.tenancy) } })
+		);
+	}
+
+	/** Logs a landlord opening a student's shared document. */
+	private async recordAccess(owners: Types.ObjectId[], viewerId: string, key: string, share: Types.ObjectId) {
+		const owner = owners.find(id => id.toString() !== viewerId) ?? owners[0];
+		await this.accessModel.create({ owner, viewer: new Types.ObjectId(viewerId), key, share });
 	}
 }

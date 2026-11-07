@@ -6,7 +6,8 @@ import { NestExpressApplication } from "@nestjs/platform-express";
 import * as cookieParser from "cookie-parser";
 import helmet from "helmet";
 import { json, urlencoded } from "express";
-import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
+import { SwaggerModule } from "@nestjs/swagger";
+import { buildSwaggerDocument } from "./swagger";
 import 'reflect-metadata';
 
 /**
@@ -34,7 +35,8 @@ async function bootstrap() {
 	app.set("trust proxy", Number(config.get("TRUSTED_PROXY_HOPS") ?? 1));
 
 	app.enableCors({
-		origin: allowedOrigins(config),
+		// Dev only: Expo web / Vite run on varying localhost ports.
+		origin: isProduction ? allowedOrigins(config) : [...allowedOrigins(config), /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/],
 		credentials: true
 	});
 	app.useGlobalPipes(new ValidationPipe({
@@ -45,7 +47,13 @@ async function bootstrap() {
 	app.use(cookieParser());
 	// Uploads go straight to S3 via presigned URLs, so no request body here
 	// needs to be large.
-	app.use(json({ limit: "100kb" }));
+	// The exact bytes are kept for webhook signature checks (Stripe).
+	app.use(json({
+		limit: "100kb",
+		verify: (req, _res, buf) => {
+			(req as typeof req & { rawBody?: Buffer }).rawBody = buf;
+		}
+	}));
 	app.use(urlencoded({ extended: true, limit: "100kb" }));
 
 	// The generated document is an exact map of every route, parameter and role
@@ -58,47 +66,7 @@ async function bootstrap() {
 }
 
 function setupSwagger(app: INestApplication) {
-	const config = new DocumentBuilder()
-		.setTitle("My API")
-		.setDescription("API documentation for my NestJS app")
-		.setVersion("1.0")
-		.addCookieAuth("access_token", {
-			type: "apiKey",
-			in: "cookie",
-			description: "Access token for web clients"
-		})
-		.addBearerAuth(
-			{
-				type: "http",
-				scheme: "bearer",
-				bearerFormat: "JWT",
-				description: "Access token for mobile clients."
-			},
-			"mobile-token"
-		)
-		.build();
-
-	const document = SwaggerModule.createDocument(app, config);
-	document.paths = Object.entries(document.paths).reduce(
-		(acc, [path, methods]) => {
-			acc[path] = Object.entries(methods).reduce(
-				(methodAcc, [method, details]) => {
-					methodAcc[method] = {
-						...details,
-						security: details.security ?? [
-							{ access_token: [] },
-							{ "mobile-token": [] }
-						]
-					};
-					return methodAcc;
-				},
-				{}
-			);
-			return acc;
-		},
-		{}
-	);
-	SwaggerModule.setup("/docs", app, document);
+	SwaggerModule.setup("/docs", app, buildSwaggerDocument(app));
 }
 
 bootstrap();

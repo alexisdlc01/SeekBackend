@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { CreateFlagDto } from "./dto/create-flag.dto";
 import { ResolveFlagDto } from "./dto/resolve-flag.dto";
 import { Flag } from "./flags.schema";
@@ -10,6 +10,8 @@ import { MailService } from "../auth/mail.service";
 
 @Injectable()
 export class FlagsService {
+	private readonly logger = new Logger(FlagsService.name);
+
 	constructor(
 		@InjectModel(Flag.name)
 		private readonly flagModel: Model<Flag>,
@@ -42,10 +44,13 @@ export class FlagsService {
 			status: FlagStatus.UNDER_REVIEW
 		});
 
+		// The flag is stored: an email outage must not turn it into a 500 (and a duplicate on retry).
 		await this.mailService.sendFlagCreatedEmail(
 			user.email,
 			createFlagDto.reportedUser,
 			createFlagDto
+		).catch((error: Error) =>
+			this.logger.error(`Flag email failed for ${flag._id.toString()}: ${error?.message}`)
 		);
 
 		return flag.toObject();

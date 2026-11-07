@@ -42,6 +42,32 @@ export class Application {
 
 	@Prop({ enum: ApplicationStage, default: ApplicationStage.NOT_SENT })
 	stage: string;
+
+	/** When the household sent the application to the landlord. */
+	@Prop({ type: Date, default: null })
+	sentAt?: Date | null;
+
+	@Prop({ type: Date, default: null })
+	viewingAt?: Date | null;
+
+	/** When the landlord made an offer. */
+	@Prop({ type: Date, default: null })
+	offeredAt?: Date | null;
+
+	/** The household must accept by this date: 15 days after the offer. */
+	@Prop({ type: Date, default: null })
+	offerExpiresAt?: Date | null;
+
+	/** When this household's last offer lapsed unanswered; it then waits behind households that never had one. */
+	@Prop({ type: Date, default: null })
+	offerExpiredAt?: Date | null;
+
+	/** Holding deposit per room in whole pounds, copied from the listing when the offer is made. */
+	@Prop({ type: Number, default: null })
+	holdingDeposit?: number | null;
+
+	@Prop({ type: String, default: null })
+	rejectReason?: string | null;
 }
 
 export const ApplicationSchema = SchemaFactory.createForClass(Application);

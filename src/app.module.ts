@@ -15,6 +15,16 @@ import { ContactModule } from "./contact/contact.module";
 import { ApplicationModule } from "./application/application.module";
 import { RedisModule } from "./redis/redis.module";
 import { FlagsModule } from './flags/flags.module';
+import { NotificationsModule } from "./notifications/notifications.module";
+import { TenanciesModule } from "./tenancies/tenancies.module";
+import { ContractsModule } from "./contracts/contracts.module";
+import { PaymentsModule } from "./payments/payments.module";
+import { BillsModule } from "./bills/bills.module";
+import { RepairsModule } from "./repairs/repairs.module";
+import { LandlordModule } from "./landlord/landlord.module";
+import { AiModule } from "./ai/ai.module";
+import { ConnectorsModule } from "./connectors/connectors.module";
+import { InboxModule } from "./inbox/inbox.module";
 import * as morgan from "morgan";
 import { APP_GUARD } from "@nestjs/core";
 import { BrowserOriginGuard } from "./auth/guards/browser-origin.guard";
@@ -49,7 +59,17 @@ import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 		ContactModule,
 		ApplicationModule,
 		RedisModule,
-		FlagsModule
+		FlagsModule,
+		NotificationsModule,
+		TenanciesModule,
+		ContractsModule,
+		PaymentsModule,
+		BillsModule,
+		RepairsModule,
+		LandlordModule,
+		AiModule,
+		ConnectorsModule,
+		InboxModule
 	],
 	controllers: [AppController],
 	providers: [

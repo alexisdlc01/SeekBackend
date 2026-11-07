@@ -4,13 +4,16 @@ import {
 	IsOptional,
 	IsString,
 	IsArray,
-	IsDateString
+	IsDateString,
+	ValidateNested
 } from "class-validator";
+import { Type } from "class-transformer";
 import { PropertyType } from "../enums/propertyType.enum";
 import { Amenity } from "../enums/amenity.enum";
 import { FurnishingStatus } from "../enums/furnishingStatus.enum";
 import { EpcRating } from "../enums/epcRating.enum";
-import { ApiProperty } from "@nestjs/swagger";
+import { ApiProperty, ApiPropertyOptional, IntersectionType } from "@nestjs/swagger";
+import { ListingCriteriaDto, ListingExtrasDto } from "./listing-extras.dto";
 
 export class Step4ItemDto {
 	@ApiProperty()
@@ -26,7 +29,7 @@ export class Step4ItemDto {
 	required: boolean;
 }
 
-export class CreateListingDto {
+class CreateListingBaseDto {
 	@ApiProperty()
 	@IsString()
 	propertyTitle: string;
@@ -137,7 +140,7 @@ export class CreateListingDto {
 	requirements: Step4ItemDto[];
 }
 
-export class Step1ListingDto {
+class Step1ListingBaseDto {
 	@ApiProperty()
 	@IsOptional()
 	@IsString()
@@ -269,4 +272,20 @@ export class Step4ListingDto {
 	@IsArray()
 	@IsOptional()
 	requirements: Step4ItemDto[];
+
+	@ApiPropertyOptional({ type: ListingCriteriaDto })
+	@IsOptional()
+	@ValidateNested()
+	@Type(() => ListingCriteriaDto)
+	criteria?: ListingCriteriaDto;
 }
+
+export class CreateListingDto extends IntersectionType(
+	CreateListingBaseDto,
+	ListingExtrasDto
+) {}
+
+export class Step1ListingDto extends IntersectionType(
+	Step1ListingBaseDto,
+	ListingExtrasDto
+) {}

@@ -1,7 +1,9 @@
 import { ConflictException, Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { RefreshSession, User } from "./users.schema";
-import { Model } from "mongoose";
+import { Model, Types } from "mongoose";
+import { TeamScope } from "./types/team-scope";
+import { Role } from "../auth/role.enum";
 
 type CreateUserData = Pick<User, "email" | "name"> & Partial<User>;
 
@@ -11,6 +13,16 @@ export class UsersRepository {
 
 	async getUserById(id: string): Promise<User | null> {
 		return await this.userModel.findById(id);
+	}
+
+	/** The landlord whose team this user belongs to, with the member's scopes. */
+	async findTeamOwner(userId: Types.ObjectId): Promise<{ owner: User; scopes: TeamScope[] } | null> {
+		// shortcut: someone on several landlords' teams acts for the first one found; add an owner picker if that happens.
+		const owner = await this.userModel
+			.findOne({ "team.user": userId, deletedAt: null, role: Role.LANDLORD_AGENCY })
+			.exec();
+		const member = owner?.team.find(entry => entry.user?.equals(userId));
+		return owner && member ? { owner, scopes: member.scopes } : null;
 	}
 
 	async getUserByEmail(email: string): Promise<User | null> {

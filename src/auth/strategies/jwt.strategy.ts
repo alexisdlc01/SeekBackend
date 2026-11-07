@@ -5,6 +5,7 @@ import { ConfigService } from "@nestjs/config";
 import { TokenPayload } from "../token-payload.interface";
 import { Injectable, UnauthorizedException } from "@nestjs/common";
 import { UsersRepository } from "../../users/users.repository";
+import { Role } from "../role.enum";
 import type { AuthenticatedUser } from "../auth.service";
 
 @Injectable()
@@ -57,8 +58,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 			throw new UnauthorizedException("Session is not valid.");
 		}
 
+		const membership = user.role === Role.LANDLORD_AGENCY
+			? await this.usersRepo.findTeamOwner(user._id)
+			: null;
 		return Object.assign(user, {
-			authSessionId: payload.sessionId
+			authSessionId: payload.sessionId,
+			...(membership
+				? {
+					teamMembership: membership,
+					teamOf: { ownerId: membership.owner._id.toString(), ownerName: membership.owner.name, scopes: membership.scopes }
+				}
+				: {})
 		}) as AuthenticatedUser;
 	}
 }

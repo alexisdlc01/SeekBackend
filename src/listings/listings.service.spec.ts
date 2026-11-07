@@ -9,6 +9,7 @@ describe("ListingsService", () => {
 	let service: ListingsService;
 	let listingModel: Record<string, jest.Mock>;
 	let gateway: Record<string, jest.Mock>;
+	let applicationModel: Record<string, jest.Mock>;
 
 	beforeEach(() => {
 		listingModel = {
@@ -16,6 +17,10 @@ describe("ListingsService", () => {
 			findById: jest.fn(),
 			findByIdAndUpdate: jest.fn(),
 			deleteOne: jest.fn()
+		};
+		applicationModel = {
+			aggregate: jest.fn().mockResolvedValue([]),
+			distinct: jest.fn().mockResolvedValue([])
 		};
 		gateway = {
 			emitListingCreated: jest.fn(),
@@ -25,8 +30,20 @@ describe("ListingsService", () => {
 		service = new ListingsService(
 			listingModel as any,
 			gateway as unknown as ListingsGateway,
-			{} as ConfigService
+			{} as ConfigService,
+			applicationModel as any
 		);
+	});
+
+	it("counts places left per viewing slot", async () => {
+		const first = new Date("2026-12-01T10:00:00Z");
+		const second = new Date("2026-12-01T11:00:00Z");
+		applicationModel.aggregate.mockResolvedValue([{ _id: first, count: 2 }]);
+		await expect(service.viewingSlotAvailability({
+			_id: new Types.ObjectId(),
+			viewingSlots: [first, second],
+			viewingSlotCapacity: 2
+		})).resolves.toEqual([{ at: first, remaining: 0 }, { at: second, remaining: 2 }]);
 	});
 
 	it("passes the created draft to the owner-scoped gateway", async () => {
@@ -46,6 +63,35 @@ describe("ListingsService", () => {
 		await service.deleteListing(listing._id.toString(), makeLandlord());
 
 		expect(gateway.emitListingDeleted).toHaveBeenCalledWith(listing);
+	});
+
+	describe("availableFrom in the past", () => {
+		const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+		const found = (doc: object) => ({
+			select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(doc) }) })
+		});
+
+		it("refuses to publish a draft dated yesterday", async () => {
+			listingModel.findOne = jest.fn().mockReturnValue(found({ isDraft: true, availableFrom: new Date(yesterday) }));
+			await expect(service.publishDraft(new Types.ObjectId().toString(), makeLandlord())).rejects.toThrow(
+				"Available-from date is in the past. Pick today or a later date."
+			);
+		});
+
+		it("refuses to move a published listing's date into the past", async () => {
+			listingModel.findOne = jest.fn().mockReturnValue(found({ isDraft: false, availableFrom: new Date("2030-01-01") }));
+			await expect(
+				service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { availableFrom: yesterday } as never)
+			).rejects.toThrow("in the past");
+		});
+
+		it("lets a published listing keep an old date it already had", async () => {
+			listingModel.findOne = jest.fn().mockReturnValue(found({ isDraft: false, availableFrom: new Date(yesterday) }));
+			listingModel.findOneAndUpdate = jest.fn().mockResolvedValue(makeListing(false));
+			await expect(
+				service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { availableFrom: yesterday } as never)
+			).resolves.toBeDefined();
+		});
 	});
 
 	it("notifies the owner after a superuser verifies a listing", async () => {
@@ -68,9 +114,10 @@ describe("ListingsService", () => {
 				sort: jest.fn(),
 				skip: jest.fn(),
 				limit: jest.fn(),
+				lean: jest.fn(),
 				exec: jest.fn().mockResolvedValue([])
 			};
-			for (const step of ["select", "sort", "skip", "limit"]) {
+			for (const step of ["select", "sort", "skip", "limit", "lean"]) {
 				query[step].mockReturnValue(query);
 			}
 			listingModel.find = jest.fn().mockReturnValue(query);
@@ -108,6 +155,15 @@ describe("ListingsService", () => {
 			expect(query.sort).toHaveBeenCalledWith({ _id: -1 });
 			expect(query.skip).toHaveBeenCalledWith(0);
 			expect(query.limit).toHaveBeenCalledWith(5);
+		});
+
+		it("hides listings a household has already accepted from public search", async () => {
+			const let_ = new Types.ObjectId();
+			applicationModel.distinct.mockResolvedValue([let_]);
+			await service.filters({} as never);
+
+			expect(applicationModel.distinct.mock.calls[0][1].stage.$in).toEqual(["ACCEPTED", "SIGNED"]);
+			expect(listingModel.find.mock.calls[0][0]._id).toEqual({ $nin: [let_] });
 		});
 
 		it("returns everything when no page size is given", async () => {

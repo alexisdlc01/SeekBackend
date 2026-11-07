@@ -9,6 +9,8 @@ import { ConversationService } from "src/conversation/conversation.service";
 import { ConversationModule } from "src/conversation/conversation.module";
 import { Conversation, ConversationSchema } from "src/conversation/converstaion.schema";
 import { UsersModule } from "src/users/users.module";
+import { TenanciesModule } from "src/tenancies/tenancies.module";
+import { NotificationsModule } from "src/notifications/notifications.module";
 
 @Module({
 	imports: [
@@ -27,9 +29,12 @@ import { UsersModule } from "src/users/users.module";
 		ListingsModule,
 		SharedModule,
 		ConversationModule,
-		UsersModule
+		UsersModule,
+		TenanciesModule,
+		NotificationsModule
 	],
 	controllers: [ApplicationController],
-	providers: [ApplicationService]
+	providers: [ApplicationService],
+	exports: [ApplicationService]
 })
 export class ApplicationModule { }

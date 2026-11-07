@@ -1,3 +1,5 @@
+import { TeamAccess } from "../auth/decorators/team-access.decorator";
+import { TeamScope } from "../users/types/team-scope";
 import { Body, Controller, Get, Param, Post } from "@nestjs/common";
 import { SendMessageDto } from "./dto/send-message.dto";
 import { ConversationService } from "./conversation.service";
@@ -10,6 +12,7 @@ import { GetConversationApiDocs } from "./message-swagger.decorator";
 export class ConversationController {
 	constructor(private readonly conversationService: ConversationService) { }
 
+	@TeamAccess(TeamScope.VIEWINGS_INBOX, TeamScope.APPLICATIONS)
 	@Post(":id/sendMessage")
 	@StudentOrLandlord()
 	async sendMessage(
@@ -24,6 +27,7 @@ export class ConversationController {
 		);
 	}
 
+	@TeamAccess(TeamScope.VIEWINGS_INBOX, TeamScope.APPLICATIONS)
 	@Get()
 	@StudentOrLandlord()
 	async getMyConversations(@CurrentUser() user: User) {
@@ -31,6 +35,7 @@ export class ConversationController {
 	}
 
 	@GetConversationApiDocs()
+	@TeamAccess(TeamScope.VIEWINGS_INBOX, TeamScope.APPLICATIONS)
 	@Get(":id")
 	@StudentOrLandlord()
 	async getConversation(

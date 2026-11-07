@@ -1,7 +1,60 @@
-import { Expose, Transform } from "class-transformer";
+import { Expose, Transform, Type } from "class-transformer";
 import { IsOptional } from "class-validator";
 import { Role } from "../../auth/role.enum";
 import { ApiProperty } from "@nestjs/swagger";
+import { RegistrationKind } from "../types/landlord-registration";
+import { TeamScope } from "../types/team-scope";
+
+export class TeamOfDto {
+	@ApiProperty()
+	ownerId: string;
+
+	@ApiProperty()
+	ownerName: string;
+
+	@ApiProperty({ enum: TeamScope, isArray: true, description: "Never includes payouts: payments endpoints answer 403." })
+	scopes: TeamScope[];
+}
+
+export class RegistrationDto {
+	@ApiProperty({ enum: RegistrationKind })
+	@Expose()
+	kind: RegistrationKind;
+
+	@ApiProperty()
+	@Expose()
+	number: string;
+
+	@ApiProperty()
+	@Expose()
+	verified: boolean;
+}
+
+export class NotificationPrefsDto {
+	@ApiProperty({ default: 3 })
+	@Expose()
+	rentReminderDaysBefore: number;
+
+	@ApiProperty({ default: true })
+	@Expose()
+	receiptEveryPayment: boolean;
+
+	@ApiProperty({ default: true })
+	@Expose()
+	landlordEveryPayment: boolean;
+
+	@ApiProperty({ default: true })
+	@Expose()
+	newQualifiedHousehold: boolean;
+
+	@ApiProperty({ default: true })
+	@Expose()
+	complianceDue: boolean;
+
+	@ApiProperty({ default: false })
+	@Expose()
+	weeklySummary: boolean;
+}
 
 export class UserDto {
 	@ApiProperty()
@@ -53,4 +106,40 @@ export class UserDto {
 	@ApiProperty()
 	@Expose()
 	lastSeen: Date;
+
+	@ApiProperty({ required: false })
+	@IsOptional()
+	@Expose()
+	companyName?: string;
+
+	@ApiProperty({ type: [RegistrationDto], required: false })
+	@IsOptional()
+	@Expose()
+	@Type(() => RegistrationDto)
+	registrations?: RegistrationDto[];
+
+	@ApiProperty({ type: NotificationPrefsDto, required: false })
+	@IsOptional()
+	@Expose()
+	@Type(() => NotificationPrefsDto)
+	notificationPrefs?: NotificationPrefsDto;
+
+	@ApiProperty({ required: false, description: "Whether rent payouts are connected (landlords)." })
+	@Expose()
+	@Transform(({ obj }) => Boolean(obj?.stripeAccountId))
+	payoutsConnected?: boolean;
+
+	@ApiProperty({
+		required: false,
+		nullable: true,
+		description: "Where payouts go (landlords): { last4, bankName, verified }. Null until Stripe has a bank account."
+	})
+	@Expose()
+	@Transform(({ obj }) => obj?.payoutBank ?? null)
+	payoutBank?: { last4: string | null; bankName: string | null; verified: boolean } | null;
+
+	@ApiProperty({ type: TeamOfDto, required: false, nullable: true, description: "Set when this account is on a landlord's team: whose account it helps run." })
+	@Expose()
+	@Transform(({ obj }) => obj?.teamOf ?? null)
+	teamOf?: TeamOfDto | null;
 }

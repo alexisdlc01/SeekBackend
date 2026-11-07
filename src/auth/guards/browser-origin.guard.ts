@@ -20,6 +20,8 @@ export class BrowserOriginGuard implements CanActivate {
 		if (
 			["GET", "HEAD", "OPTIONS"].includes(request.method) ||
 			request.headers.platform === "mobile" ||
+			// Server-to-server: authenticated by its HMAC signature, not a browser.
+			this.isSignedWebhook(request) ||
 			this.configService.get("NODE_ENV") !== "production"
 		) {
 			return true;
@@ -41,5 +43,14 @@ export class BrowserOriginGuard implements CanActivate {
 		}
 
 		return true;
+	}
+
+	private isSignedWebhook(request: Request): boolean {
+		const path = (request.originalUrl ?? request.url ?? "").split("?")[0];
+		return (
+			request.method === "POST" &&
+			path.endsWith("/payments/webhook") &&
+			typeof request.headers["stripe-signature"] === "string"
+		);
 	}
 }

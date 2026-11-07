@@ -1,5 +1,7 @@
 import {
 	IsArray,
+	IsBoolean,
+	MaxLength,
 	IsEnum,
 	IsInt,
 	IsNumber,
@@ -86,4 +88,67 @@ export class ListingFilterDto {
 	@Min(1)
 	@Max(50)
 	limit?: number;
+
+	@ApiPropertyOptional({ description: "Bounding box south edge (map viewport)." })
+	@IsOptional()
+	@Type(() => Number)
+	@IsNumber()
+	minLat?: number;
+
+	@ApiPropertyOptional({ description: "Bounding box north edge (map viewport)." })
+	@IsOptional()
+	@Type(() => Number)
+	@IsNumber()
+	maxLat?: number;
+
+	@ApiPropertyOptional({ description: "Bounding box west edge (map viewport)." })
+	@IsOptional()
+	@Type(() => Number)
+	@IsNumber()
+	minLng?: number;
+
+	@ApiPropertyOptional({ description: "Bounding box east edge (map viewport)." })
+	@IsOptional()
+	@Type(() => Number)
+	@IsNumber()
+	maxLng?: number;
+
+	@ApiPropertyOptional({
+		description: "Maximum monthly rent per person, in pounds."
+	})
+	@IsOptional()
+	@Type(() => Number)
+	@IsNumber()
+	maxRent?: number;
+
+	@ApiPropertyOptional({ minimum: 0 })
+	@IsOptional()
+	@Type(() => Number)
+	@IsInt()
+	@Min(0)
+	minBedrooms?: number;
+
+	@ApiPropertyOptional({ type: Boolean })
+	@IsOptional()
+	@Transform(({ value }) => {
+		if (value === true || value === "true" || value === "1") return true;
+		if (value === false || value === "false" || value === "0") return false;
+		return value;
+	})
+	@IsBoolean()
+	billsIncluded?: boolean;
+
+	@ApiPropertyOptional({ description: "City or town, case-insensitive." })
+	@IsOptional()
+	@IsString()
+	@MaxLength(80)
+	city?: string;
+
+	@ApiPropertyOptional({
+		description: "Free text matched against title, description and address."
+	})
+	@IsOptional()
+	@IsString()
+	@MaxLength(120)
+	text?: string;
 }

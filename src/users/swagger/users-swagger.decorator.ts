@@ -1,5 +1,8 @@
 import { applyDecorators } from "@nestjs/common";
-import { ApiBody, ApiResponse } from "@nestjs/swagger";
+import { ApiBody, ApiOperation, ApiResponse } from "@nestjs/swagger";
+import { PassportDto } from "../dto/passport.dto";
+import { DocumentShareDto } from "../dto/document-share.dto";
+import { UpdateDocumentStatusDto } from "../dto/update-document-status.dto";
 import { UserDto } from "../dto/user.dto";
 import { ErrorDto } from "../../dto/errorDto.dto";
 import { CreateUserDto } from "../dto/create-user.dto";
@@ -124,4 +127,35 @@ export const ApiGetDocumentTypes = () =>
 			status: 401,
 			type: ErrorDto
 		})
+	);
+
+export const ApiGetPassportDocs = () =>
+	applyDecorators(
+		ApiOperation({ summary: "The student's Seek Passport: every document, its status and readiness." }),
+		ApiResponse({ status: 200, type: PassportDto }),
+		ApiResponse({ status: 401, type: ErrorDto })
+	);
+
+export const ApiListSharesDocs = () =>
+	applyDecorators(
+		ApiOperation({ summary: "Landlords who can currently (or could previously) open the student's documents." }),
+		ApiResponse({ status: 200, type: [DocumentShareDto] }),
+		ApiResponse({ status: 401, type: ErrorDto })
+	);
+
+export const ApiRevokeShareDocs = () =>
+	applyDecorators(
+		ApiOperation({ summary: "Stop a landlord from opening the student's documents." }),
+		ApiResponse({ status: 204 }),
+		ApiResponse({ status: 401, type: ErrorDto }),
+		ApiResponse({ status: 404, type: ErrorDto })
+	);
+
+export const ApiSetDocumentStatusDocs = () =>
+	applyDecorators(
+		ApiOperation({ summary: "Record the result of a document check (Seek staff)." }),
+		ApiBody({ type: UpdateDocumentStatusDto }),
+		ApiResponse({ status: 200, type: PassportDto }),
+		ApiResponse({ status: 400, type: ErrorDto }),
+		ApiResponse({ status: 404, type: ErrorDto })
 	);

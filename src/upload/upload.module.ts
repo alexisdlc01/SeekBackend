@@ -6,20 +6,27 @@ import { MongooseModule } from "@nestjs/mongoose";
 import { Listing, ListingSchema } from "../listings/listings.schema";
 import { User, UserSchema } from "../users/users.schema";
 import {
-	Application,
-	ApplicationSchema
-} from "../application/application.schema";
+	DocumentShare,
+	DocumentShareSchema
+} from "../users/shares/document-share.schema";
+import { DocumentAccess, DocumentAccessSchema } from "../users/shares/document-access.schema";
+import { Tenancy, TenancySchema } from "../tenancies/tenancy.schema";
+import { Contract, ContractSchema } from "../contracts/contract.schema";
 
 @Module({
 	imports: [
 		MongooseModule.forFeature([
 			{ name: Listing.name, schema: ListingSchema },
 			{ name: User.name, schema: UserSchema },
-			{ name: Application.name, schema: ApplicationSchema }
+			{ name: DocumentShare.name, schema: DocumentShareSchema },
+			{ name: DocumentAccess.name, schema: DocumentAccessSchema },
+			{ name: Tenancy.name, schema: TenancySchema },
+			{ name: Contract.name, schema: ContractSchema }
 		]),
 		SharedModule
 	],
 	controllers: [UploadController],
-	providers: [UploadService]
+	providers: [UploadService],
+	exports: [UploadService]
 })
 export class UploadModule {}

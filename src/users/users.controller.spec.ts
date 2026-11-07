@@ -10,7 +10,7 @@ describe("UsersController", () => {
 		usersService = {
 			updateProfile: jest.fn()
 		};
-		controller = new UsersController(usersService as never);
+		controller = new UsersController(usersService as never, {} as never, {} as never);
 	});
 
 	it("should be defined", () => {
@@ -19,15 +19,17 @@ describe("UsersController", () => {
 
 	it("updates the authenticated user's profile", async () => {
 		usersService.updateProfile.mockResolvedValue({ name: "Updated" });
-		const user = { _id: { toString: () => "user-1" } };
+		const user = { _id: { toString: () => "user-1" }, role: "STUDENT" };
 
 		await controller.updateCurrentUser(
 			{ name: "Updated" },
 			user as never
 		);
 
-		expect(usersService.updateProfile).toHaveBeenCalledWith("user-1", {
-			name: "Updated"
-		});
+		expect(usersService.updateProfile).toHaveBeenCalledWith(
+			"user-1",
+			{ name: "Updated" },
+			"STUDENT"
+		);
 	});
 });

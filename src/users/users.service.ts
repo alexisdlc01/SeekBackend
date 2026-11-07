@@ -10,7 +10,8 @@ import { User } from "./users.schema";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { hash } from "bcryptjs";
 import { GoogleUserDto } from "../auth/dto/google-user.dto";
-import { DocumentType } from "./types/document-type";
+import { DocumentStatus, DocumentType } from "./types/document-type";
+import { buildPassport, Passport } from "./passport";
 import { plainToInstance } from "class-transformer";
 import { UserDto } from "./dto/user.dto";
 import { UsersRepository } from "./users.repository";
@@ -124,9 +125,60 @@ class UsersService {
 		});
 	}
 
-	async updateProfile(userId: string, data: UpdateUserProfileDto) {
+	async updateProfile(userId: string, data: UpdateUserProfileDto, role?: Role) {
 		const set: Record<string, unknown> = {};
 		const unset: Record<string, 1> = {};
+		const isLandlord = role === Role.LANDLORD_AGENCY;
+
+		if (
+			!isLandlord &&
+			(data.companyName !== undefined ||
+				data.registrations !== undefined ||
+				data.stripeAccountId !== undefined)
+		) {
+			throw new BadRequestException(
+				"Company name, registrations and payouts are only available to landlords."
+			);
+		}
+
+		if (data.companyName !== undefined) {
+			const companyName = data.companyName.trim();
+			if (companyName.length === 0) unset.companyName = 1;
+			else set.companyName = companyName;
+		}
+
+		if (data.stripeAccountId !== undefined) {
+			if (data.stripeAccountId === "") unset.stripeAccountId = 1;
+			else set.stripeAccountId = data.stripeAccountId;
+		}
+
+		if (data.registrations !== undefined) {
+			// Verification is done by Seek, so a landlord editing the list keeps
+			// the verified flag only on numbers that did not change.
+			const current = await this.userModel
+				.findById(userId, { registrations: 1 })
+				.lean()
+				.exec();
+			const verified = new Set(
+				(current?.registrations ?? [])
+					.filter(registration => registration.verified)
+					.map(registration => `${registration.kind}:${registration.number}`)
+			);
+			set.registrations = data.registrations.map(registration => {
+				const number = registration.number.trim();
+				return {
+					kind: registration.kind,
+					number,
+					verified: verified.has(`${registration.kind}:${number}`)
+				};
+			});
+		}
+
+		if (data.notificationPrefs) {
+			for (const [key, value] of Object.entries(data.notificationPrefs)) {
+				if (value !== undefined) set[`notificationPrefs.${key}`] = value;
+			}
+		}
 
 		if (data.name !== undefined) {
 			set.name = data.name.trim();
@@ -208,7 +260,13 @@ class UsersService {
 		});
 	}
 
-	async addDocument(userId: string, documentType: DocumentType, url: string, key: string) {
+	async addDocument(
+		userId: string,
+		documentType: DocumentType,
+		url: string,
+		key: string,
+		extras: { label?: string; expiresAt?: string } = {}
+	) {
 		// Document access is resolved by looking up who holds a key, so a user
 		// must not be able to record a key that was issued to somebody else.
 		// Only keys minted for this user by the presign endpoint are accepted.
@@ -228,7 +286,20 @@ class UsersService {
 			{
 				updateOne: {
 					filter: { _id: userId },
-					update: { $push: { documents: { type: documentType, url, key } } }
+					update: {
+						$push: {
+							documents: {
+								type: documentType,
+								url,
+								key,
+								// A new upload always waits for Seek to verify it.
+								status: DocumentStatus.PENDING,
+								label: extras.label?.trim() || undefined,
+								expiresAt: extras.expiresAt ? new Date(extras.expiresAt) : null,
+								uploadedAt: new Date()
+							}
+						}
+					}
 				}
 			}
 		])
@@ -244,6 +315,38 @@ class UsersService {
 			documentType,
 			url
 		};
+	}
+
+	async getPassport(userId: string): Promise<Passport> {
+		const user = await this.userModel
+			.findById(userId, { documents: 1 })
+			.lean()
+			.exec();
+		if (!user) {
+			throw new NotFoundException("User not found.");
+		}
+		return buildPassport(user.documents);
+	}
+
+	/** Seek staff record the outcome of a document check. */
+	async setDocumentStatus(
+		userId: string,
+		documentType: DocumentType,
+		status: DocumentStatus,
+		expiresAt?: string | null
+	) {
+		const set: Record<string, unknown> = { "documents.$.status": status };
+		if (expiresAt !== undefined) {
+			set["documents.$.expiresAt"] = expiresAt ? new Date(expiresAt) : null;
+		}
+		const result = await this.userModel.updateOne(
+			{ _id: userId, "documents.type": documentType },
+			{ $set: set }
+		);
+		if (result.matchedCount === 0) {
+			throw new NotFoundException("Document not found for this user.");
+		}
+		return this.getPassport(userId);
 	}
 
 	async documentTypes(user: User): Promise<DocumentTypesDto> {

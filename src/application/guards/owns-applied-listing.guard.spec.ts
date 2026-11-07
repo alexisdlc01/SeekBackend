@@ -48,10 +48,15 @@ describe("OwnsAppliedListingGuard", () => {
 		{} as never,
 		{} as never,
 		{} as never,
+		{} as never,
+		{} as never,
+		{} as never,
+		{} as never,
 		{} as never
 	);
 	const listingService = new ListingsService(
 		listingModel as never,
+		{} as never,
 		{} as never,
 		{} as never
 	);

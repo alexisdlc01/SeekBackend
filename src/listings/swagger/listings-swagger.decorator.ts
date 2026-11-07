@@ -1,5 +1,6 @@
 import { applyDecorators } from "@nestjs/common";
 import { ApiBody, ApiResponse } from "@nestjs/swagger";
+import { ListingSearchResultDto } from "../dto/listing-search-result.dto";
 import { ErrorDto } from "../../dto/errorDto.dto";
 import {
 	CreateListingDto,
@@ -131,4 +132,10 @@ export const ApiLikedListingsDocs = () =>
 		ApiResponse({ status: 400, type: ErrorDto }),
 		ApiResponse({ status: 401, type: ErrorDto }),
 		ApiResponse({ status: 404, type: ErrorDto })
+	);
+
+export const ApiFilterListingsDocs = () =>
+	applyDecorators(
+		ApiResponse({ status: 200, type: ListingSearchResultDto, isArray: true }),
+		ApiResponse({ status: 400, type: ErrorDto })
 	);
