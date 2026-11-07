@@ -1,4 +1,5 @@
 import { Types } from "mongoose";
+import { Nation } from "../listings/enums/nation.enum";
 
 export type ComplianceKind =
 	| "GAS_SAFETY"
@@ -29,9 +30,23 @@ export const COMPLIANCE_WINDOW_DAYS = 30;
 /** Deposits must be protected within 30 days of being received. */
 export const DEPOSIT_PROTECTION_DAYS = 30;
 
-/** Tenant Fees Act cap: five weeks' rent when annual rent is under £50,000. */
-export function depositCapPence(monthlyRentPence: number): number {
+/**
+ * Tenant Fees Act cap: five weeks' rent when annual rent is under £50,000.
+ * Scotland: Rent (Scotland) Act 1984 s.90, two months' rent.
+ */
+export function depositCapPence(monthlyRentPence: number, nation?: unknown): number {
+	if (nation === Nation.SCOTLAND) return monthlyRentPence * 2;
 	return Math.floor(((monthlyRentPence * 12) / 52) * 5);
+}
+
+/** "five-week cap" or, in Scotland, "two-month cap". */
+export function depositCapName(nation?: unknown): string {
+	return nation === Nation.SCOTLAND ? "two-month cap" : "five-week cap";
+}
+
+/** How long the landlord has to protect the deposit, for messages. */
+export function depositProtectionWindow(nation?: unknown): string {
+	return nation === Nation.SCOTLAND ? "30 working days of the tenancy starting" : "30 days";
 }
 
 /** Tenant Fees Act: a holding deposit may not exceed one week's rent. */
@@ -44,9 +59,24 @@ export function holdingDepositCapPence(monthlyRentPence: number): number {
  * runs from depositReceivedAt only, never from the start date; null until the
  * receipt is recorded.
  */
-export function depositProtectionDeadline(tenancy: { depositReceivedAt?: Date | null }): Date | null {
+export function depositProtectionDeadline(
+	tenancy: { depositReceivedAt?: Date | null; startDate?: Date | null },
+	nation?: unknown
+): Date | null {
+	// Scotland: 30 working days from the start of the tenancy (Tenancy Deposit Schemes (Scotland) Regulations 2011).
+	if (nation === Nation.SCOTLAND) return tenancy.startDate ? addWorkingDays(new Date(tenancy.startDate), 30) : null;
 	if (!tenancy.depositReceivedAt) return null;
 	return new Date(new Date(tenancy.depositReceivedAt).getTime() + DEPOSIT_PROTECTION_DAYS * DAY_MS);
+}
+
+// shortcut: skips weekends but not bank holidays, so the deadline can land a day or two early; add a holiday calendar if landlords need the exact date.
+function addWorkingDays(from: Date, days: number): Date {
+	const date = new Date(from);
+	for (let left = days; left > 0; ) {
+		date.setUTCDate(date.getUTCDate() + 1);
+		if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6) left--;
+	}
+	return date;
 }
 
 export function severityFor(dueDate: Date, now: Date): ComplianceSeverity {
@@ -124,6 +154,7 @@ export function listingDepositCompliance(listing: ListingLike, now: Date = new D
 	const rent = Number(listing.monthlyRent);
 	if (!Number.isFinite(rent) || rent <= 0) return [];
 	const rentPence = Math.round(rent * 100);
+	const nation = listing.nation;
 	const people = Math.max(1, Number(listing.numOfPeople) || 1);
 	const base = {
 		listing: listing._id.toString(),
@@ -134,17 +165,18 @@ export function listingDepositCompliance(listing: ListingLike, now: Date = new D
 	};
 	const items: ComplianceItem[] = [];
 	const deposit = Number(listing.securityDeposit);
-	if (Number.isFinite(deposit) && deposit > 0 && Math.round(deposit * 100) > depositCapPence(rentPence)) {
+	if (Number.isFinite(deposit) && deposit > 0 && Math.round(deposit * 100) > depositCapPence(rentPence, nation)) {
 		items.push({
 			...base,
 			kind: "LISTING_DEPOSIT_OVER_CAP",
-			message: `The deposit of ${formatPounds(Math.round(deposit * 100))} is above the five-week cap of ${formatPounds(depositCapPence(rentPence))}. Lower it before letting.`
+			message: `The deposit of ${formatPounds(Math.round(deposit * 100))} is above the ${depositCapName(nation)} of ${formatPounds(depositCapPence(rentPence, nation))}. Lower it before letting.`
 		});
 	}
 	const holding = Number(listing.holdingDeposit);
 	// holdingDeposit is per room, so compare it with one room's weekly rent.
 	const roomCap = holdingDepositCapPence(Math.round(rentPence / people));
-	if (Number.isFinite(holding) && holding > 0 && Math.round(holding * 100) > roomCap) {
+	// The one-week holding deposit cap is the Tenant Fees Act's; Scotland has no such cap.
+	if (nation !== Nation.SCOTLAND && Number.isFinite(holding) && holding > 0 && Math.round(holding * 100) > roomCap) {
 		items.push({
 			...base,
 			kind: "HOLDING_DEPOSIT_OVER_CAP",
@@ -172,7 +204,9 @@ export function tenancyCompliance(
 		tenancy: tenancy._id.toString()
 	};
 
-	if (tenancy.depositAmount > 0 && !tenancy.depositProtectedAt && !depositProtectionDeadline(tenancy)) {
+	const nation = listing?.nation;
+	const deadline = depositProtectionDeadline(tenancy, nation);
+	if (tenancy.depositAmount > 0 && !tenancy.depositProtectedAt && !deadline) {
 		// No receipt date yet, so no deadline to count down: ask for it.
 		items.push({
 			...base,
@@ -182,7 +216,6 @@ export function tenancyCompliance(
 			message: "Record when you received the deposit: it must be protected within 30 days of that date."
 		});
 	}
-	const deadline = depositProtectionDeadline(tenancy);
 	if (tenancy.depositAmount > 0 && !tenancy.depositProtectedAt && deadline) {
 		const dueDate = deadline;
 		const overdue = dueDate.getTime() < now.getTime();
@@ -192,19 +225,19 @@ export function tenancyCompliance(
 			dueDate,
 			severity: severityFor(dueDate, now),
 			message: overdue
-				? "Deposit is not protected and the 30-day deadline has passed."
-				: "Protect the deposit in a government-approved scheme within 30 days."
+				? `Deposit is not protected and the ${nation === Nation.SCOTLAND ? "30-working-day" : "30-day"} deadline has passed.`
+				: `Protect the deposit in a government-approved scheme within ${depositProtectionWindow(nation)}.`
 		});
 	}
 
-	const cap = depositCapPence(tenancy.monthlyRent);
+	const cap = depositCapPence(tenancy.monthlyRent, nation);
 	if (tenancy.depositAmount > cap) {
 		items.push({
 			...base,
 			kind: "DEPOSIT_OVER_CAP",
 			dueDate: new Date(tenancy.startDate),
 			severity: "high",
-			message: `Deposit of ${formatPounds(tenancy.depositAmount)} is above the five-week cap of ${formatPounds(cap)}.`
+			message: `Deposit of ${formatPounds(tenancy.depositAmount)} is above the ${depositCapName(nation)} of ${formatPounds(cap)}.`
 		});
 	}
 	return items;

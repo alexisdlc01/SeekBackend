@@ -8,7 +8,11 @@ export enum TenancyStatus {
 export enum DepositScheme {
 	DPS = "DPS",
 	TDS = "TDS",
-	MYDEPOSITS = "MYDEPOSITS"
+	MYDEPOSITS = "MYDEPOSITS",
+	/** The three schemes approved in Scotland. */
+	SAFEDEPOSITS_SCOTLAND = "SAFEDEPOSITS_SCOTLAND",
+	LPS_SCOTLAND = "LPS_SCOTLAND",
+	MYDEPOSITS_SCOTLAND = "MYDEPOSITS_SCOTLAND"
 }
 
 export enum TenancyDocumentType {

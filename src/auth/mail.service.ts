@@ -120,6 +120,19 @@ export class MailService {
 		});
 	}
 
+	/** A landlord sent a tenancy agreement through Seek: the tenant reads and signs it in the app. */
+	async sendContractSentEmail(email: string, name: string, contractTitle: string, path: string) {
+		const link = `${this.configService.getOrThrow<string>("FRONTEND_URL").split(",")[0].trim().replace(/\/$/, "")}${path}`;
+		const intro = `Hi ${name}, your landlord sent you "${contractTitle}" to sign on Seek.`;
+		await this.mail.messages.create(this.domain, {
+			from: `Seek <noreply@${this.domain}>`,
+			to: [email],
+			subject: "Your tenancy agreement is ready to sign",
+			text: `${intro} Read and sign it here: ${link}`,
+			html: `<p>${escapeHtml(intro)}</p><p><a href="${escapeHtml(link)}">Read and sign it on Seek</a></p>`
+		});
+	}
+
 	async sendContactEmail(name: string, email: string, message: string) {
 		await this.mail.messages.create(this.domain, {
 			from: `Seek <noreply@${this.domain}>`,

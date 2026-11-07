@@ -47,12 +47,12 @@ export class LandlordOverviewService {
 		const [listings, tenancies, monthPayments, applications, holdingPaid] = await Promise.all([
 			this.listingModel
 				.find({ landlord, isDraft: { $ne: true } })
-				.select("propertyTitle streetAddress numOfPeople monthlyRent securityDeposit holdingDeposit gasSafetyExpiry eicrExpiry epcExpiry hmoLicenceExpiry")
+				.select("propertyTitle streetAddress nation numOfPeople monthlyRent securityDeposit holdingDeposit gasSafetyExpiry eicrExpiry epcExpiry hmoLicenceExpiry")
 				.lean()
 				.exec(),
 			this.tenancyModel
 				.find({ landlord, status: TenancyStatus.ACTIVE })
-				.populate({ path: "listing", select: "propertyTitle streetAddress" })
+				.populate({ path: "listing", select: "propertyTitle streetAddress nation" })
 				.lean()
 				.exec(),
 			this.paymentModel

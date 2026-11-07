@@ -9750,7 +9750,10 @@
             "enum": [
               "DPS",
               "TDS",
-              "MYDEPOSITS"
+              "MYDEPOSITS",
+              "SAFEDEPOSITS_SCOTLAND",
+              "LPS_SCOTLAND",
+              "MYDEPOSITS_SCOTLAND"
             ],
             "nullable": true
           },
@@ -9864,7 +9867,10 @@
             "enum": [
               "DPS",
               "TDS",
-              "MYDEPOSITS"
+              "MYDEPOSITS",
+              "SAFEDEPOSITS_SCOTLAND",
+              "LPS_SCOTLAND",
+              "MYDEPOSITS_SCOTLAND"
             ]
           },
           "depositReference": {
@@ -9894,7 +9900,10 @@
             "enum": [
               "DPS",
               "TDS",
-              "MYDEPOSITS"
+              "MYDEPOSITS",
+              "SAFEDEPOSITS_SCOTLAND",
+              "LPS_SCOTLAND",
+              "MYDEPOSITS_SCOTLAND"
             ]
           },
           "depositReference": {

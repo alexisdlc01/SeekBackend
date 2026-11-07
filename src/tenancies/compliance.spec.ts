@@ -59,3 +59,21 @@ describe("compliance", () => {
 		expect(items[0]).toMatchObject({ kind: "DEPOSIT_NOT_YET_RECEIVED", severity: "low" });
 	});
 });
+
+describe("compliance in Scotland", () => {
+	const listing = { _id: new Types.ObjectId(), propertyTitle: "3 North Street", nation: "SCOTLAND" };
+
+	it("caps the deposit at two months' rent and skips the English holding-deposit cap", () => {
+		expect(depositCapPence(65000, "SCOTLAND")).toBe(130000);
+		const items = listingCompliance({ ...listing, monthlyRent: 650, numOfPeople: 1, securityDeposit: 1300, holdingDeposit: 300 });
+		expect(items).toEqual([]);
+	});
+
+	it("counts 30 working days from the start of the tenancy, without a receipt date", () => {
+		const tenancy = { _id: new Types.ObjectId(), listing: listing._id, startDate: new Date("2026-09-01T00:00:00Z"), monthlyRent: 65000, depositAmount: 130000 };
+		expect(depositProtectionDeadline(tenancy, "SCOTLAND")).toEqual(new Date("2026-10-13T00:00:00Z"));
+		const [item] = tenancyCompliance(tenancy, listing, new Date("2026-10-20T00:00:00Z"));
+		expect(item.kind).toBe("DEPOSIT_UNPROTECTED");
+		expect(item.message).toBe("Deposit is not protected and the 30-working-day deadline has passed.");
+	});
+});

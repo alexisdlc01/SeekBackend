@@ -189,6 +189,8 @@ export class ConnectorsService {
 		if (provider === EmailProvider.IMAP) {
 			return this.encryptionKey() ? null : "Mailbox connections need CONNECTOR_ENCRYPTION_KEY on this server.";
 		}
+		// Outlook is demo-only outside production: it connects the demo mailbox, whatever MS_* holds.
+		if (provider === EmailProvider.OUTLOOK && !this.isProduction) return null;
 		if (!this.credentials(provider)) {
 			const prefix = provider === EmailProvider.GMAIL ? "GMAIL" : "MS";
 			return `${PROVIDER_LABELS[provider]} is not set up on this server (${prefix}_CLIENT_ID and ${prefix}_CLIENT_SECRET).`;
@@ -201,7 +203,8 @@ export class ConnectorsService {
 		return [EmailProvider.GMAIL, EmailProvider.OUTLOOK, EmailProvider.DEMO]
 			.map(provider => {
 				const reason = this.unavailableReason(provider);
-				return { provider, label: PROVIDER_LABELS[provider], available: !reason, ...(reason ? { reason } : {}) };
+				const label = provider === EmailProvider.OUTLOOK && !this.isProduction ? "Outlook (demo)" : PROVIDER_LABELS[provider];
+				return { provider, label, available: !reason, ...(reason ? { reason } : {}) };
 			})
 			// The demo option is not shown at all in production.
 			.filter(item => !(item.provider === EmailProvider.DEMO && this.isProduction));
@@ -296,12 +299,18 @@ export class ConnectorsService {
 
 	// ---------------------------------------------------------------- OAuth
 
-	authUrl(user: Pick<User, "_id">, rawProvider: string, client: ClientKind = "web", returnTo?: string) {
+	async authUrl(user: Pick<User, "_id"> & Partial<UserLean>, rawProvider: string, client: ClientKind = "web", returnTo?: string) {
 		const provider = this.parseOAuthProvider(rawProvider);
 		const reason = this.unavailableReason(provider);
 		if (reason) throw new ServiceUnavailableException(reason);
-		const credentials = this.credentials(provider)!;
 		const safeReturnTo = returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : null;
+		if (provider === EmailProvider.OUTLOOK && !this.isProduction) {
+			// No Microsoft consent: connect the demo mailbox and send the app straight to its "connected" screen.
+			await this.connectDemo(user as UserLean);
+			const demoState = { sub: user._id.toString(), provider, client, returnTo: safeReturnTo, purpose: "email-connector" } satisfies OAuthState;
+			return { provider, url: this.redirectFor(demoState, provider, "connected") };
+		}
+		const credentials = this.credentials(provider)!;
 		const state = this.jwt.sign(
 			{
 				sub: user._id.toString(),

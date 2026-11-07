@@ -98,7 +98,7 @@ describe("ConnectorsService OAuth callback binds the mailbox to who consented", 
 
 	it("web: state of user A + cookie of user B -> invalid_state, no connection", async () => {
 		const { service, userId, connectionModel } = oauthSetup();
-		const { url } = service.authUrl({ _id: userId }, "gmail");
+		const { url } = await service.authUrl({ _id: userId }, "gmail");
 		const cookieB = jwt.sign({ userId: new Types.ObjectId().toString(), sessionId: "s" });
 		const target = await service.handleCallback("gmail", { code: "c", state: stateFor(url) }, cookieB);
 		expect(target).toBe("http://localhost:5173/connectors?connector=gmail&status=error&reason=invalid_state");
@@ -109,7 +109,7 @@ describe("ConnectorsService OAuth callback binds the mailbox to who consented", 
 
 	it("web: the requester's own cookie connects the mailbox to them", async () => {
 		const { service, userId, connectionModel } = oauthSetup();
-		const { url } = service.authUrl({ _id: userId }, "gmail");
+		const { url } = await service.authUrl({ _id: userId }, "gmail");
 		const cookieA = jwt.sign({ userId: userId.toString(), sessionId: "s" });
 		const target = await service.handleCallback("gmail", { code: "c", state: stateFor(url) }, cookieA);
 		expect(target).toContain("status=connected");
@@ -118,7 +118,7 @@ describe("ConnectorsService OAuth callback binds the mailbox to who consented", 
 
 	it("mobile: nothing is connected until the link's owner confirms the nonce", async () => {
 		const { service, userId, connectionModel } = oauthSetup();
-		const { url } = service.authUrl({ _id: userId }, "gmail", "mobile");
+		const { url } = await service.authUrl({ _id: userId }, "gmail", "mobile");
 		const target = await service.handleCallback("gmail", { code: "c", state: stateFor(url) });
 		expect(target).toMatch(/^seekapp:\/\/connectors\?connector=gmail&status=pending&nonce=[\w-]{43}$/);
 		expect(connectionModel.findOneAndUpdate).not.toHaveBeenCalled();
@@ -130,9 +130,19 @@ describe("ConnectorsService OAuth callback binds the mailbox to who consented", 
 		expect(connectionModel.findOneAndUpdate).not.toHaveBeenCalled();
 	});
 
+	it("outlook outside production: demo mailbox, no Microsoft consent, even with MS_* set", async () => {
+		const { service, userId } = oauthSetup();
+		const connectDemo = jest.spyOn(service, "connectDemo").mockResolvedValue({} as any);
+		expect(service.providers().find(item => item.provider === EmailProvider.OUTLOOK)).toEqual({ provider: EmailProvider.OUTLOOK, label: "Outlook (demo)", available: true });
+		const { url } = await service.authUrl({ _id: userId }, "outlook");
+		expect(url).toBe("http://localhost:5173/connectors?connector=outlook&status=connected");
+		expect(connectDemo).toHaveBeenCalledTimes(1);
+		expect((await service.authUrl({ _id: userId }, "outlook", "mobile")).url).toBe("seekapp://connectors?connector=outlook&status=connected");
+	});
+
 	it("mobile: the owner of the link confirms once", async () => {
 		const { service, userId, connectionModel } = oauthSetup();
-		const { url } = service.authUrl({ _id: userId }, "gmail", "mobile");
+		const { url } = await service.authUrl({ _id: userId }, "gmail", "mobile");
 		const nonce = new URL(await service.handleCallback("gmail", { code: "c", state: stateFor(url) })).searchParams.get("nonce")!;
 		await expect(service.confirmPending({ _id: userId }, "gmail", nonce)).resolves.toEqual({ id: "c1" });
 		expect(connectionModel.findOneAndUpdate.mock.calls[0][0].user.toString()).toBe(userId.toString());

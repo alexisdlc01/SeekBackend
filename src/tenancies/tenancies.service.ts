@@ -15,7 +15,7 @@ import { Role } from "../auth/role.enum";
 import { CreateTenancyDto } from "./dto/create-tenancy.dto";
 import { DepositReceivedDto, PrescribedInfoDto, UpdateDepositDto } from "./dto/update-deposit.dto";
 import { AddTenancyDocumentDto } from "./dto/add-tenancy-document.dto";
-import { depositCapPence, listingCompliance, sortCompliance, tenancyCompliance } from "./compliance";
+import { depositCapName, depositCapPence, listingCompliance, sortCompliance, tenancyCompliance } from "./compliance";
 import { RentScheduleService } from "../payments/rent-schedule.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { NotificationKind } from "../notifications/notification-kind.enum";
@@ -23,6 +23,7 @@ import { notificationTarget, NotificationTargetKind } from "../notifications/lin
 import { isKeyOwnedBy } from "../upload/object-key";
 import { Application } from "../application/application.schema";
 import { ApplicationStage } from "../application/enums/application-stage.enum";
+import { Nation } from "../listings/enums/nation.enum";
 
 export const TENANCY_LISTING_FIELDS =
 	"propertyTitle streetAddress cityTown postcodeZIP photos location nation billsIncluded numOfPeople bedroomsCount monthlyRent securityDeposit holdingDeposit gasSafetyExpiry eicrExpiry epcExpiry hmoLicenceExpiry licenceNumber";
@@ -156,7 +157,7 @@ export class TenanciesService {
 		const manual = !dto.application;
 
 		const depositAmount = dto.depositAmount ?? 0;
-		this.assertDepositWithinCap(depositAmount, dto.monthlyRent);
+		this.assertDepositWithinCap(depositAmount, dto.monthlyRent, listing.nation);
 		if (dto.endDate && new Date(dto.endDate) <= new Date(dto.startDate)) {
 			throw new BadRequestException("The end date must be after the start date.");
 		}
@@ -277,7 +278,8 @@ export class TenanciesService {
 	async updateDeposit(id: string, dto: UpdateDepositDto, landlord: Viewer) {
 		const tenancy = await this.findForLandlord(id, landlord);
 		const depositAmount = dto.depositAmount ?? tenancy.depositAmount;
-		this.assertDepositWithinCap(depositAmount, tenancy.monthlyRent);
+		const listing = await this.listingModel.findById(tenancy.listing, { nation: 1 }).lean().exec();
+		this.assertDepositWithinCap(depositAmount, tenancy.monthlyRent, listing?.nation);
 		await this.tenancyModel.updateOne(
 			{ _id: tenancy._id },
 			{
@@ -350,11 +352,13 @@ export class TenanciesService {
 		]);
 	}
 
-	private assertDepositWithinCap(depositPence: number, monthlyRentPence: number) {
-		const cap = depositCapPence(monthlyRentPence);
+	private assertDepositWithinCap(depositPence: number, monthlyRentPence: number, nation?: Nation) {
+		const cap = depositCapPence(monthlyRentPence, nation);
 		if (depositPence > cap) {
 			throw new BadRequestException(
-				`Tenant Fees Act: the deposit can be at most five weeks' rent (£${(cap / 100).toFixed(2)} per tenant).`
+				nation === Nation.SCOTLAND
+					? `Rent (Scotland) Act: the deposit can be at most two months' rent (£${(cap / 100).toFixed(2)} per tenant).`
+					: `Tenant Fees Act: the deposit can be at most five weeks' rent (£${(cap / 100).toFixed(2)} per tenant).`
 			);
 		}
 	}
@@ -415,14 +419,16 @@ export class TenanciesService {
 			}))
 		);
 		// A warning for the landlord, never a block: the tenancy exists either way.
-		const overCap = depositCapPence(tenancy.monthlyRent) < tenancy.depositAmount;
+		const overCap = depositCapPence(tenancy.monthlyRent, listing.nation) < tenancy.depositAmount;
 		if (overCap) {
 			await this.notifications.notify(
 				{
 					user: tenancy.landlord,
 					kind: NotificationKind.COMPLIANCE_DUE,
-					title: `${title}: the deposit is above the five-week cap`,
-					body: "Tenant Fees Act: reduce the deposit to at most five weeks' rent per tenant.",
+					title: `${title}: the deposit is above the ${depositCapName(listing.nation)}`,
+					body: listing.nation === Nation.SCOTLAND
+						? "Rent (Scotland) Act: reduce the deposit to at most two months' rent per tenant."
+						: "Tenant Fees Act: reduce the deposit to at most five weeks' rent per tenant.",
 					...notificationTarget("landlord", NotificationTargetKind.COMPLIANCE),
 					dedupeKey: `deposit-over-cap:${tenancy._id.toString()}`
 				},

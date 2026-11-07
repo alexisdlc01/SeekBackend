@@ -2,6 +2,7 @@ import {
 	BadRequestException,
 	ForbiddenException,
 	Injectable,
+	Logger,
 	NotFoundException
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -15,6 +16,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { NotificationKind } from "../notifications/notification-kind.enum";
 import { notificationTarget, NotificationTargetKind } from "../notifications/links";
 import { User } from "../users/users.schema";
+import { MailService } from "../auth/mail.service";
 import { isKeyOwnedBy } from "../upload/object-key";
 import { allTenantsSigned } from "./signing";
 import { ContractTemplate } from "./contract-template.schema";
@@ -38,6 +40,7 @@ type Viewer = Pick<User, "_id" | "role">;
 
 @Injectable()
 export class ContractsService {
+	private readonly logger = new Logger(ContractsService.name);
 	constructor(
 		@InjectModel(Contract.name) private readonly contractModel: Model<Contract>,
 		@InjectModel(ContractTemplate.name) private readonly templateModel: Model<ContractTemplate>,
@@ -46,7 +49,9 @@ export class ContractsService {
 		@InjectModel(Listing.name) private readonly listingModel: Model<Listing>,
 		private readonly tenancies: TenanciesService,
 		private readonly notifications: NotificationsService,
-		private readonly config: ConfigService
+		private readonly config: ConfigService,
+		@InjectModel(User.name) private readonly userModel?: Model<User>,
+		private readonly mail?: MailService
 	) {}
 
 	/** Drafts Seek's own agreement for the tenancy, following the law of the nation the home is in. */
@@ -351,7 +356,22 @@ export class ContractsService {
 				dedupeKey: `contract-sent:${contract._id.toString()}`
 			}))
 		);
+		await this.emailContractSent(tenancy.tenants, contract.title);
 		return updated;
+	}
+
+	/** The agreement also reaches each tenant's inbox. A mail failure never undoes the send. */
+	private async emailContractSent(tenantIds: Types.ObjectId[], title: string) {
+		if (!this.mail || !this.userModel) return;
+		const users = await this.userModel.find({ _id: { $in: tenantIds } }, { email: 1, name: 1 }).lean().exec();
+		const { link } = notificationTarget("student", NotificationTargetKind.CONTRACTS);
+		await Promise.all(
+			users.map(user =>
+				this.mail!.sendContractSentEmail(user.email, user.name ?? "there", title, link).catch(error =>
+					this.logger.warn(`Contract email to ${user._id.toString()} failed: ${(error as Error).message}`)
+				)
+			)
+		);
 	}
 
 	async sign(contractId: string, tenant: Viewer) {

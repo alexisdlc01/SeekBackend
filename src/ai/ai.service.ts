@@ -11,7 +11,7 @@ import { Nation } from "../listings/enums/nation.enum";
 import { Tenancy } from "../tenancies/tenancy.schema";
 import { DepositScheme, TenancyDocumentType, TenancyStatus } from "../tenancies/tenancy.enums";
 import { TenanciesService } from "../tenancies/tenancies.service";
-import { depositCapPence, depositProtectionDeadline } from "../tenancies/compliance";
+import { depositCapPence, depositProtectionDeadline, depositProtectionWindow } from "../tenancies/compliance";
 import { Bill, BillStatus } from "../bills/bill.schema";
 import { Payment } from "../payments/payment.schema";
 import { PaymentStatus } from "../payments/payment.enums";
@@ -74,8 +74,30 @@ const DAY_MS = 86_400_000;
 const SCHEME_SITES: Record<DepositScheme, { name: string; url: string }> = {
 	[DepositScheme.DPS]: { name: "DPS", url: "https://www.depositprotection.com" },
 	[DepositScheme.TDS]: { name: "TDS", url: "https://www.tenancydepositscheme.com" },
-	[DepositScheme.MYDEPOSITS]: { name: "mydeposits", url: "https://www.mydeposits.co.uk" }
+	[DepositScheme.MYDEPOSITS]: { name: "mydeposits", url: "https://www.mydeposits.co.uk" },
+	[DepositScheme.SAFEDEPOSITS_SCOTLAND]: { name: "SafeDeposits Scotland", url: "https://www.safedepositsscotland.com" },
+	[DepositScheme.LPS_SCOTLAND]: { name: "Letting Protection Service Scotland", url: "https://www.lettingprotectionscotland.com" },
+	[DepositScheme.MYDEPOSITS_SCOTLAND]: { name: "mydeposits Scotland", url: "https://www.mydepositsscotland.co.uk" }
 };
+/** Model output telling a student to protect the deposit themselves (it is the landlord's duty). */
+export const STUDENT_PROTECTS_DEPOSIT = /(^|[.!?]\s+)protect (your|the) deposit/i;
+const SCOTTISH_SCHEMES = [DepositScheme.SAFEDEPOSITS_SCOTLAND, DepositScheme.LPS_SCOTLAND, DepositScheme.MYDEPOSITS_SCOTLAND];
+
+/** Deposit law of the nation the home is in: Scotland differs on cap, deadline and schemes. */
+function depositRules(nation?: unknown) {
+	const scotland = nation === Nation.SCOTLAND;
+	const sites = (Object.keys(SCHEME_SITES) as DepositScheme[])
+		.filter(key => SCOTTISH_SCHEMES.includes(key) === scotland)
+		.map(key => SCHEME_SITES[key]);
+	const names = sites.map(site => site.name);
+	return {
+		sites,
+		schemes: `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`,
+		window: depositProtectionWindow(nation),
+		cap: scotland ? "two months' rent" : "five weeks' rent",
+		deadlineName: scotland ? "30-working-day" : "30-day"
+	};
+}
 
 const GUARANTOR_LINKS: AdviceAction[] = [
 	{ label: "Housing Hand", link: "https://www.housinghand.co.uk" },
@@ -88,7 +110,8 @@ Read the whole conversation and work out the search the student wants now (later
 Answer with one JSON object and nothing else:
 {"reply": string, "filters": {"city"?: string, "area"?: string, "maxRent"?: number, "minBedrooms"?: number, "billsIncluded"?: boolean, "nearUniversity"?: string, "moveIn"?: string}}
 Rules:
-- area is a neighbourhood the student named (e.g. ${AREAS.map(a => a.name).join(", ")}). Set city to the area's city.
+- area is a neighbourhood the student named (e.g. ${AREAS.map(a => `${a.name} (${a.city})`).join(", ")}). Set city to the area's city.
+- "St Andrews" on its own is the Scottish town: city "St Andrews", no area. It is the Bristol neighbourhood only when the student also says Bristol.
 - maxRent is the monthly rent per person in whole pounds. Convert weekly amounts (x52/12).
 - minBedrooms is a whole number.
 - nearUniversity must be one of: ${UNIVERSITIES.map(u => u.name).join("; ")}. Set city to that university's city.
@@ -116,6 +139,12 @@ const SEARCH_RESPONSE_SCHEMA = {
 	},
 	required: ["reply", "filters"]
 };
+
+/** Whether any student message names this place, e.g. "Bristol". */
+function mentionsPlace(messages: ChatTurn[], place: string) {
+	const pattern = new RegExp(`\\b${place.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+")}\\b`, "i");
+	return messages.some(message => message.role === "user" && pattern.test(message.content));
+}
 
 function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
 	const rad = (deg: number) => (deg * Math.PI) / 180;
@@ -232,7 +261,13 @@ export class AiService {
 			return null;
 		}
 		// The rules parser only reads what the student wrote, so it can fill a filter the model dropped.
-		const filters = { ...parseConversation(messages, now), ...sanitized };
+		const rules = parseConversation(messages, now);
+		// A city the student never wrote must not replace one they did ("St Andrews" read as the Bristol neighbourhood).
+		if (rules.city && sanitized.city && sanitized.city !== rules.city && !mentionsPlace(messages, sanitized.city)) {
+			this.logger.warn(`AI search answer from ${answer.provider} moved the search to ${sanitized.city}; using the rules parser.`);
+			return null;
+		}
+		const filters = { ...rules, ...sanitized };
 		return { filters, reply, provider: answer.provider };
 	}
 
@@ -386,23 +421,27 @@ export class AiService {
 	}
 
 	private depositAdvice(user: Viewer, tenancy: TenancyLean | null, listing: ListingLean | null, now: Date): AdviceDraft {
+		const nation = listing?.nation;
+		const rules = depositRules(nation);
 		const general =
-			"A deposit can be at most five weeks' rent, and a holding deposit at most one week's. It must be protected in a government-approved scheme (DPS, TDS or mydeposits) within 30 days of being paid, and the tenant must get the certificate and prescribed information.";
+			nation === Nation.SCOTLAND
+				? `In Scotland a deposit can be at most two months' rent. It must be protected in an approved scheme (${rules.schemes}) within ${rules.window}, and the tenant must get the prescribed information.`
+				: "A deposit can be at most five weeks' rent, and a holding deposit at most one week's. It must be protected in a government-approved scheme (DPS, TDS or mydeposits) within 30 days of being paid, and the tenant must get the certificate and prescribed information.";
 		if (!tenancy) {
 			return {
 				title: "Deposits: the rules",
 				advice: general,
-				actions: Object.values(SCHEME_SITES).map(site => ({ label: `Check a deposit with ${site.name}`, link: site.url }))
+				actions: rules.sites.map(site => ({ label: `Check a deposit with ${site.name}`, link: site.url }))
 			};
 		}
 		const landlord = this.isLandlord(user);
 		const home = this.homeName(listing);
-		const cap = depositCapPence(tenancy.monthlyRent);
+		const cap = depositCapPence(tenancy.monthlyRent, nation);
 		const deposit = tenancy.depositAmount ?? 0;
 		const scheme = tenancy.depositScheme ? SCHEME_SITES[tenancy.depositScheme] : null;
 		const protectedNow = Boolean(scheme && (tenancy.depositReference || tenancy.depositProtectedAt));
 		// 30 days from when the deposit was received; unknown until it is recorded.
-		const deadline = depositProtectionDeadline(tenancy);
+		const deadline = depositProtectionDeadline(tenancy, nation);
 		const certificate = this.hasDocument(tenancy, TenancyDocumentType.DEPOSIT_CERTIFICATE);
 		const subject = landlord ? `The deposit for ${home}` : "Your deposit";
 		const lines: string[] = [];
@@ -414,15 +453,15 @@ export class AiService {
 				protectedNow
 					? `${subject} of ${money(deposit)} is protected with ${scheme!.name}${tenancy.depositReference ? ` (reference ${tenancy.depositReference})` : ""}.`
 					: !deadline
-						? `${subject} of ${money(deposit)} must be protected in DPS, TDS or mydeposits within 30 days of being received. ${landlord ? "Record the date you received it so Seek can track the deadline." : "Ask your landlord when they received it and for the protection certificate."}`
+						? `${subject} of ${money(deposit)} must be protected in ${rules.schemes} within ${nation === Nation.SCOTLAND ? rules.window : "30 days of being received"}. ${landlord ? "Record the date you received it so Seek can track the deadline." : "Ask your landlord when they received it and for the protection certificate."}`
 						: deadline < now
-						? `${subject} of ${money(deposit)} is not recorded as protected, and the 30-day deadline passed on ${formatDate(deadline)}. ${landlord ? "Protect it now: late protection can mean a penalty of up to three times the deposit." : "Ask your landlord for the protection certificate; if it was never protected you may be owed up to three times the deposit."}`
-						: `${subject} of ${money(deposit)} must be protected in DPS, TDS or mydeposits by ${formatDate(deadline)}.`
+						? `${subject} of ${money(deposit)} is not recorded as protected, and the ${rules.deadlineName} deadline passed on ${formatDate(deadline)}. ${landlord ? "Protect it now: late protection can mean a penalty of up to three times the deposit." : "Ask your landlord for the protection certificate; if it was never protected you may be owed up to three times the deposit."}`
+						: `${subject} of ${money(deposit)} must be protected in ${rules.schemes} by ${formatDate(deadline)}.${landlord ? "" : " That is your landlord's legal duty, not yours: ask them for the scheme's certificate and the prescribed information, and check the reference on the scheme's website. If the date passes without them, tell your landlord in writing and contact the scheme or your university's advice service."}`
 			);
 			lines.push(
 				deposit > cap
-					? `That is more than the legal cap of five weeks' rent (${money(cap)}). ${landlord ? `Refund the ${money(deposit - cap)} difference.` : `Ask for the ${money(deposit - cap)} difference back.`}`
-					: `That is within the legal cap of five weeks' rent (${money(cap)}).`
+					? `That is more than the legal cap of ${rules.cap} (${money(cap)}). ${landlord ? `Refund the ${money(deposit - cap)} difference.` : `Ask for the ${money(deposit - cap)} difference back.`}`
+					: `That is within the legal cap of ${rules.cap} (${money(cap)}).`
 			);
 			if (protectedNow) {
 				lines.push(
@@ -439,7 +478,7 @@ export class AiService {
 		if (scheme) actions.push({ label: `Check it with ${scheme.name}`, link: scheme.url });
 		actions.push({ label: certificate ? "Open your documents" : "Go to your tenancy", link: this.homeLink(user) });
 		return {
-			title: deposit <= 0 ? "Deposit" : protectedNow ? `${subject} is protected` : !deadline ? `Protect ${landlord ? "the" : "your"} deposit within 30 days` : deadline < now ? `${subject} is not protected` : `Protect ${landlord ? "the" : "your"} deposit by ${formatDate(deadline)}`,
+			title: deposit <= 0 ? "Deposit" : protectedNow ? `${subject} is protected` : !deadline ? (landlord ? "Protect the deposit within 30 days" : "Your landlord must protect your deposit within 30 days") : deadline < now ? `${subject} is not protected` : landlord ? `Protect the deposit by ${formatDate(deadline)}` : `Your landlord must protect your deposit by ${formatDate(deadline)}`,
 			advice: lines.join(" "),
 			actions
 		};
@@ -447,7 +486,11 @@ export class AiService {
 
 	private async billsAdvice(user: Viewer, tenancy: TenancyLean | null, listing: ListingLean | null): Promise<AdviceDraft> {
 		const landlord = this.isLandlord(user);
-		const councilTaxLink = { label: "Council tax for students (GOV.UK)", link: "https://www.gov.uk/council-tax/discounts-for-full-time-students" };
+		// GOV.UK's page covers England and Wales; Scottish council tax is on mygov.scot.
+		const councilTaxLink =
+			listing?.nation === Nation.SCOTLAND
+				? { label: "Council tax for students (mygov.scot)", link: "https://www.mygov.scot/council-tax/discounts-exemptions-and-reductions" }
+				: { label: "Council tax for students (GOV.UK)", link: "https://www.gov.uk/council-tax/discounts-for-full-time-students" };
 		const councilTaxRule =
 			"Full-time students don't pay council tax, and a home where everyone is a full-time student is exempt. Each student gets an exemption certificate from their university.";
 		if (!tenancy) {
@@ -867,8 +910,8 @@ export class AiService {
 		if (!this.llm.isConfigured()) return null;
 		const answer = await this.llm.complete({
 			system: question
-				? 'You answer a question about a UK rented home for a student renting app. Use only the facts given; keep amounts, dates, names and references exactly as written and invent none. If the facts do not answer the question, say so and suggest asking the landlord. Plain British English, second person addressed to the audience (a landlord reads about applicants as "this household", never "your household"), at most 110 words, no markdown. Answer with JSON only: {"advice": string}.'
-				: 'You reword housing guidance for a UK student renting app. Use only the facts given; keep every amount, date, name and reference exactly as written; add nothing new. Plain British English, second person addressed to the audience (a landlord reads about applicants as "this household", never "your household"), at most 110 words, no markdown. Answer with JSON only: {"advice": string}.',
+				? 'You answer a question about a UK rented home for a student renting app. Use only the facts given; keep amounts, dates, names and references exactly as written and invent none. If the facts do not answer the question, say so and suggest asking the landlord. Plain British English, second person addressed to the audience (a landlord reads about applicants as "this household", never "your household"), at most 110 words, no markdown. Protecting a deposit is the LANDLORD\'s legal duty: never tell a student tenant to protect the deposit; say the landlord must. Answer with JSON only: {"advice": string}.'
+				: 'You reword housing guidance for a UK student renting app. Use only the facts given; keep every amount, date, name and reference exactly as written; add nothing new. Plain British English, second person addressed to the audience (a landlord reads about applicants as "this household", never "your household"), at most 110 words, no markdown. Protecting a deposit in an approved scheme is the LANDLORD\'s legal duty: when the audience is a student tenant, never tell the student to protect the deposit; say the landlord must, and tell the student to ask for the certificate and prescribed information. Answer with JSON only: {"advice": string}.',
 			messages: [
 				{
 					role: "user",
@@ -888,6 +931,7 @@ export class AiService {
 		const parsed = extractJsonObject(answer.text) as { advice?: unknown } | null;
 		const advice = typeof parsed?.advice === "string" ? parsed.advice.trim() : "";
 		if (advice.length < 20 || advice.length > 1200) return null;
+		if (topic === "deposit" && !this.isLandlord(user) && STUDENT_PROTECTS_DEPOSIT.test(advice)) return null;
 		const sent = typeof draft.llm?.facts.facts === "string" ? draft.llm.facts.facts : draft.advice;
 		const facts = /£[\d,.]+\d|\b[A-Z]{2,}-[\w-]+\b|\b\d{1,2} [A-Z][a-z]+ \d{4}\b/g;
 		// A reworded card keeps every fact; an answer to a question may use only some, but invents none.

@@ -120,13 +120,13 @@ export class ListingsService {
 		}
 		if (data.criteria) update.criteria = normaliseCriteria(data.criteria);
 		if (data.viewingSlots) update.viewingSlots = normaliseViewingSlots(data.viewingSlots as string[]);
-		if (["holdingDeposit", "securityDeposit", "monthlyRent", "numOfPeople"].some(key => key in data)) {
+		if (["holdingDeposit", "securityDeposit", "monthlyRent", "numOfPeople", "nation"].some(key => key in data)) {
 			const current = await this.listingModel
 				.findOne({ _id: new Types.ObjectId(listingId), landlord: new Types.ObjectId(landlord._id) })
-				.select("monthlyRent numOfPeople securityDeposit holdingDeposit")
+				.select("monthlyRent numOfPeople securityDeposit holdingDeposit nation")
 				.lean()
 				.exec();
-			// Deposit at most 5 weeks' rent, holding deposit at most 1 week's per room.
+			// Deposit at most 5 weeks' rent (2 months in Scotland), holding deposit at most 1 week's per room.
 			const overCap = listingDepositCompliance({ ...current, ...data, _id: new Types.ObjectId(listingId) } as never);
 			if (overCap.length > 0) {
 				throw new BadRequestException(overCap.map(item => item.message).join(" "));

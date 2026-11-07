@@ -21,6 +21,18 @@ describe("AiService searchChat with a model answer", () => {
 		expect(result.suggestions).toEqual(["Quiet streets", "Nightlife", "Either"]);
 	});
 
+	it("keeps the Scottish town when the model files St Andrews under Bristol", async () => {
+		const { service } = setup(
+			'{"reply":"2-bed homes in St Andrews, Bristol.","filters":{"city":"Bristol","area":"St Andrews","maxRent":800,"minBedrooms":2,"billsIncluded":true}}'
+		);
+		const result = await service.searchChat(
+			[{ role: "user", content: "2 bed in St Andrews under £800 each, bills included" }],
+			new Date("2026-11-07T12:00:00Z")
+		);
+		expect(result.provider).toBe("rules");
+		expect(result.filters).toEqual({ city: "St Andrews", maxRent: 800, minBedrooms: 2, billsIncluded: true });
+	});
+
 	it("falls back to the rules parser when the answer is not JSON", async () => {
 		const { service } = setup("{not json");
 		const result = await service.searchChat(messages, new Date("2026-11-07T12:00:00Z"));
@@ -95,5 +107,28 @@ describe("AiService bills advice", () => {
 		const service = new AiService({ isConfigured: () => false } as any, none, none, none, none, billModel as any, none, none, none, none, { get: () => undefined } as any);
 		const draft = await (service as any).billsAdvice({ _id: maya, role: "STUDENT" }, { _id: "t1", tenants: [maya, tom], documents: [] }, { propertyTitle: "14 Cotham Grove" });
 		expect(draft.advice).toContain("1 bill is unpaid; your share is £30.");
+	});
+});
+
+describe("AiService advice for a home in Scotland", () => {
+	const none = {} as any;
+	const billModel = { find: () => ({ sort() { return this; }, lean() { return this; }, exec: async () => [] }) };
+	const service = new AiService({ isConfigured: () => false } as any, none, none, none, none, billModel as any, none, none, none, none, { get: () => undefined } as any);
+	const student = { _id: "64b000000000000000000011", role: "STUDENT" };
+	const listing = { propertyTitle: "3 North Street", nation: "SCOTLAND" };
+
+	it("uses the Scottish schemes, the two-month cap and 30 working days from the start", () => {
+		// £650 a month, £1,300 deposit: exactly two months, so within the Scottish cap (five weeks would be £750).
+		const tenancy = { _id: "t1", tenants: [student._id], documents: [], monthlyRent: 65000, depositAmount: 130000, startDate: new Date("2026-09-01T00:00:00Z") };
+		const draft = (service as any).depositAdvice(student, tenancy, listing, new Date("2026-09-02T00:00:00Z"));
+		expect(draft.advice).toContain("SafeDeposits Scotland, Letting Protection Service Scotland or mydeposits Scotland by 13 October 2026");
+		expect(draft.advice).toContain("within the legal cap of two months' rent (£1300).");
+		expect(draft.advice).not.toMatch(/DPS|TDS|five weeks/);
+	});
+
+	it("links council tax to mygov.scot, not GOV.UK", async () => {
+		const draft = await (service as any).billsAdvice(student, { _id: "t1", tenants: [student._id], documents: [] }, listing);
+		expect(draft.actions.map((action: { link: string }) => action.link).join(" ")).toContain("mygov.scot/council-tax");
+		expect(JSON.stringify(draft)).not.toContain("gov.uk");
 	});
 });

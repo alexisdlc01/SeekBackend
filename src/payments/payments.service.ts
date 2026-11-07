@@ -1189,7 +1189,7 @@ export class PaymentsService {
 
 		const tenancies = await this.tenancyModel
 			.find({ status: TenancyStatus.ACTIVE, depositProtectedAt: null, depositAmount: { $gt: 0 } })
-			.populate({ path: "listing", select: "propertyTitle streetAddress" })
+			.populate({ path: "listing", select: "propertyTitle streetAddress nation" })
 			.lean()
 			.exec();
 		for (const tenancy of tenancies) {

@@ -118,3 +118,29 @@ describe("ContractsService deductions", () => {
 		expect(result!.deductions!.status).toBe(DeductionStatus.DISPUTED);
 	});
 });
+
+describe("ContractsService send", () => {
+	const lean = <T>(value: T) => ({ lean: () => ({ exec: () => Promise.resolve(value) }) });
+	const maya = new Types.ObjectId();
+	const tenancy = { _id: new Types.ObjectId(), landlord: new Types.ObjectId(), tenants: [maya] };
+	const contract = { _id: new Types.ObjectId(), tenancy: tenancy._id, status: ContractStatus.DRAFT, title: "Tenancy agreement" };
+
+	it("emails each tenant as well as notifying them, and a mail failure does not undo the send", async () => {
+		const contractModel = {
+			findById: () => lean(contract),
+			findOneAndUpdate: () => lean({ ...contract, status: ContractStatus.SENT })
+		};
+		const userModel = { find: () => lean([{ _id: maya, email: "maya@example.com", name: "Maya" }]) };
+		const mail = { sendContractSentEmail: jest.fn().mockRejectedValue(new Error("Mailgun down")) };
+		const notifications = { notifyMany: jest.fn() };
+		const service = new ContractsService(
+			contractModel as any, {} as any, {} as any, {} as any, {} as any,
+			{ findForLandlord: jest.fn().mockResolvedValue(tenancy) } as any,
+			notifications as any, { get: () => "secret" } as any, userModel as any, mail as any
+		);
+		const sent = await service.send(contract._id.toString(), { _id: tenancy.landlord } as any);
+		expect(sent!.status).toBe(ContractStatus.SENT);
+		expect(notifications.notifyMany).toHaveBeenCalled();
+		expect(mail.sendContractSentEmail).toHaveBeenCalledWith("maya@example.com", "Maya", "Tenancy agreement", "/student/home");
+	});
+});
