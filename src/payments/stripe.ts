@@ -85,6 +85,8 @@ export interface StripeAccount {
 	charges_enabled: boolean;
 	payouts_enabled: boolean;
 	details_submitted: boolean;
+	/** `transfers: "active"` = the account can be a destination charge / transfer target. */
+	capabilities?: { transfers?: string };
 	external_accounts?: { data?: StripeExternalAccount[] };
 }
 
@@ -96,6 +98,8 @@ export interface StripeCheckoutSession {
 	amount_total: number | null;
 	customer: string | null;
 	metadata?: Record<string, string>;
+	success_url?: string | null;
+	cancel_url?: string | null;
 	/** Expanded on retrieve: the PaymentIntent and its saved payment method. */
 	payment_intent?: string | (StripePaymentIntent & { payment_method?: string | null }) | null;
 }
@@ -108,14 +112,17 @@ export interface StripeExternalAccount {
 
 export interface StripeAccountLink {
 	url: string;
-	expires_at: number;
+	expires_at: string;
 }
 
 export class StripeApiError extends Error {
-	constructor(message: string, readonly status: number) {
+	constructor(message: string, readonly status: number, readonly code?: string) {
 		super(message);
 	}
 }
+
+/** Stripe API version for /v2 endpoints (Accounts v2). */
+export const STRIPE_V2_VERSION = "2026-10-28.endive";
 
 /** Minimal Stripe REST client over fetch (no SDK dependency). */
 export class StripeClient {
@@ -134,18 +141,42 @@ export class StripeClient {
 		return this.request("GET", `/payment_intents/${encodeURIComponent(id)}`);
 	}
 
-	/** An Express connected account that receives a landlord's rent payouts. */
-	createExpressAccount(params: Record<string, unknown>, idempotencyKey: string): Promise<StripeAccount> {
-		return this.request("POST", "/accounts", { type: "express", country: "GB", ...params }, idempotencyKey);
+	/**
+	 * A GB connected account (Accounts v2, Express dashboard) that receives a
+	 * landlord's rent as the recipient of destination charges and transfers.
+	 */
+	createRecipientAccount(
+		params: { contact_email?: string; metadata?: Record<string, string> },
+		idempotencyKey: string
+	): Promise<{ id: string }> {
+		return this.request(
+			"POST",
+			"/v2/core/accounts",
+			{
+				...params,
+				dashboard: "express",
+				identity: { country: "gb" },
+				configuration: { recipient: { capabilities: { stripe_balance: { stripe_transfers: { requested: true } } } } },
+				// Stripe only allows these values for recipient-only accounts; the platform must have
+				// acknowledged loss liability (Dashboard > Connect > Platform profile) or creation fails.
+				defaults: { responsibilities: { fees_collector: "application", losses_collector: "application" } }
+			},
+			idempotencyKey
+		);
 	}
 
+	/** v1 view of any account: Stripe serves v2 accounts on this endpoint too. */
 	retrieveAccount(id: string): Promise<StripeAccount> {
 		return this.request("GET", `/accounts/${encodeURIComponent(id)}`);
 	}
 
 	/** The hosted onboarding page for an account (links are single use). */
-	createAccountLink(params: Record<string, unknown>): Promise<StripeAccountLink> {
-		return this.request("POST", "/account_links", { type: "account_onboarding", ...params });
+	createAccountLink(params: { account: string; return_url: string; refresh_url: string }): Promise<StripeAccountLink> {
+		const { account, ...urls } = params;
+		return this.request("POST", "/v2/core/account_links", {
+			account,
+			use_case: { type: "account_onboarding", account_onboarding: { configurations: ["recipient"], ...urls } }
+		});
 	}
 
 	/** A hosted Checkout page (mode=payment). */
@@ -185,25 +216,29 @@ export class StripeClient {
 		params?: Record<string, unknown>,
 		idempotencyKey?: string
 	): Promise<T> {
+		// v2 endpoints take JSON and need a v2 API version; v1 stays form-encoded on its pinned version.
+		const v2 = path.startsWith("/v2/");
 		const headers: Record<string, string> = {
 			Authorization: `Bearer ${this.secretKey}`,
-			"Stripe-Version": "2024-06-20"
+			"Stripe-Version": v2 ? STRIPE_V2_VERSION : "2024-06-20"
 		};
-		if (method === "POST") headers["Content-Type"] = "application/x-www-form-urlencoded";
+		if (method === "POST") headers["Content-Type"] = v2 ? "application/json" : "application/x-www-form-urlencoded";
 		if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
 
-		const response = await fetch(`${this.baseUrl}${path}`, {
+		let body: string | undefined;
+		if (method === "POST" && params) body = v2 ? JSON.stringify(params) : toStripeForm(params).toString();
+		const response = await fetch(v2 ? `https://api.stripe.com${path}` : `${this.baseUrl}${path}`, {
 			method,
 			headers,
-			body: method === "POST" && params ? toStripeForm(params).toString() : undefined,
+			body,
 			signal: AbortSignal.timeout(15_000)
 		});
-		const body = (await response.json().catch(() => ({}))) as {
-			error?: { message?: string };
+		const json = (await response.json().catch(() => ({}))) as {
+			error?: { message?: string; code?: string };
 		};
 		if (!response.ok) {
-			throw new StripeApiError(body.error?.message ?? "Stripe request failed", response.status);
+			throw new StripeApiError(json.error?.message ?? "Stripe request failed", response.status, json.error?.code);
 		}
-		return body as T;
+		return json as T;
 	}
 }

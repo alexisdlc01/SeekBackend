@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
 	BadRequestException,
+	BadGatewayException,
 	ConflictException,
 	ForbiddenException,
 	Injectable,
@@ -17,7 +18,32 @@ import { PaymentKind, PaymentProvider, PaymentStatus, PayoutStatus, PlanFrequenc
 import { allowedFrequencies, assertPlanAllowed, estimateNextPayout, restrictionReason, startOfUtcDay } from "./schedule";
 import { dueReminderStage, normaliseReminderSchedule, ReminderSchedule } from "./reminders";
 import { RentScheduleService } from "./rent-schedule.service";
-import { StripeApiError, StripeCheckoutSession, StripeClient, StripePaymentIntent, verifyStripeSignature } from "./stripe";
+import {
+	StripeAccount,
+	StripeApiError,
+	StripeCheckoutSession,
+	StripeClient,
+	StripePaymentIntent,
+	verifyStripeSignature
+} from "./stripe";
+
+/** Stripe error codes that really mean "Seek's Connect platform setup isn't finished". */
+const CONNECT_NOT_ENABLED = new Set([
+	"platform_registration_required",
+	"non_connect_platform_accounts_v2_access_blocked",
+	"connect_profile_not_submitted",
+	"connect_identity_not_verified",
+	"account_creation_losses_collector_unavailable",
+	"account_creation_liability_unacknowledged",
+	"account_creation_liability_unacknowledged_and_identity_verification_incomplete"
+]);
+
+/**
+ * Rent reaches the landlord as a destination charge / transfer: that needs the
+ * `transfers` capability (v2 recipient `stripe_transfers`), not `charges_enabled`,
+ * which stays false on recipient-only accounts.
+ */
+const canReceive = (account: StripeAccount) => account.capabilities?.transfers === "active";
 import {
 	CheckoutQueryDto,
 	CheckoutResponseDto,
@@ -629,8 +655,10 @@ export class PaymentsService {
 		const mobile = platform === "mobile";
 		const web = (this.config.get<string>("FRONTEND_URL") || "http://localhost:5173").replace(/\/$/, "");
 		const back = mobile ? "seekapp://rent-plan" : `${web}/student/home/rent`;
-		const successUrl = query.successUrl ?? `${back}?checkout=success&payment=${payment._id.toString()}&session_id={CHECKOUT_SESSION_ID}`;
-		const cancelUrl = query.cancelUrl ?? `${back}?checkout=cancelled&payment=${payment._id.toString()}`;
+		// Expo's Linking.createURL gives seekapp:///pay, which Stripe rejects as "Not a valid URL"; seekapp://pay is accepted.
+		const appUrl = (url: string) => url.replace(/^(seekapp|seek):\/\/\/+/, "$1://");
+		const successUrl = appUrl(query.successUrl ?? `${back}?checkout=success&payment=${payment._id.toString()}&session_id={CHECKOUT_SESSION_ID}`);
+		const cancelUrl = appUrl(query.cancelUrl ?? `${back}?checkout=cancelled&payment=${payment._id.toString()}`);
 		this.assertReturnUrl(successUrl, web);
 		this.assertReturnUrl(cancelUrl, web);
 
@@ -660,7 +688,11 @@ export class PaymentsService {
 			if (payment.providerRef?.startsWith("cs_")) {
 				const existing = await stripe.retrieveCheckoutSession(payment.providerRef);
 				if (existing.status === "open" && existing.url) {
-					return { mode, sessionId: existing.id, url: existing.url, status: payment.status };
+					if (existing.success_url === successUrl && existing.cancel_url === cancelUrl) {
+						return { mode, sessionId: existing.id, url: existing.url, status: payment.status };
+					}
+					// Opened from the other client (web vs app): it would send the payer back to the wrong place.
+					await stripe.expireCheckoutSession(existing.id);
 				}
 				if (existing.payment_status === "paid") {
 					const done = await this.completeCheckout(existing);
@@ -807,14 +839,14 @@ export class PaymentsService {
 		}
 	}
 
-	/** The landlord's connected account, when Stripe lets it take charges. */
+	/** The landlord's connected account, when Stripe lets it receive destination charges and transfers. */
 	private async destinationFor(stripe: StripeClient, landlordId: Types.ObjectId): Promise<string | null> {
 		const landlord = await this.userModel.findById(landlordId, { stripeAccountId: 1 }).lean().exec();
 		const accountId = landlord?.stripeAccountId;
 		if (!accountId || accountId.startsWith("acct_sim_")) return null;
 		try {
 			const account = await stripe.retrieveAccount(accountId);
-			return account.charges_enabled ? accountId : null;
+			return canReceive(account) ? accountId : null;
 		} catch (error) {
 			if (error instanceof StripeApiError) return null;
 			throw error;
@@ -853,7 +885,7 @@ export class PaymentsService {
 	}
 
 	/**
-	 * Creates the landlord's Stripe Express account the first time and returns
+	 * Creates the landlord's Stripe connected account (Accounts v2, recipient) the first time and returns
 	 * Stripe's onboarding link. Without a Stripe key (development) the account
 	 * is simulated and ready immediately.
 	 */
@@ -877,10 +909,9 @@ export class PaymentsService {
 		try {
 			let accountId = user.stripeAccountId;
 			if (!accountId) {
-				const account = await stripe.createExpressAccount(
+				const account = await stripe.createRecipientAccount(
 					{
-						email: user.email,
-						capabilities: { card_payments: { requested: true }, transfers: { requested: true } },
+						...(user.email ? { contact_email: user.email } : {}),
 						metadata: { userId: landlord._id.toString() }
 					},
 					`seek-connect-${landlord._id.toString()}`
@@ -897,13 +928,13 @@ export class PaymentsService {
 			return { mode: "stripe", accountId, url: link.url };
 		} catch (error) {
 			if (error instanceof StripeApiError) {
-				this.logger.error(`Stripe Connect onboarding failed (${error.status}): ${error.message}`);
-				if (/connect/i.test(error.message)) {
+				this.logger.error(`Stripe Connect onboarding failed (${error.status} ${error.code ?? "no code"}): ${error.message}`);
+				if (CONNECT_NOT_ENABLED.has(error.code ?? "") || /signed up for Connect/i.test(error.message)) {
 					throw new ConflictException(
 						"Payouts to your bank aren't available yet: Stripe Connect is not enabled for Seek. Tenants can still pay by card and Seek holds the rent until payouts are switched on."
 					);
 				}
-				throw new ServiceUnavailableException("Payout setup could not be started. Please try again.");
+				throw new BadGatewayException("Payout setup could not be started. Please try again.");
 			}
 			throw error;
 		}
@@ -935,7 +966,8 @@ export class PaymentsService {
 				: null;
 			await this.userModel.updateOne({ _id: landlordId }, payoutBank ? { $set: { payoutBank } } : { $unset: { payoutBank: 1 } });
 			// Payouts just became possible: send what Seek held now rather than at the next sweep.
-			if (account.charges_enabled) {
+			const ready = canReceive(account);
+			if (ready) {
 				await this.releaseHeldPayouts(new Types.ObjectId(landlordId)).catch((error: Error) =>
 					this.logger.error(`Releasing held payouts failed: ${error.message}`)
 				);
@@ -944,7 +976,7 @@ export class PaymentsService {
 				...none,
 				payoutBank,
 				connected: true,
-				chargesEnabled: account.charges_enabled,
+				chargesEnabled: ready,
 				payoutsEnabled: account.payouts_enabled,
 				detailsSubmitted: account.details_submitted
 			};

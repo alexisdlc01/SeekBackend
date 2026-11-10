@@ -28,7 +28,7 @@ describe("PaymentsService.checkout (Stripe)", () => {
 	let lastPaymentModel: { updateOne: jest.Mock; find?: jest.Mock };
 	const realFetch = global.fetch;
 
-	function setup(account: { charges_enabled: boolean } | null, autopay: boolean, stored: Record<string, unknown> = payment) {
+	function setup(account: { capabilities: { transfers: string } } | null, autopay: boolean, stored: Record<string, unknown> = payment) {
 		calls.length = 0;
 		global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
 			const key = (init?.headers as Record<string, string> | undefined)?.["Idempotency-Key"];
@@ -75,22 +75,22 @@ describe("PaymentsService.checkout (Stripe)", () => {
 	it("refuses a holding deposit once its offer has lapsed, and closes an open offer's session with it", async () => {
 		const holding = { ...payment, kind: PaymentKind.HOLDING_DEPOSIT, tenancy: undefined, application: new Types.ObjectId(), seekFee: 0, payout: 69500 };
 		offer = { stage: "OFFERED", offerExpiresAt: new Date(Date.now() - 1000) };
-		await expect(setup({ charges_enabled: true }, false, holding).checkout(payment._id.toString(), { _id: tenant } as any, {}, "mobile"))
+		await expect(setup({ capabilities: { transfers: "active" } }, false, holding).checkout(payment._id.toString(), { _id: tenant } as any, {}, "mobile"))
 			.rejects.toThrow("no longer open");
 		expect(calls).toHaveLength(0);
 		offer = { stage: "VIEWED", offerExpiresAt: null };
-		await expect(setup({ charges_enabled: true }, false, holding).pay(payment._id.toString(), { _id: tenant } as any)).rejects.toThrow("no longer open");
+		await expect(setup({ capabilities: { transfers: "active" } }, false, holding).pay(payment._id.toString(), { _id: tenant } as any)).rejects.toThrow("no longer open");
 
 		const ends = new Date(Date.now() + 2 * 3_600_000);
 		offer = { stage: "OFFERED", offerExpiresAt: ends };
-		await setup({ charges_enabled: true }, false, holding).checkout(payment._id.toString(), { _id: tenant } as any, {}, "mobile");
+		await setup({ capabilities: { transfers: "active" } }, false, holding).checkout(payment._id.toString(), { _id: tenant } as any, {}, "mobile");
 		const session = calls.find(call => call.url.endsWith("/checkout/sessions"))!.body;
 		expect(Number(session.get("expires_at"))).toBe(Math.floor(ends.getTime() / 60_000) * 60);
 		offer = openOffer;
 	});
 
 	it("only sends the payer back to Seek: web app, app scheme, and Expo Go or localhost outside production", async () => {
-		const service = setup({ charges_enabled: true }, false);
+		const service = setup({ capabilities: { transfers: "active" } }, false);
 		const pay = (successUrl: string) => service.checkout(payment._id.toString(), { _id: tenant } as any, { successUrl }, "mobile");
 		await expect(pay("https://evil.example/phish")).rejects.toThrow("Return URLs must point back to Seek");
 		await expect(pay("exp://192.168.1.20:8081/--/pay?checkout=success")).resolves.toMatchObject({ mode: "stripe" });
@@ -98,8 +98,27 @@ describe("PaymentsService.checkout (Stripe)", () => {
 		await expect(pay("seekapp://pay")).resolves.toMatchObject({ mode: "stripe" });
 	});
 
+	it("sends Expo's seekapp:///pay to Stripe as seekapp://pay, keeping the session id placeholder", async () => {
+		const service = setup({ capabilities: { transfers: "active" } }, false);
+		await service.checkout(payment._id.toString(), { _id: tenant } as any, {
+			successUrl: "seekapp:///pay?checkout=success&payment=p1&session_id={CHECKOUT_SESSION_ID}",
+			cancelUrl: "seekapp:///pay?checkout=cancelled&payment=p1"
+		}, "mobile");
+		const session = calls.filter(call => call.url.endsWith("/checkout/sessions")).pop()!.body;
+		expect(session.get("success_url")).toBe("seekapp://pay?checkout=success&payment=p1&session_id={CHECKOUT_SESSION_ID}");
+		expect(session.get("cancel_url")).toBe("seekapp://pay?checkout=cancelled&payment=p1");
+	});
+
+	it("replaces an open session that returns somewhere else (opened on the web, paid from the app)", async () => {
+		const service = setup({ capabilities: { transfers: "active" } }, false, { ...payment, providerRef: "cs_web" });
+		const result = await service.checkout(payment._id.toString(), { _id: tenant } as any, { successUrl: "seekapp://pay?checkout=success" }, "mobile");
+		expect(calls.some(call => call.url.includes("/checkout/sessions/cs_web")) && calls.some(call => call.url.endsWith("/expire"))).toBe(true);
+		expect(calls.find(call => call.url.endsWith("/checkout/sessions"))!.body.get("success_url")).toBe("seekapp://pay?checkout=success");
+		expect(result).toMatchObject({ sessionId: "cs_test_1" });
+	});
+
 	it("sends the fee and destination to a ready landlord and saves the card for autopay", async () => {
-		const service = setup({ charges_enabled: true }, true);
+		const service = setup({ capabilities: { transfers: "active" } }, true);
 		const result = await service.checkout(payment._id.toString(), { _id: tenant } as any, {}, "mobile");
 
 		expect(result).toMatchObject({ mode: "stripe", sessionId: "cs_test_1" });
@@ -130,12 +149,12 @@ describe("PaymentsService.checkout (Stripe)", () => {
 	});
 
 	it("releases held payments to a ready account, minus Seek's 0.5% fee, tied to the original charge", async () => {
-		const service = setup({ charges_enabled: true }, false);
+		const service = setup({ capabilities: { transfers: "active" } }, false);
 		const held = { ...payment, status: PaymentStatus.PAID, payoutStatus: PayoutStatus.HELD, providerRef: "pi_1" };
 		lastPaymentModel.find = jest.fn().mockReturnValue(lean([held]));
 		global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
 			calls.push({ url, body: new URLSearchParams(String(init?.body ?? "")) });
-			const body = url.includes("/accounts/") ? { charges_enabled: true } : url.includes("/payment_intents/") ? { id: "pi_1", latest_charge: "ch_1" } : { id: "tr_1" };
+			const body = url.includes("/accounts/") ? { capabilities: { transfers: "active" } } : url.includes("/payment_intents/") ? { id: "pi_1", latest_charge: "ch_1" } : { id: "tr_1" };
 			return { ok: true, status: 200, json: async () => body } as Response;
 		}) as never;
 		calls.length = 0;
@@ -152,7 +171,7 @@ describe("PaymentsService.checkout (Stripe)", () => {
 
 	it("keys the session on the whole request, so a changed autopay choice opens a new session", async () => {
 		const sessionKey = async (autopay: boolean) => {
-			await setup({ charges_enabled: true }, autopay).checkout(payment._id.toString(), { _id: tenant } as any, {}, "mobile");
+			await setup({ capabilities: { transfers: "active" } }, autopay).checkout(payment._id.toString(), { _id: tenant } as any, {}, "mobile");
 			return calls.find(call => call.url.endsWith("/checkout/sessions"))!.key;
 		};
 		const withAutopay = await sessionKey(true);
@@ -163,7 +182,7 @@ describe("PaymentsService.checkout (Stripe)", () => {
 
 	it("sends no Seek fee on a holding deposit", async () => {
 		const holding = { ...payment, kind: PaymentKind.HOLDING_DEPOSIT, tenancy: undefined, application: new Types.ObjectId(), seekFee: 0, payout: 69500 };
-		const service = setup({ charges_enabled: true }, false, holding);
+		const service = setup({ capabilities: { transfers: "active" } }, false, holding);
 		jest.spyOn(service as any, "describe").mockResolvedValue("Holding deposit");
 		await service.checkout(payment._id.toString(), { _id: tenant } as any, {}, "mobile");
 		const session = calls.find(call => call.url.endsWith("/checkout/sessions"))!.body;
@@ -195,7 +214,7 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 			const body = url.includes("/checkout/sessions/") ? session
 				: url.includes("/payment_intents/") ? { id: url.split("/payment_intents/")[1], transfer_data: { destination: "acct_123" }, application_fee_amount: 348 }
 				: url.endsWith("/payment_intents") ? { id: "pi_autopay", status: "succeeded" }
-				: url.includes("/accounts/") ? { charges_enabled: true }
+				: url.includes("/accounts/") ? { capabilities: { transfers: "active" } }
 				: { id: "re_1", status: "succeeded" };
 			return { ok: true, status: 200, json: async () => body } as Response;
 		}) as never;
@@ -359,5 +378,84 @@ describe("PaymentsService.landlordMonth", () => {
 
 		expect(month.rows[0]).toMatchObject({ kind: PaymentKind.HOLDING_DEPOSIT, property: "Cotham Flat", refundDue: true });
 		expect(month.holdingDepositsCollected).toBe(15000);
+	});
+});
+
+describe("PaymentsService.connectOnboard (Stripe Accounts v2)", () => {
+	const landlord = new Types.ObjectId();
+	const realFetch = global.fetch;
+	afterAll(() => {
+		global.fetch = realFetch;
+	});
+
+	function setup(respond: (url: string) => { ok: boolean; status: number; body: unknown }) {
+		const calls: { url: string; init: RequestInit }[] = [];
+		global.fetch = jest.fn(async (url: string, init: RequestInit) => {
+			calls.push({ url, init });
+			const { ok, status, body } = respond(url);
+			return { ok, status, json: async () => body } as Response;
+		}) as never;
+		const userModel = {
+			findById: jest.fn().mockReturnValue(lean({ email: "landlord@example.com" })),
+			updateOne: jest.fn().mockReturnValue({ exec: () => Promise.resolve({}) })
+		};
+		const config = { get: (key: string) => (key === "STRIPE_SECRET_KEY" ? "sk_test_x" : undefined) };
+		const service = new PaymentsService(
+			{} as any, {} as any, {} as any, {} as any, userModel as any, {} as any, {} as any, {} as any, config as any, {} as any
+		);
+		return { service, calls, userModel };
+	}
+
+	it("creates a v2 recipient account (JSON, v2 version, idempotent) and returns its onboarding link", async () => {
+		const { service, calls, userModel } = setup((url) => ({
+			ok: true,
+			status: 200,
+			body: url.endsWith("/v2/core/accounts") ? { id: "acct_v2" } : { url: "https://connect.stripe.com/setup/e/acct_v2/x" }
+		}));
+
+		const result = await service.connectOnboard({ _id: landlord } as any);
+
+		expect(result).toEqual({ mode: "stripe", accountId: "acct_v2", url: "https://connect.stripe.com/setup/e/acct_v2/x" });
+		const [create, link] = calls;
+		expect(create.url).toBe("https://api.stripe.com/v2/core/accounts");
+		const headers = create.init.headers as Record<string, string>;
+		expect(headers["Stripe-Version"]).toMatch(/^20\d\d-\d\d-\d\d\.\w+$/);
+		expect(headers["Content-Type"]).toBe("application/json");
+		expect(headers["Idempotency-Key"]).toBe(`seek-connect-${landlord.toString()}`);
+		expect(JSON.parse(String(create.init.body))).toMatchObject({
+			contact_email: "landlord@example.com",
+			dashboard: "express",
+			identity: { country: "gb" },
+			configuration: { recipient: { capabilities: { stripe_balance: { stripe_transfers: { requested: true } } } } }
+		});
+		expect(link.url).toBe("https://api.stripe.com/v2/core/account_links");
+		expect(JSON.parse(String(link.init.body))).toMatchObject({
+			account: "acct_v2",
+			use_case: { type: "account_onboarding", account_onboarding: { configurations: ["recipient"] } }
+		});
+		expect(userModel.updateOne).toHaveBeenCalledWith({ _id: landlord }, { $set: { stripeAccountId: "acct_v2" } });
+	});
+
+	it("says Connect is off only when Stripe says so; any other Stripe error is a 502", async () => {
+		const fail = (code: string, message: string) => setup(() => ({ ok: false, status: 400, body: { error: { code, message } } }));
+
+		await expect(fail("platform_registration_required", "Sign up for Connect").service.connectOnboard({ _id: landlord } as any))
+			.rejects.toMatchObject({ status: 409 });
+		await expect(fail("account_creation_losses_collector_unavailable", "Platform as losses collector").service.connectOnboard({ _id: landlord } as any))
+			.rejects.toMatchObject({ status: 409 });
+		await expect(fail("invalid_request", "Stripe no longer recommends Accounts v1 for new Connect integrations").service.connectOnboard({ _id: landlord } as any))
+			.rejects.toMatchObject({ status: 502 });
+	});
+});
+
+describe("StripeClient.retrieveAccount", () => {
+	it("still reads accounts through the v1 endpoint (works for v1 and v2 ids)", async () => {
+		const realFetch = global.fetch;
+		const fetchMock = jest.fn(async () => ({ ok: true, status: 200, json: async () => ({ id: "acct_old" }) }) as Response);
+		global.fetch = fetchMock as never;
+		const { StripeClient } = await import("./stripe");
+		await new StripeClient("sk_test_x").retrieveAccount("acct_old");
+		expect((fetchMock.mock.calls[0] as unknown[])[0]).toBe("https://api.stripe.com/v1/accounts/acct_old");
+		global.fetch = realFetch;
 	});
 });

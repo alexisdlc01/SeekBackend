@@ -106,6 +106,7 @@ export class PaymentsController {
 	@ApiOperation({ summary: "Start (or resume) Stripe payout setup. Returns the Stripe-hosted onboarding link." })
 	@ApiResponse({ status: 200, type: ConnectOnboardResponseDto })
 	@ApiResponse({ status: 409, type: ErrorDto, description: "Stripe Connect is not enabled on Seek's Stripe account." })
+	@ApiResponse({ status: 502, type: ErrorDto, description: "Stripe rejected the request (details in the server log)." })
 	@ApiResponse({ status: 503, type: ErrorDto })
 	async connectOnboard(@CurrentUser() user: User) {
 		return this.paymentsService.connectOnboard(user);
