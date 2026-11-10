@@ -22,7 +22,7 @@ import { TenanciesService } from "../tenancies/tenancies.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { NotificationKind } from "../notifications/notification-kind.enum";
 import { notificationTarget, NotificationTargetKind } from "../notifications/links";
-import { buildPassport, PassportDocumentInput, withoutFiles } from "../users/passport";
+import { buildPassport, PassportDocumentInput, StudentEmailProof, withoutFiles } from "../users/passport";
 import { compareForLandlord, householdReadiness, ReadinessCriteria } from "./readiness";
 import { parseUniversityDetails } from "./university-details";
 import { OFFER_WINDOW_DAYS } from "./offer";
@@ -136,6 +136,7 @@ export class ApplicationService {
 	async delete(
 		applicationId: string,
 	): Promise<void> {
+		if (Types.ObjectId.isValid(applicationId)) await this.sharesService.revokeForApplication(applicationId);
 		await this.applicationModel.deleteOne({
 			_id: applicationId
 		});
@@ -174,7 +175,7 @@ export class ApplicationService {
 				this.listingService.findListingById(listingId.toString()).catch(() => null),
 				this.applicationModel
 					.findById(application._id)
-					.populate({ path: "applicants", select: "name documents" })
+					.populate({ path: "applicants", select: "name documents studentVerifiedAt universityEmail" })
 					.lean()
 					.exec(),
 			]);
@@ -207,17 +208,19 @@ export class ApplicationService {
 	 * needs (no names, labels or file links), so entries' passports are partial.
 	 */
 	private async queueFor(listingId: Types.ObjectId | string, now: Date) {
-		const [open, listing] = await Promise.all([
+		const [open, listing, letTo] = await Promise.all([
 			this.applicationModel
 				.find({ listing: listingId, stage: { $in: LANDLORD_OPEN_STAGES } })
-				.populate({ path: "applicants", select: "documents.type documents.status documents.expiresAt" })
+				.populate({ path: "applicants", select: "documents.type documents.status documents.expiresAt studentVerifiedAt" })
 				.sort({ sentAt: 1, createdAt: 1 })
 				.lean()
 				.exec(),
 			this.listingService.findListingById(listingId.toString()).catch(() => null),
+			this.applicationModel.exists({ listing: listingId, stage: { $in: [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] } }),
 		]);
 		const all = (open ?? []).map(application => this.householdEntry(application, listing, now));
-		return { all, qualified: all.filter(entry => entry.qualified), listing };
+		// A let property has no queue: nobody waiting on it is in line any more.
+		return { all, qualified: letTo ? [] : all.filter(entry => entry.qualified), listing };
 	}
 
 	/** One household's readiness, with passports stripped of file links. Applicants must be populated with name and documents. */
@@ -226,11 +229,11 @@ export class ApplicationService {
 		listing: Awaited<ReturnType<ListingsService["findListingById"]>> | null,
 		now: Date,
 	) {
-		const members = (application.applicants as {
+		const members = (application.applicants as ({
 			_id: Types.ObjectId;
 			name?: string;
 			documents?: PassportDocumentInput[];
-		}[]).filter(member => member && typeof member === "object" && "_id" in member);
+		} & StudentEmailProof)[]).filter(member => member && typeof member === "object" && "_id" in member);
 		const household = householdReadiness(members, listing?.numOfPeople, now, listing?.criteria);
 		return {
 			id: application._id.toString(),
@@ -239,7 +242,7 @@ export class ApplicationService {
 			members: members.map(member => ({
 				user: member._id.toString(),
 				name: member.name,
-				passport: withoutFiles(buildPassport(member.documents, now)),
+				passport: withoutFiles(buildPassport(member.documents, now, member)),
 				shareExpiresAt: null,
 				universityDetails: null,
 			})),
@@ -258,7 +261,7 @@ export class ApplicationService {
 				// Everything the household has sent, from SENT through to SIGNED.
 				stage: { $ne: ApplicationStage.NOT_SENT },
 			})
-			.populate({ path: "applicants", select: "name email profilePicUrl documents universityDetails" })
+			.populate({ path: "applicants", select: "name email profilePicUrl documents universityDetails studentVerifiedAt universityEmail" })
 			.sort({ createdAt: -1 })
 			.exec() ?? [];
 		if (applications.length === 0) return [];
@@ -276,20 +279,22 @@ export class ApplicationService {
 
 		return applications
 			.map(application => {
-				const members = (application.applicants as unknown as {
+				const members = (application.applicants as unknown as ({
 					_id: Types.ObjectId;
 					name?: string;
 					documents?: PassportDocumentInput[];
 					universityDetails?: string;
-				}[]).filter(member => member && typeof member === "object" && "_id" in member);
+				} & StudentEmailProof)[]).filter(member => member && typeof member === "object" && "_id" in member);
 				const household = householdReadiness(members, listing?.numOfPeople, now, listing?.criteria);
+				// Document access ends when the application closes, whatever other share is still open.
+				const closed = application.stage === ApplicationStage.REJECTED;
 				return this.toDto(application, {
 					readiness: household.readiness,
 					qualified: household.qualified,
 					criteria: household.criteria,
 					members: members.map(member => {
-						const shareExpiresAt = shares.get(member._id.toString()) ?? null;
-						const passport = buildPassport(member.documents, now);
+						const shareExpiresAt = closed ? null : shares.get(member._id.toString()) ?? null;
+						const passport = buildPassport(member.documents, now, member);
 						return {
 							user: member._id.toString(),
 							name: member.name,
@@ -393,6 +398,7 @@ export class ApplicationService {
 				throw new BadRequestException("Only open applications can be accepted.");
 			}
 			await this.assertNextInQueue(current, new Date());
+			await this.tenanciesService.assertNoCurrentTenancy(current.applicants, current.listing);
 		}
 		const application = await this.applicationModel
 			.findOneAndUpdate({
@@ -408,6 +414,7 @@ export class ApplicationService {
 		// Approved straight from an offer: unpaid holding deposits can't be paid any more.
 		if (current.stage === ApplicationStage.OFFERED) await this.dropUnpaidHoldingDeposits(application._id);
 		const tenancy = await this.tenanciesService.createFromApplication(application);
+		await this.closeOthers(application);
 		return { tenancy: tenancy._id.toString() };
 	}
 
@@ -571,6 +578,7 @@ export class ApplicationService {
 			).exec();
 			if (!reopened) continue;
 			expired += 1;
+			await this.sharesService.revokeForApplication(application._id);
 			await this.dropUnpaidHoldingDeposits(application._id);
 			const key = application.offerExpiresAt?.toISOString();
 			const queue = await this.queueFor(application.listing, now);
@@ -625,6 +633,7 @@ export class ApplicationService {
 	async acceptOffer(applicationId: string): Promise<{ tenancy: string }> {
 		const offered = await this.applicationModel.findById(applicationId).lean().exec();
 		if (offered) await this.assertNotLet(offered);
+		if (offered?.stage === ApplicationStage.OFFERED) await this.tenanciesService.assertNoCurrentTenancy(offered.applicants, offered.listing);
 		const application = await this.applicationModel
 			.findOneAndUpdate({
 				_id: applicationId,
@@ -642,10 +651,32 @@ export class ApplicationService {
 			}
 			throw new BadRequestException("There is no open offer to accept. It may have expired.");
 		}
+		// Re-check after the flip: two households accepting the same listing at once both pass the check above.
+		try {
+			await this.assertNotLet(application);
+		} catch (error) {
+			await this.applicationModel.updateOne({ _id: application._id, stage: ApplicationStage.ACCEPTED }, { $set: { stage: ApplicationStage.OFFERED } });
+			throw error;
+		}
 		// The offer is taken: a holding deposit nobody paid can't be paid any more.
 		await this.dropUnpaidHoldingDeposits(application._id);
 		const tenancy = await this.tenanciesService.createFromApplication(application);
+		await this.closeOthers(application);
 		return { tenancy: tenancy._id.toString() };
+	}
+
+	/** The property is let: every other open application on it is declined, so nobody waits forever. */
+	private async closeOthers(application: Pick<Application, "listing"> & { _id: Types.ObjectId }) {
+		const others = await this.applicationModel
+			.find({ listing: application.listing, _id: { $ne: application._id }, stage: { $in: LANDLORD_OPEN_STAGES } }, { _id: 1 })
+			.lean()
+			.exec();
+		for (const other of others) {
+			await this.reject(other._id.toString(), "Property let").catch(error => {
+				// Already closed by someone else in the meantime.
+				if (!(error instanceof BadRequestException)) throw error;
+			});
+		}
 	}
 
 	/**
@@ -689,6 +720,7 @@ export class ApplicationService {
 			throw new BadRequestException("Only open applications can be declined.");
 		}
 		const listing = application.listing as unknown as { _id: Types.ObjectId; propertyTitle?: string; streetAddress?: string } | null;
+		await this.sharesService.revokeForApplication(application._id);
 		await this.dropUnpaidHoldingDeposits(application._id);
 		// shortcut: no automatic refund yet; the landlord is told and the row flagged until a refund flow exists.
 		// Rows left here are PAID or kept because Stripe already took the money (webhook not in yet), so flag both.
@@ -753,7 +785,7 @@ export class ApplicationService {
 	private async notifyIfQualified(application: HydratedDocument<Application>): Promise<void> {
 		const populated = await this.applicationModel
 			.findById(application._id)
-			.populate({ path: "applicants", select: "name documents" })
+			.populate({ path: "applicants", select: "name documents studentVerifiedAt universityEmail" })
 			.populate({ path: "listing", select: "propertyTitle streetAddress numOfPeople criteria" })
 			.lean()
 			.exec();
@@ -899,6 +931,7 @@ export class ApplicationService {
 			{ _id: applicationId },
 			{ $pull: { applicants: member } },
 		);
+		await this.sharesService.revokeForApplication(applicationId, [member]);
 		await this.converstaionModel.updateOne(
 			{ _id: application.conversation },
 			{ $pull: { users: member } }

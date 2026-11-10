@@ -1,3 +1,5 @@
+import { ROLE_KEY } from "../auth/decorators/role.decorator";
+import { Role } from "../auth/role.enum";
 import { UsersController } from "./users.controller";
 
 describe("UsersController", () => {
@@ -10,7 +12,7 @@ describe("UsersController", () => {
 		usersService = {
 			updateProfile: jest.fn()
 		};
-		controller = new UsersController(usersService as never, {} as never, {} as never);
+		controller = new UsersController(usersService as never, {} as never, {} as never, {} as never);
 	});
 
 	it("should be defined", () => {
@@ -31,5 +33,9 @@ describe("UsersController", () => {
 			{ name: "Updated" },
 			"STUDENT"
 		);
+	});
+
+	it("keeps the pending-documents queue staff only", () => {
+		expect(Reflect.getMetadata(ROLE_KEY, UsersController.prototype.listPendingDocuments)).toEqual([Role.SUPERUSER]);
 	});
 });

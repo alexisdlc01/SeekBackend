@@ -11,8 +11,11 @@ import { UsersRepository } from "./users.repository";
 import { DocumentShare, DocumentShareSchema } from "./shares/document-share.schema";
 import { DocumentSharesService } from "./shares/document-shares.service";
 import { AccountService } from "./account.service";
+import { StudentVerificationService } from "./student-verification.service";
+import { MailService } from "../auth/mail.service";
 import { Tenancy, TenancySchema } from "../tenancies/tenancy.schema";
 import { Payment, PaymentSchema } from "../payments/payment.schema";
+import { UploadModule } from "../upload/upload.module";
 
 @Module({
 	imports: [
@@ -29,7 +32,8 @@ import { Payment, PaymentSchema } from "../payments/payment.schema";
 			{ name: Payment.name, schema: PaymentSchema }
 		]),
 		SharedModule,
-		RedisModule
+		RedisModule,
+		UploadModule
 	],
 	controllers: [UsersController],
 	providers: [
@@ -38,7 +42,10 @@ import { Payment, PaymentSchema } from "../payments/payment.schema";
 		PresenceService,
 		UsersRepository,
 		DocumentSharesService,
-		AccountService
+		AccountService,
+		StudentVerificationService,
+		// Own instance (stateless Mailgun client): AuthModule imports UsersModule, so importing it back would be circular.
+		MailService
 	],
 	exports: [UsersService, UsersRepository, DocumentSharesService]
 })

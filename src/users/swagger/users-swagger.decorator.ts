@@ -10,6 +10,7 @@ import { SetProfilePicDto } from "../dto/set-profile-pic.dto";
 import { SetUsernameDto } from "../dto/set-username.dto";
 import { DocumentTypesDto } from "../dto/provided-docs.dto";
 import { UpdateUserProfileDto } from "../dto/update-user-profile.dto";
+import { PendingDocumentDto } from "../dto/pending-document.dto";
 
 export const ApiGetUserDocs = () =>
 	applyDecorators(
@@ -158,4 +159,11 @@ export const ApiSetDocumentStatusDocs = () =>
 		ApiResponse({ status: 200, type: PassportDto }),
 		ApiResponse({ status: 400, type: ErrorDto }),
 		ApiResponse({ status: 404, type: ErrorDto })
+	);
+
+export const ApiListPendingDocumentsDocs = () =>
+	applyDecorators(
+		ApiOperation({ summary: "Seek Passport uploads waiting for a check, oldest first (Seek staff). Record the result with PATCH users/{id}/documents/{type}/status." }),
+		ApiResponse({ status: 200, type: [PendingDocumentDto] }),
+		ApiResponse({ status: 403, type: ErrorDto })
 	);

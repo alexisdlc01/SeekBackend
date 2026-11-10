@@ -47,7 +47,7 @@ describe("ApplicationService", () => {
 	let conversationAccessService: {
 		assertCanAccess: jest.Mock;
 	};
-	let sharesService: { shareForApplication: jest.Mock };
+	let sharesService: { shareForApplication: jest.Mock; revokeForApplication: jest.Mock };
 	let service: ApplicationService;
 
 	beforeEach(() => {
@@ -71,6 +71,7 @@ describe("ApplicationService", () => {
 		};
 		sharesService = {
 			shareForApplication: jest.fn().mockResolvedValue(undefined),
+			revokeForApplication: jest.fn().mockResolvedValue(undefined),
 		};
 		service = new ApplicationService(
 			applicationModel as never,
@@ -531,7 +532,7 @@ describe("ApplicationService.getAllByListing", () => {
 
 		expect(query.populate).toHaveBeenCalledWith({
 			path: "applicants",
-			select: "name email profilePicUrl documents universityDetails"
+			select: "name email profilePicUrl documents universityDetails studentVerifiedAt universityEmail"
 		});
 		// Ids must survive serialisation as the *same* ids (class-transformer
 		// otherwise re-instantiates ObjectIds into fresh random ones).
@@ -563,6 +564,7 @@ describe("ApplicationService pipeline", () => {
 	let listingService: { findListingById: jest.Mock };
 	let notifications: { notifyMany: jest.Mock; notify: jest.Mock };
 	let paymentModel: Record<string, jest.Mock>;
+	let sharesService: { revokeForApplication: jest.Mock };
 	let service: ApplicationService;
 
 	const exec = (value: unknown) => ({ exec: jest.fn().mockResolvedValue(value), populate: jest.fn().mockReturnThis() });
@@ -574,6 +576,7 @@ describe("ApplicationService pipeline", () => {
 			countDocuments: jest.fn().mockResolvedValue(0),
 			exists: jest.fn().mockResolvedValue(null),
 			updateOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({}) }),
+			find: jest.fn().mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue([]) }) }),
 		};
 		paymentModel = {
 			deleteMany: jest.fn().mockResolvedValue({}),
@@ -591,14 +594,15 @@ describe("ApplicationService pipeline", () => {
 			}),
 		};
 		notifications = { notifyMany: jest.fn().mockResolvedValue(undefined), notify: jest.fn() };
+		sharesService = { revokeForApplication: jest.fn().mockResolvedValue(undefined) };
 		service = new ApplicationService(
 			applicationModel as never,
 			{} as never,
 			listingService as never,
 			{} as never,
 			{} as never,
-			{} as never,
-			{ createFromApplication: jest.fn().mockResolvedValue({ _id: new Types.ObjectId() }) } as never,
+			sharesService as never,
+			{ createFromApplication: jest.fn().mockResolvedValue({ _id: new Types.ObjectId() }), assertNoCurrentTenancy: jest.fn() } as never,
 			notifications as never,
 			paymentModel as never,
 		);
@@ -677,6 +681,20 @@ describe("ApplicationService pipeline", () => {
 			await expect(service.offer(applicationId.toString())).rejects.toThrow(ConflictException);
 			expect(applicationModel.exists.mock.calls[0][0].stage).toEqual({ $in: [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] });
 			expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
+		});
+
+		it("declines the other open applications once the property is let", async () => {
+			const other = new Types.ObjectId();
+			queue({ id: applicationId, qualified: true });
+			applicationModel.find.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue([{ _id: other }]) }) });
+			applicationModel.findOneAndUpdate
+				.mockReturnValueOnce(exec(stored(ApplicationStage.ACCEPTED)))
+				.mockReturnValueOnce(exec(stored(ApplicationStage.REJECTED, { _id: other, rejectReason: "Property let" })));
+			await service.approve(applicationId.toString());
+			const [filter, update] = applicationModel.findOneAndUpdate.mock.calls[1];
+			expect(filter._id).toBe(other.toString());
+			expect(update.$set).toEqual({ stage: ApplicationStage.REJECTED, rejectReason: "Property let" });
+			expect(sharesService.revokeForApplication).toHaveBeenCalledWith(other);
 		});
 
 		it("drops unpaid holding deposits when approving straight from an offer", async () => {
@@ -799,6 +817,20 @@ describe("ApplicationService pipeline", () => {
 		expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
 	});
 
+	it("rolls back an acceptance that raced another household's on the same listing", async () => {
+		applicationModel.findById.mockReturnValue({ lean: () => exec(stored(ApplicationStage.OFFERED, { offerExpiresAt: future })) });
+		applicationModel.exists.mockResolvedValueOnce(null).mockResolvedValueOnce({ _id: new Types.ObjectId() });
+		applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.ACCEPTED)));
+		const updateOne = jest.fn().mockResolvedValue({});
+		(applicationModel as unknown as { updateOne: jest.Mock }).updateOne = updateOne;
+		await expect(service.acceptOffer(applicationId.toString())).rejects.toThrow(ConflictException);
+		expect(updateOne).toHaveBeenCalledWith(
+			{ _id: applicationId, stage: ApplicationStage.ACCEPTED },
+			{ $set: { stage: ApplicationStage.OFFERED } },
+		);
+		expect(paymentModel.deleteMany).not.toHaveBeenCalled();
+	});
+
 	it("stores the reason and tells the household when an application is declined", async () => {
 		applicationModel.findOneAndUpdate.mockReturnValue(
 			exec(stored(ApplicationStage.REJECTED, { rejectReason: "Room filled" })),
@@ -807,6 +839,12 @@ describe("ApplicationService pipeline", () => {
 		const [, update] = applicationModel.findOneAndUpdate.mock.calls[0];
 		expect(update.$set).toEqual({ stage: ApplicationStage.REJECTED, rejectReason: "Room filled" });
 		expect(notifications.notifyMany.mock.calls[0][0][0].body).toContain("Room filled");
+	});
+
+	it("ends the landlord's document access when an application is declined", async () => {
+		applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.REJECTED)));
+		await service.reject(applicationId.toString());
+		expect(sharesService.revokeForApplication).toHaveBeenCalledWith(applicationId);
 	});
 
 	it("on decline drops unpaid holding deposits, flags paid ones for refund and tells the landlord", async () => {
@@ -856,7 +894,7 @@ describe("ApplicationService pipeline", () => {
 		applicationModel.findById.mockReturnValue(exec(stored(ApplicationStage.SENT)));
 		applicationModel.countDocuments.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
 		await expect(service.scheduleViewing(applicationId.toString(), future.toISOString(), student)).rejects.toThrow("already booked");
-		expect(applicationModel.updateOne).toHaveBeenCalledWith(
+		expect((applicationModel as unknown as { updateOne: jest.Mock }).updateOne).toHaveBeenCalledWith(
 			{ _id: applicationId, viewingAt: future },
 			{ $set: { viewingAt: null, stage: ApplicationStage.SENT } },
 		);

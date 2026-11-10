@@ -1,4 +1,6 @@
 import { createHmac } from "crypto";
+import { BadRequestException } from "@nestjs/common";
+import { PaymentsService } from "./payments.service";
 import { toStripeForm, verifyStripeSignature } from "./stripe";
 
 describe("Stripe helpers", () => {
@@ -34,5 +36,16 @@ describe("Stripe helpers", () => {
 		expect(form.get("automatic_payment_methods[enabled]")).toBe("true");
 		expect(form.get("transfer_data[destination]")).toBe("acct_123");
 		expect(form.get("metadata[paymentId]")).toBe("abc");
+	});
+
+	it("answers 400 to a webhook signed more than 5 minutes ago, with the real clock", async () => {
+		const service = new PaymentsService({} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, { get: () => secret } as any, {} as any);
+		const body = Buffer.from(payload);
+		const header = (age: number) => {
+			const t = Math.floor(Date.now() / 1000) - age;
+			return `t=${t},v1=${sign(t)}`;
+		};
+		await expect(service.handleWebhook(body, header(301))).rejects.toThrow(BadRequestException);
+		await expect(service.handleWebhook(body, header(299))).resolves.toBeDefined();
 	});
 });

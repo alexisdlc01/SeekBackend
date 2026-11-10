@@ -28,7 +28,8 @@ export const ApiLoginDocs = () =>
 		ApiResponse({
 			status: 401,
 			type: ErrorDto
-		})
+		}),
+		ApiResponse({ status: 403, type: ErrorDto, description: "Landlord account signing in from the mobile app (platform: mobile)." })
 	);
 
 export const ApiSignupDocs = () =>

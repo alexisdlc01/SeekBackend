@@ -40,13 +40,17 @@ export class Payment {
 	@Prop({ required: true, min: 0 })
 	amount: number;
 
-	@ApiProperty({ description: "Seek's 0.5% fee, in pence, taken from the landlord's payout." })
+	@ApiProperty({ description: "Seek's 1% fee, in pence, taken from the landlord's payout." })
 	@Prop({ required: true, min: 0 })
 	seekFee: number;
 
 	@ApiProperty({ description: "What the landlord receives, in pence." })
 	@Prop({ required: true, min: 0 })
 	payout: number;
+
+	@ApiProperty({ required: false, description: "Paid holding deposit counted toward this rent (Tenant Fees Act), pence. `amount` is already reduced by it." })
+	@Prop({ default: 0, min: 0 })
+	holdingDepositCredit?: number;
 
 	@ApiProperty({ description: "Months of rent this payment covers." })
 	@Prop({ default: 1, min: 1 })

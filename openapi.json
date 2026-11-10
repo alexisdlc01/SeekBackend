@@ -23,6 +23,99 @@
         ]
       }
     },
+    "/users/me/student-email": {
+      "post": {
+        "operationId": "UsersController_sendStudentEmailCode",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentEmailDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Code sent."
+          },
+          "400": {
+            "description": "Not an accepted university domain (only @st-andrews.ac.uk for now).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Send a 6-digit code to your university email (valid 15 minutes) to get the verified student badge.",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/users/me/student-email/verify": {
+      "post": {
+        "operationId": "UsersController_verifyStudentEmail",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentEmailCodeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentVerificationResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Wrong, expired or used-up code, or an address that can't be verified on this account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Check the code. 5 wrong tries and you need a new code.",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
     "/users/me": {
       "delete": {
         "operationId": "UsersController_deleteMe",
@@ -656,6 +749,66 @@
         ]
       }
     },
+    "/users/me/passport/references": {
+      "post": {
+        "operationId": "UsersController_requestReference",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestReferenceDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PassportDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid type, name or email, or your own address.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The email could not be sent; nothing was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Invite a UK guarantor or ask a previous landlord, letting agent or academic for a reference. Seek emails them (replies go to you; a connected inbox files a reference into your passport) and the passport row reads PENDING with source \"request\" until a document arrives. Asking again for the same type replaces the request.",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
     "/users/me/passport": {
       "get": {
         "operationId": "UsersController_getPassport",
@@ -778,6 +931,49 @@
           }
         },
         "summary": "Stop a landlord from opening the student's documents.",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/users/documents/pending": {
+      "get": {
+        "operationId": "UsersController_listPendingDocuments",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PendingDocumentDto"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Seek Passport uploads waiting for a check, oldest first (Seek staff). Record the result with PATCH users/{id}/documents/{type}/status.",
         "tags": [
           "Users"
         ],
@@ -968,6 +1164,162 @@
         ]
       }
     },
+    "/upload/presign": {
+      "get": {
+        "operationId": "UploadController_getPresignedUrl",
+        "parameters": [
+          {
+            "name": "fileType",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "image/jpeg",
+                "image/png",
+                "image/webp",
+                "image/gif",
+                "image/heic",
+                "image/heif",
+                "application/pdf"
+              ]
+            }
+          },
+          {
+            "name": "folder",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "public",
+                "private"
+              ]
+            }
+          },
+          {
+            "name": "filename",
+            "required": true,
+            "in": "query",
+            "description": "Original filename. Informational only — the stored object key is generated server-side.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fileSize",
+            "required": true,
+            "in": "query",
+            "description": "Exact size of the file in bytes. Must be at most 15728640.",
+            "schema": {
+              "maximum": 15728640,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresignResDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Upload"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/upload/access": {
+      "get": {
+        "operationId": "UploadController_download",
+        "parameters": [
+          {
+            "name": "key",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Upload"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
     "/auth/login": {
       "post": {
         "operationId": "AuthController_login",
@@ -1003,6 +1355,16 @@
           },
           "401": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Landlord account signing in from the mobile app (platform: mobile).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1681,162 +2043,6 @@
         },
         "tags": [
           "Auth"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/upload/presign": {
-      "get": {
-        "operationId": "UploadController_getPresignedUrl",
-        "parameters": [
-          {
-            "name": "fileType",
-            "required": true,
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "image/jpeg",
-                "image/png",
-                "image/webp",
-                "image/gif",
-                "image/heic",
-                "image/heif",
-                "application/pdf"
-              ]
-            }
-          },
-          {
-            "name": "folder",
-            "required": true,
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "public",
-                "private"
-              ]
-            }
-          },
-          {
-            "name": "filename",
-            "required": true,
-            "in": "query",
-            "description": "Original filename. Informational only — the stored object key is generated server-side.",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "fileSize",
-            "required": true,
-            "in": "query",
-            "description": "Exact size of the file in bytes. Must be at most 15728640.",
-            "schema": {
-              "maximum": 15728640,
-              "type": "number"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PresignResDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "tags": [
-          "Upload"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/upload/access": {
-      "get": {
-        "operationId": "UploadController_download",
-        "parameters": [
-          {
-            "name": "key",
-            "required": true,
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "tags": [
-          "Upload"
         ],
         "security": [
           {
@@ -4260,6 +4466,75 @@
         ]
       }
     },
+    "/tenancies/{id}/energy-allowance": {
+      "patch": {
+        "operationId": "TenanciesController_energyAllowance",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateEnergyAllowanceDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenancy"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Set or remove the household's monthly energy fair-use allowance.",
+        "tags": [
+          "Tenancies"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
     "/tenancies/{id}/deposit-received": {
       "patch": {
         "operationId": "TenanciesController_depositReceived",
@@ -4720,6 +4995,38 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Flags"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/flags/mine": {
+      "get": {
+        "operationId": "FlagsController_mine",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The caller's own reports, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Flag"
+                  }
                 }
               }
             }
@@ -5841,6 +6148,16 @@
               }
             }
           },
+          "502": {
+            "description": "Stripe rejected the request (details in the server log).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
           "503": {
             "description": "",
             "content": {
@@ -5967,7 +6284,7 @@
             }
           }
         },
-        "summary": "Pay with Stripe's hosted Checkout page. Returns its url; Seek's 0.5% fee goes to Seek, the rest to the landlord's connected account.",
+        "summary": "Pay with Stripe's hosted Checkout page. Returns its url; Seek's 1% fee goes to Seek, the rest to the landlord's connected account.",
         "tags": [
           "Payments"
         ],
@@ -7306,16 +7623,17 @@
       }
     },
     "schemas": {
-      "DeleteAccountResultDto": {
+      "StudentEmailDto": {
         "type": "object",
         "properties": {
-          "deletedAt": {
+          "email": {
             "type": "string",
-            "format": "date-time"
+            "example": "abc12@st-andrews.ac.uk",
+            "description": "University address. Only @st-andrews.ac.uk for now."
           }
         },
         "required": [
-          "deletedAt"
+          "email"
         ]
       },
       "ErrorDto": {
@@ -7340,6 +7658,46 @@
         "required": [
           "statusCode",
           "message"
+        ]
+      },
+      "StudentEmailCodeDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "example": "123456"
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "StudentVerificationResultDto": {
+        "type": "object",
+        "properties": {
+          "studentVerified": {
+            "type": "boolean"
+          },
+          "university": {
+            "type": "string",
+            "example": "University of St Andrews"
+          }
+        },
+        "required": [
+          "studentVerified",
+          "university"
+        ]
+      },
+      "DeleteAccountResultDto": {
+        "type": "object",
+        "properties": {
+          "deletedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "deletedAt"
         ]
       },
       "TeamMemberDto": {
@@ -7649,6 +8007,15 @@
               "LANDLORD_AGENCY"
             ]
           },
+          "studentVerified": {
+            "type": "boolean",
+            "description": "Proved a university email address (student badge)."
+          },
+          "university": {
+            "type": "string",
+            "nullable": true,
+            "description": "University behind the badge, e.g. \"University of St Andrews\"."
+          },
           "profilePicUrl": {
             "type": "string"
           },
@@ -7696,6 +8063,8 @@
           "name",
           "email",
           "role",
+          "studentVerified",
+          "university",
           "profilePicUrl",
           "isVerified",
           "lastSeen"
@@ -7823,6 +8192,35 @@
           }
         }
       },
+      "RequestReferenceDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "GUARANTOR_AGREEMENT",
+              "LANDLORD_REFERENCE",
+              "AGENT_REFERENCE",
+              "RECOMMENDATION"
+            ],
+            "description": "GUARANTOR_AGREEMENT invites a UK guarantor; the others ask a previous landlord, letting agent or academic for a reference."
+          },
+          "name": {
+            "type": "string",
+            "example": "Aisha Rahman",
+            "description": "Guarantor or referee name."
+          },
+          "email": {
+            "type": "string",
+            "example": "aisha@example.com"
+          }
+        },
+        "required": [
+          "type",
+          "name",
+          "email"
+        ]
+      },
       "PassportItemDto": {
         "type": "object",
         "properties": {
@@ -7879,6 +8277,27 @@
             "type": "object",
             "nullable": true,
             "description": "Only for the owner or a viewer with an active share."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "document",
+              "university email",
+              "request"
+            ],
+            "nullable": true,
+            "description": "Where the item came from. Student status can come from a confirmed university email; \"request\" means Seek emailed a guarantor or referee and is waiting on their reply (status PENDING)."
+          },
+          "detail": {
+            "type": "string",
+            "nullable": true,
+            "description": "E.g. the confirmed university email, or the name of the guarantor or referee asked. Only for the owner or a viewer with an active share."
+          },
+          "requestedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When Seek emailed the guarantor or referee (source \"request\" only)."
           }
         },
         "required": [
@@ -8057,6 +8476,57 @@
           "active"
         ]
       },
+      "PendingDocumentDto": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "email": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "IDENTIFICATION",
+              "PROOF_OF_INCOME",
+              "GUARANTOR_AGREEMENT",
+              "LANDLORD_REFERENCE",
+              "CHARACTER_REFERENCE",
+              "PASSPORT",
+              "VISA",
+              "RIGHT_TO_RENT",
+              "STUDENT_STATUS",
+              "CAS_LETTER",
+              "PROOF_OF_FUNDS",
+              "AGENT_REFERENCE",
+              "RECOMMENDATION"
+            ]
+          },
+          "uploadedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "url": {
+            "type": "string",
+            "nullable": true,
+            "description": "Signed link to open the file, valid 60 seconds. Null if the file has no private key."
+          }
+        },
+        "required": [
+          "userId",
+          "name",
+          "email",
+          "type",
+          "uploadedAt",
+          "url"
+        ]
+      },
       "UpdateDocumentStatusDto": {
         "type": "object",
         "properties": {
@@ -8119,6 +8589,25 @@
         "required": [
           "documentType",
           "url",
+          "key"
+        ]
+      },
+      "PresignResDto": {
+        "type": "object",
+        "properties": {
+          "uploadUrl": {
+            "type": "string"
+          },
+          "fileUrl": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "uploadUrl",
+          "fileUrl",
           "key"
         ]
       },
@@ -8242,25 +8731,6 @@
         "required": [
           "userId",
           "token"
-        ]
-      },
-      "PresignResDto": {
-        "type": "object",
-        "properties": {
-          "uploadUrl": {
-            "type": "string"
-          },
-          "fileUrl": {
-            "type": "string"
-          },
-          "key": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "uploadUrl",
-          "fileUrl",
-          "key"
         ]
       },
       "Step4ItemDto": {
@@ -9923,11 +10393,31 @@
           "depositAmount": {
             "type": "number",
             "description": "Correct the deposit per tenant, in pence."
+          },
+          "energyAllowance": {
+            "type": "number",
+            "nullable": true,
+            "description": "Energy fair-use allowance for the household, in pence per month. null removes it.",
+            "example": 20000
           }
         },
         "required": [
           "depositScheme",
           "depositReference"
+        ]
+      },
+      "UpdateEnergyAllowanceDto": {
+        "type": "object",
+        "properties": {
+          "energyAllowance": {
+            "type": "number",
+            "nullable": true,
+            "description": "Energy fair-use allowance for the household, in pence per month. null removes it.",
+            "example": 20000
+          }
+        },
+        "required": [
+          "energyAllowance"
         ]
       },
       "DepositReceivedDto": {
@@ -10122,6 +10612,15 @@
           "resolutionDate": {
             "format": "date-time",
             "type": "string"
+          },
+          "supportResponse": {
+            "type": "string",
+            "nullable": true,
+            "description": "Seek support's reply to the reporter."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
           }
         },
         "required": [
@@ -10130,7 +10629,8 @@
           "category",
           "reportedUser",
           "createdBy",
-          "text"
+          "text",
+          "createdAt"
         ]
       },
       "ResolveFlagDto": {
@@ -10138,6 +10638,10 @@
         "properties": {
           "status": {
             "type": "string"
+          },
+          "supportResponse": {
+            "type": "string",
+            "description": "Reply shown to the reporter."
           }
         },
         "required": [
@@ -10664,6 +11168,10 @@
             "type": "number",
             "description": "What the tenant pays, in pence."
           },
+          "holdingDepositCredit": {
+            "type": "number",
+            "description": "Paid holding deposit counted toward this rent (Tenant Fees Act), pence. `amount` is already reduced by it."
+          },
           "coversMonths": {
             "type": "number",
             "description": "Months of rent this payment covers."
@@ -10787,6 +11295,10 @@
               "unavailable"
             ]
           },
+          "autopayCardSaved": {
+            "type": "boolean",
+            "description": "True once a card is saved for autopay (Stripe charges it off-session)."
+          },
           "upcoming": {
             "description": "Next payments due (up to 3).",
             "type": "array",
@@ -10803,6 +11315,7 @@
           "allowedFrequencies",
           "restrictionReason",
           "mode",
+          "autopayCardSaved",
           "upcoming"
         ]
       },
@@ -10909,11 +11422,15 @@
           },
           "fee": {
             "type": "number",
-            "description": "Seek's 0.5% fee on this payment, pence."
+            "description": "Seek's 1% fee on this payment, pence."
           },
           "payout": {
             "type": "number",
             "description": "What the landlord receives for this payment, pence."
+          },
+          "holdingDepositCredit": {
+            "type": "number",
+            "description": "The tenant's paid holding deposit counted toward this rent, pence (0 if none). `amount` is already reduced by it."
           },
           "nextPayout": {
             "type": "string",
@@ -10948,6 +11465,7 @@
           "refundDue",
           "fee",
           "payout",
+          "holdingDepositCredit",
           "nextPayout",
           "payoutStatus"
         ]

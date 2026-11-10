@@ -94,6 +94,17 @@ export class UserDto {
 	@Expose()
 	role: Role;
 
+	@ApiProperty({ description: "Proved a university email address (student badge)." })
+	@Expose()
+	// Reads its own output too: @Serialize transforms an already-built UserDto a second time.
+	@Transform(({ obj }) => Boolean(obj?.studentVerifiedAt ?? obj?.studentVerified))
+	studentVerified: boolean;
+
+	@ApiProperty({ type: String, nullable: true, description: "University behind the badge, e.g. \"University of St Andrews\"." })
+	@Expose()
+	@Transform(({ obj }) => ((obj?.studentVerifiedAt ?? obj?.studentVerified) && obj?.university) || null)
+	university: string | null;
+
 	@ApiProperty()
 	@IsOptional()
 	@Expose()

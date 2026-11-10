@@ -39,6 +39,14 @@ export function depositReceivedDate(value?: string, now: Date = new Date()): Dat
 	return date;
 }
 
+/** The period a tenancy made from an application gets: the listing's availability, never starting in the past. */
+export function applicationTenancyPeriod(listing: Pick<Listing, "availableFrom" | "availableUntil">, now = new Date()) {
+	return {
+		startDate: listing.availableFrom && new Date(listing.availableFrom) > now ? new Date(listing.availableFrom) : now,
+		endDate: listing.availableUntil ? new Date(listing.availableUntil) : null
+	};
+}
+
 type Viewer = Pick<User, "_id" | "role">;
 
 export type TenancyLean = Tenancy & { _id: Types.ObjectId };
@@ -154,6 +162,10 @@ export class TenanciesService {
 		if (students !== tenantIds.length) {
 			throw new BadRequestException("Every tenant must be a Seek student account.");
 		}
+		await this.assertNoCurrentTenancy(tenantIds, {
+			startDate: new Date(dto.startDate),
+			endDate: dto.endDate ? new Date(dto.endDate) : null
+		});
 		const manual = !dto.application;
 
 		const depositAmount = dto.depositAmount ?? 0;
@@ -204,6 +216,7 @@ export class TenanciesService {
 		if (!(tenancy.pendingTenants ?? []).some(tenant => idOf(tenant) === studentId.toString())) {
 			throw new ForbiddenException("You have not been invited to this tenancy.");
 		}
+		await this.assertNoCurrentTenancy([studentId], tenancy, tenancy._id);
 		await this.tenancyModel.updateOne(
 			{ _id: tenancy._id, pendingTenants: studentId },
 			{ $pull: { pendingTenants: studentId }, $addToSet: { tenants: studentId } }
@@ -242,10 +255,9 @@ export class TenanciesService {
 
 		const listing = await this.listingModel.findById(application.listing).lean().exec();
 		if (!listing) throw new NotFoundException("Listing not found.");
+		const { startDate, endDate } = applicationTenancyPeriod(listing);
+		await this.assertNoCurrentTenancy(application.applicants, { startDate, endDate });
 		const people = Math.max(1, application.applicants.length);
-		const startDate = listing.availableFrom && new Date(listing.availableFrom) > new Date()
-			? new Date(listing.availableFrom)
-			: new Date();
 
 		try {
 			const tenancy = await this.tenancyModel.create({
@@ -254,7 +266,7 @@ export class TenanciesService {
 				tenants: application.applicants,
 				application: application._id,
 				startDate,
-				endDate: listing.availableUntil ? new Date(listing.availableUntil) : null,
+				endDate,
 				periodic: !listing.availableUntil,
 				// Listings store whole-property pounds; tenancies store pence per tenant.
 				monthlyRent: Math.round(((listing.monthlyRent ?? 0) * 100) / people),
@@ -275,6 +287,44 @@ export class TenanciesService {
 		}
 	}
 
+	/**
+	 * Seek allows one tenancy at a time: a student can't be a tenant of two ACTIVE or
+	 * PENDING_ACCEPTANCE tenancies whose [startDate, endDate) overlap (no endDate = open-ended).
+	 * Next year's home, starting on or after this one ends, is fine. An invite alone doesn't count.
+	 * `when` is the new tenancy's period, or the listing an application tenancy will let
+	 * (period derived as in createFromApplication); unknown listing = any current tenancy blocks.
+	 * shortcut: check-then-write, so two accepts landing in the same few ms can still both pass;
+	 * upgrade to a Mongo transaction (needs a replica set) if double bookings show up.
+	 */
+	async assertNoCurrentTenancy(
+		studentIds: Array<Types.ObjectId | string>,
+		when: { startDate: Date; endDate?: Date | null } | Types.ObjectId | null | undefined,
+		exceptTenancy?: Types.ObjectId
+	) {
+		if (studentIds.length === 0) return;
+		let period = when instanceof Types.ObjectId ? undefined : when;
+		if (when instanceof Types.ObjectId) {
+			const listing = await this.listingModel.findById(when, { availableFrom: 1, availableUntil: 1 }).lean().exec();
+			if (listing) period = applicationTenancyPeriod(listing);
+		}
+		const clash = await this.tenancyModel.exists({
+			tenants: { $in: studentIds.map(id => new Types.ObjectId(id.toString())) },
+			status: { $in: [TenancyStatus.ACTIVE, TenancyStatus.PENDING_ACCEPTANCE] },
+			...(exceptTenancy ? { _id: { $ne: exceptTenancy } } : {}),
+			...(period
+				? {
+					...(period.endDate ? { startDate: { $lt: period.endDate } } : {}),
+					$or: [{ endDate: null }, { endDate: { $gt: period.startDate } }]
+				}
+				: {})
+		});
+		if (clash) {
+			throw new ConflictException(
+				`${studentIds.length === 1 ? "This student" : "A student in this household"} already has a tenancy for these dates. Seek allows one tenancy at a time.`
+			);
+		}
+	}
+
 	async updateDeposit(id: string, dto: UpdateDepositDto, landlord: Viewer) {
 		const tenancy = await this.findForLandlord(id, landlord);
 		const depositAmount = dto.depositAmount ?? tenancy.depositAmount;
@@ -290,10 +340,17 @@ export class TenanciesService {
 						? new Date(dto.depositProtectedAt)
 						: new Date(),
 					depositAmount,
+					...(dto.energyAllowance !== undefined ? { energyAllowance: dto.energyAllowance } : {}),
 					...(dto.depositReceivedAt ? { depositReceivedAt: depositReceivedDate(dto.depositReceivedAt) } : {})
 				}
 			}
 		);
+		return this.getDetail(id, landlord);
+	}
+
+	async updateEnergyAllowance(id: string, energyAllowance: number | null, landlord: Viewer) {
+		const tenancy = await this.findForLandlord(id, landlord);
+		await this.tenancyModel.updateOne({ _id: tenancy._id }, { $set: { energyAllowance } });
 		return this.getDetail(id, landlord);
 	}
 

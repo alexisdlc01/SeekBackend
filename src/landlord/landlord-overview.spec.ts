@@ -5,7 +5,7 @@ import { LandlordOverviewService } from "./landlord-overview.service";
 const query = (value: unknown): unknown => new Proxy({}, {
 	get: (_target, key) => (key === "exec" ? async () => value : key === "then" ? undefined : () => query(value))
 });
-const model = (find: unknown[] = []) => ({ find: () => query(find), countDocuments: async () => 0 });
+const model = (find: unknown[] = [], letListings: unknown[] = []) => ({ find: () => query(find), countDocuments: async () => 0, distinct: () => query(letListings) });
 
 describe("LandlordOverviewService todo", () => {
 	const now = new Date("2026-11-07T12:00:00Z");
@@ -32,5 +32,16 @@ describe("LandlordOverviewService todo", () => {
 			applicationId: first._id.toString(), listingTitle: "22 Kingsdown Parade", members: 2, allVerified: true
 		})]);
 		expect(overview.holdingDepositsCollectedThisMonth).toBe(0);
+	});
+
+	it("leaves a let property out of the offers to make and the qualified count", async () => {
+		const waiting = application("SENT", verified, "2026-11-02");
+		const service = new LandlordOverviewService(
+			model() as never, model() as never, model() as never, model() as never,
+			model([waiting], [listing._id]) as never, model() as never, model() as never
+		);
+		const overview = await service.overview(new Types.ObjectId().toString(), now);
+		expect(overview.todo.filter(item => item.kind === "MAKE_OFFER")).toEqual([]);
+		expect(overview.applicants.qualified).toBe(0);
 	});
 });

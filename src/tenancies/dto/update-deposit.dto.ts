@@ -7,7 +7,8 @@ import {
 	IsString,
 	MaxLength,
 	Min,
-	MinLength
+	MinLength,
+	ValidateIf
 } from "class-validator";
 import { DepositScheme } from "../tenancy.enums";
 
@@ -37,6 +38,20 @@ export class UpdateDepositDto {
 	@IsInt()
 	@Min(0)
 	depositAmount?: number;
+
+	@ApiPropertyOptional({ type: Number, nullable: true, description: "Energy fair-use allowance for the household, in pence per month. null removes it.", example: 20000 })
+	@IsOptional()
+	@IsInt()
+	@Min(0)
+	energyAllowance?: number | null;
+}
+
+export class UpdateEnergyAllowanceDto {
+	@ApiProperty({ type: Number, nullable: true, description: "Energy fair-use allowance for the household, in pence per month. null removes it.", example: 20000 })
+	@ValidateIf((_, value) => value !== null)
+	@IsInt()
+	@Min(0)
+	energyAllowance: number | null;
 }
 
 export class DepositReceivedDto {

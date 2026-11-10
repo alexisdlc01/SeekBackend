@@ -111,6 +111,20 @@ export interface PassportDocumentInput {
 	url?: string;
 }
 
+/** Someone Seek emailed for a guarantor agreement or a reference (POST /users/me/passport/references). */
+export interface ReferenceRequestInput {
+	type: DocumentType;
+	name: string;
+	requestedAt: Date | string;
+}
+
+/** A student who proved their university address (POST /users/me/student-email/verify), plus pending requests. */
+export interface StudentEmailProof {
+	studentVerifiedAt?: Date | string | null;
+	universityEmail?: string | null;
+	referenceRequests?: ReferenceRequestInput[] | null;
+}
+
 export interface PassportItem {
 	type: DocumentType;
 	label: string;
@@ -121,6 +135,12 @@ export interface PassportItem {
 	/** File location. Only returned to the document owner or a viewer with an active share. */
 	url?: string | null;
 	key?: string | null;
+	/** Where the item came from: a document, a university email, or a request Seek emailed and is waiting on. Null when missing. */
+	source?: "document" | "university email" | "request" | null;
+	/** E.g. the confirmed university address or the person asked. Only for the owner or a viewer with an active share. */
+	detail?: string | null;
+	/** When Seek emailed the guarantor or referee. Only set while waiting on their reply. */
+	requestedAt?: Date | null;
 }
 
 export interface PassportSection {
@@ -166,7 +186,8 @@ const STATUS_RANK: Record<DocumentStatus, number> = {
 
 export function buildPassport(
 	documents: PassportDocumentInput[] | undefined,
-	now: Date = new Date()
+	now: Date = new Date(),
+	student?: StudentEmailProof | null
 ): Passport {
 	const list = documents ?? [];
 	let total = 0;
@@ -188,7 +209,11 @@ export function buildPassport(
 				}))
 				.sort((a, b) => STATUS_RANK[b.status] - STATUS_RANK[a.status])[0];
 
-			const status: PassportItemStatus = best?.status ?? MISSING;
+			// A confirmed university email proves student status without a document.
+			const byEmail = rule.type === DocumentType.STUDENT_STATUS
+				&& !!student?.studentVerifiedAt
+				&& best?.status !== DocumentStatus.VERIFIED;
+			const status: PassportItemStatus = byEmail ? DocumentStatus.VERIFIED : best?.status ?? MISSING;
 			total += 1;
 			if (status === DocumentStatus.VERIFIED) {
 				completed += 1;
@@ -196,6 +221,40 @@ export function buildPassport(
 				missingRequired.push(rule.type);
 			}
 
+			// No document yet but Seek emailed someone for it: show it as pending.
+			const request = best || byEmail
+				? undefined
+				: student?.referenceRequests?.find(item => types.includes(item.type));
+			if (request) {
+				return {
+					type: rule.type,
+					label: rule.label,
+					status: DocumentStatus.PENDING,
+					required: rule.required,
+					expiresAt: null,
+					uploadedAt: null,
+					url: null,
+					key: null,
+					source: "request" as const,
+					detail: request.name,
+					requestedAt: new Date(request.requestedAt)
+				};
+			}
+
+			if (byEmail) {
+				return {
+					type: rule.type,
+					label: rule.label,
+					status,
+					required: rule.required,
+					expiresAt: null,
+					uploadedAt: student?.studentVerifiedAt ? new Date(student.studentVerifiedAt) : null,
+					url: null,
+					key: null,
+					source: "university email" as const,
+					detail: student?.universityEmail ?? null
+				};
+			}
 			return {
 				type: rule.type,
 				label: best?.document.label || rule.label,
@@ -208,7 +267,9 @@ export function buildPassport(
 					? new Date(best.document.uploadedAt)
 					: null,
 				url: best?.document.url ?? null,
-				key: best?.document.key ?? null
+				key: best?.document.key ?? null,
+				source: best ? "document" as const : null,
+				detail: null
 			};
 		})
 	}));
@@ -229,7 +290,7 @@ export function withoutFiles(passport: Passport): Passport {
 		...passport,
 		sections: passport.sections.map(section => ({
 			...section,
-			items: section.items.map(({ url: _url, key: _key, ...item }) => item)
+			items: section.items.map(({ url: _url, key: _key, detail: _detail, ...item }) => item)
 		}))
 	};
 }

@@ -33,6 +33,7 @@ import {
 	ApiGetAllUsersDocs,
 	ApiGetDocumentTypes,
 	ApiGetUserDocs,
+	ApiListPendingDocumentsDocs,
 	ApiSetProfilePicDocs,
 	ApiSetUsernameDocs,
 	ApiUpdateCurrentUserDocs
@@ -43,6 +44,10 @@ import { DocumentSharesService } from "./shares/document-shares.service";
 import { ParseObjectIdPipe } from "../shared/parse-object-id.pipe";
 import { UpdateDocumentStatusDto } from "./dto/update-document-status.dto";
 import { DocumentType } from "./types/document-type";
+import { Throttle } from "@nestjs/throttler";
+import { StudentVerificationService } from "./student-verification.service";
+import { StudentEmailCodeDto, StudentEmailDto, StudentVerificationResultDto } from "./dto/student-verification.dto";
+import { PassportDto, RequestReferenceDto } from "./dto/passport.dto";
 
 
 @Controller("users")
@@ -50,8 +55,31 @@ export class UsersController {
 	constructor(
 		private readonly usersService: UsersService,
 		private readonly sharesService: DocumentSharesService,
-		private readonly accountService: AccountService
+		private readonly accountService: AccountService,
+		private readonly studentVerification: StudentVerificationService
 	) { }
+
+	@Post("me/student-email")
+	@Student()
+	@HttpCode(204)
+	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60_000 } })
+	@ApiOperation({ summary: "Send a 6-digit code to your university email (valid 15 minutes) to get the verified student badge." })
+	@ApiNoContentResponse({ description: "Code sent." })
+	@ApiResponse({ status: 400, type: ErrorDto, description: "Not an accepted university domain (only @st-andrews.ac.uk for now)." })
+	async sendStudentEmailCode(@Body() body: StudentEmailDto, @CurrentUser() user: User) {
+		await this.studentVerification.sendCode(user._id, body.email);
+	}
+
+	@Post("me/student-email/verify")
+	@Student()
+	@HttpCode(200)
+	@Throttle({ auth: { limit: 10, ttl: 60_000, blockDuration: 60_000 } })
+	@ApiOperation({ summary: "Check the code. 5 wrong tries and you need a new code." })
+	@ApiOkResponse({ type: StudentVerificationResultDto })
+	@ApiResponse({ status: 400, type: ErrorDto, description: "Wrong, expired or used-up code, or an address that can't be verified on this account." })
+	async verifyStudentEmail(@Body() body: StudentEmailCodeDto, @CurrentUser() user: User): Promise<StudentVerificationResultDto> {
+		return this.studentVerification.verify(user._id, body.code);
+	}
 
 	@Delete("me")
 	@UseGuards(JwtAuthGuard)
@@ -163,6 +191,18 @@ export class UsersController {
 		);
 	}
 
+	@Post("me/passport/references")
+	@Student()
+	@HttpCode(200)
+	@Throttle({ auth: { limit: 10, ttl: 60 * 60_000, blockDuration: 60_000 } })
+	@ApiOperation({ summary: "Invite a UK guarantor or ask a previous landlord, letting agent or academic for a reference. Seek emails them (replies go to you; a connected inbox files a reference into your passport) and the passport row reads PENDING with source \"request\" until a document arrives. Asking again for the same type replaces the request." })
+	@ApiOkResponse({ type: PassportDto })
+	@ApiResponse({ status: 400, type: ErrorDto, description: "Invalid type, name or email, or your own address." })
+	@ApiResponse({ status: 503, type: ErrorDto, description: "The email could not be sent; nothing was saved." })
+	async requestReference(@Body() body: RequestReferenceDto, @CurrentUser() user: User): Promise<PassportDto> {
+		return this.usersService.requestReference(user, body);
+	}
+
 	@Get("me/passport")
 	@Student()
 	@ApiGetPassportDocs()
@@ -186,6 +226,14 @@ export class UsersController {
 		@CurrentUser() user: User
 	) {
 		await this.sharesService.revoke(user._id.toString(), id);
+	}
+
+	// Declared before every ":id" route so "documents" is never read as an id.
+	@Get("documents/pending")
+	@Superuser()
+	@ApiListPendingDocumentsDocs()
+	async listPendingDocuments() {
+		return this.usersService.listPendingDocuments();
 	}
 
 	@Patch(":id/documents/:type/status")

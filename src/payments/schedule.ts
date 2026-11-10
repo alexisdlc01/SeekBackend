@@ -1,13 +1,23 @@
 import { BadRequestException } from "@nestjs/common";
 import { Nation } from "../listings/enums/nation.enum";
-import { PlanFrequency } from "./payment.enums";
+import { PaymentKind, PaymentStatus, PlanFrequency } from "./payment.enums";
 
-/** Seek keeps 0.5% of each rent payment, rounded to the nearest penny. */
-export const SEEK_FEE_RATE = 0.005;
+/** Seek keeps 1% of each rent payment, rounded to the nearest penny. */
+export const SEEK_FEE_RATE = 0.01;
 
 export function computeFee(amountPence: number): { seekFee: number; payout: number } {
 	const seekFee = Math.round(amountPence * SEEK_FEE_RATE);
 	return { seekFee, payout: amountPence - seekFee };
+}
+
+/**
+ * Seek's fee and the landlord's payout as they stand: a paid row keeps what was
+ * charged, anything still to collect uses today's rate. Holding deposits carry no fee.
+ */
+export function feeFor(payment: { kind?: PaymentKind | string; status?: PaymentStatus | string; amount: number; seekFee?: number; payout?: number }): { seekFee: number; payout: number } {
+	if (payment.status === PaymentStatus.PAID) return { seekFee: payment.seekFee ?? 0, payout: payment.payout ?? payment.amount };
+	if (payment.kind === PaymentKind.HOLDING_DEPOSIT) return { seekFee: 0, payout: payment.amount };
+	return computeFee(payment.amount);
 }
 
 export const FREQUENCY_MONTHS: Record<PlanFrequency, number> = {
@@ -19,11 +29,17 @@ export const FREQUENCY_MONTHS: Record<PlanFrequency, number> = {
 export const ENGLAND_RENT_IN_ADVANCE_MESSAGE =
 	"Renters' Rights Act: rent in advance is capped at one month for properties in England. Choose a monthly plan.";
 
-/** Frequencies a tenant may choose for a property in this nation. */
-export function allowedFrequencies(nation: Nation | string | undefined): PlanFrequency[] {
+/**
+ * Frequencies a tenant may choose: the plans the landlord offers on the
+ * listing, limited by the nation's law. Monthly always stays (every tenancy
+ * starts on it); with no `offered` list only the nation is checked.
+ */
+export function allowedFrequencies(nation: Nation | string | undefined, offered?: (PlanFrequency | string)[] | null): PlanFrequency[] {
 	// Listings saved before nations existed are English by default.
 	if (!nation || nation === Nation.ENGLAND) return [PlanFrequency.MONTHLY];
-	return Object.values(PlanFrequency);
+	return Object.values(PlanFrequency).filter(frequency =>
+		frequency === PlanFrequency.MONTHLY || offered === undefined || (offered ?? []).includes(frequency)
+	);
 }
 
 export function restrictionReason(nation: Nation | string | undefined): string | null {
@@ -32,10 +48,14 @@ export function restrictionReason(nation: Nation | string | undefined): string |
 
 export function assertPlanAllowed(
 	nation: Nation | string | undefined,
-	frequency: PlanFrequency
+	frequency: PlanFrequency,
+	offered?: (PlanFrequency | string)[] | null
 ): void {
-	if (!allowedFrequencies(nation).includes(frequency)) {
+	if (allowedFrequencies(nation).length === 1 && frequency !== PlanFrequency.MONTHLY) {
 		throw new BadRequestException(ENGLAND_RENT_IN_ADVANCE_MESSAGE);
+	}
+	if (!allowedFrequencies(nation, offered).includes(frequency)) {
+		throw new BadRequestException("Your landlord doesn't offer this rent plan for this property. Choose one of the plans they offer.");
 	}
 }
 

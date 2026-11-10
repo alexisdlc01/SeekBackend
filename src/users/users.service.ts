@@ -2,7 +2,9 @@ import {
 	BadRequestException,
 	ConflictException,
 	Injectable,
-	NotFoundException
+	Logger,
+	NotFoundException,
+	ServiceUnavailableException
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { FilterQuery, Model, UpdateQuery } from "mongoose";
@@ -19,13 +21,37 @@ import { DocumentTypesDto } from "./dto/provided-docs.dto";
 import { UpdateUserProfileDto } from "./dto/update-user-profile.dto";
 import { Role } from "../auth/role.enum";
 import { isKeyOwnedBy } from "../upload/object-key";
+import { MailService } from "../auth/mail.service";
+import { RequestReferenceDto } from "./dto/passport.dto";
+import { PendingDocumentDto } from "./dto/pending-document.dto";
+import { UploadService } from "../upload/upload.service";
+
+const REFERENCE_ASK = "Could you write a short reference about them as a tenant (dates, whether rent was paid on time, how they looked after the property)? Please attach it to your reply as a PDF.";
+
+/** Subject and ask for each request. Reference subjects contain "reference" so a connected inbox files the reply. */
+const REFERENCE_EMAILS: Record<RequestReferenceDto["type"], (student: string) => { subject: string; ask: string }> = {
+	[DocumentType.GUARANTOR_AGREEMENT]: student => ({
+		subject: `${student} asked you to be their UK guarantor`,
+		ask: `Would you be ${student}'s UK guarantor? A guarantor agrees to pay the rent if the tenant can't. If you agree, reply to say so and the landlord will send you the guarantor agreement to sign.`
+	}),
+	[DocumentType.LANDLORD_REFERENCE]: student => ({ subject: `Landlord reference for ${student}`, ask: REFERENCE_ASK }),
+	[DocumentType.AGENT_REFERENCE]: student => ({ subject: `Letting agent reference for ${student}`, ask: REFERENCE_ASK }),
+	[DocumentType.RECOMMENDATION]: student => ({
+		subject: `Character reference for ${student}'s housing application`,
+		ask: "Could you write a short character reference for their housing application? Please attach it to your reply as a PDF."
+	})
+};
 
 @Injectable()
 class UsersService {
 	constructor(
 		@InjectModel(User.name) private readonly userModel: Model<User>,
-		private readonly userRepo: UsersRepository
+		private readonly userRepo: UsersRepository,
+		private readonly mailService: MailService,
+		private readonly uploads?: UploadService
 	) { }
+
+	private readonly logger = new Logger(UsersService.name);
 
 	async create(data: CreateUserDto) {
 		try {
@@ -319,13 +345,36 @@ class UsersService {
 
 	async getPassport(userId: string): Promise<Passport> {
 		const user = await this.userModel
-			.findById(userId, { documents: 1 })
+			.findById(userId, { documents: 1, studentVerifiedAt: 1, universityEmail: 1, referenceRequests: 1 })
 			.lean()
 			.exec();
 		if (!user) {
 			throw new NotFoundException("User not found.");
 		}
-		return buildPassport(user.documents);
+		return buildPassport(user.documents, new Date(), user);
+	}
+
+	/** Seek emails a guarantor or referee; the passport row reads "pending" until a document arrives. */
+	async requestReference(user: User, body: RequestReferenceDto): Promise<Passport> {
+		const email = body.email.trim().toLowerCase();
+		if (email === user.email?.toLowerCase()) {
+			throw new BadRequestException("Ask someone else: this is your own email address.");
+		}
+		const referee = { name: body.name.trim(), email };
+		const { subject, ask } = REFERENCE_EMAILS[body.type](user.name);
+		// Send first, so the passport never says "invite sent" for an email that didn't go.
+		try {
+			await this.mailService.sendReferenceRequest(referee, { name: user.name, email: user.email }, subject, ask);
+		} catch (error) {
+			this.logger.error(`Reference request email failed: ${(error as Error).message}`);
+			throw new ServiceUnavailableException("We couldn't send the email. Try again in a few minutes.");
+		}
+		// One request per type: asking again replaces the previous one.
+		await this.userModel.updateOne({ _id: user._id }, { $pull: { referenceRequests: { type: body.type } } });
+		await this.userModel.updateOne({ _id: user._id }, {
+			$push: { referenceRequests: { type: body.type, ...referee, requestedAt: new Date() } }
+		});
+		return this.getPassport(user._id.toString());
 	}
 
 	/** Seek staff record the outcome of a document check. */
@@ -347,6 +396,36 @@ class UsersService {
 			throw new NotFoundException("Document not found for this user.");
 		}
 		return this.getPassport(userId);
+	}
+
+	/** Staff review queue: every PENDING upload, oldest first, with a short-lived signed link. */
+	async listPendingDocuments(): Promise<PendingDocumentDto[]> {
+		const users = await this.userModel
+			.find(
+				{ deletedAt: null, documents: { $elemMatch: { status: DocumentStatus.PENDING } } },
+				{ name: 1, email: 1, documents: 1 }
+			)
+			.lean()
+			.exec();
+		const pending = users.flatMap(user =>
+			(user.documents ?? [])
+				.filter(doc => doc.status === DocumentStatus.PENDING)
+				.map(doc => ({ user, doc }))
+		);
+		pending.sort((a, b) => new Date(a.doc.uploadedAt ?? 0).getTime() - new Date(b.doc.uploadedAt ?? 0).getTime());
+		return Promise.all(
+			pending.map(async ({ user, doc }) => ({
+				userId: user._id.toString(),
+				name: user.name ?? null,
+				email: user.email,
+				type: doc.type,
+				uploadedAt: doc.uploadedAt ?? null,
+				// Only private-bucket keys are signed; never hand out the stored public-style URL.
+				url: doc.key?.startsWith("private/") && this.uploads
+					? await this.uploads.getPresignedDownloadUrl(doc.key, "private")
+					: null
+			}))
+		);
 	}
 
 	async documentTypes(user: User): Promise<DocumentTypesDto> {

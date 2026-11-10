@@ -1,6 +1,7 @@
 import {
 	Body,
 	Controller,
+	ForbiddenException,
 	Get,
 	Patch,
 	Post,
@@ -39,12 +40,19 @@ import {
 	ApiSignupDocs,
 	ApiVerifyEmailDocs
 } from "./swagger/auth-swagger.decorator";
-import { plainToInstance } from "class-transformer";
 import { Throttle } from "@nestjs/throttler";
 import { ResendOtpDto } from "./dto/resend-otp.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
 import { ChangeEmailDto } from "./dto/change-email.dto";
 import { ConfirmEmailChangeDto } from "./dto/confirm-email-change.dto";
+import { Role } from "./role.enum";
+
+/** The mobile app is the student app: landlords and agencies sign in on the web. */
+function assertMobileRole(user: User, isMobile: boolean) {
+	if (isMobile && user.role === Role.LANDLORD_AGENCY) {
+		throw new ForbiddenException("Landlords use Seek on the web. Please sign in from a browser.");
+	}
+}
 
 @ApiTags("Auth")
 @Controller("auth")
@@ -64,6 +72,7 @@ export class AuthController {
 		@Res({ passthrough: true }) response: Response
 	) {
 		const isMobile = request.headers.platform === "mobile";
+		assertMobileRole(user, isMobile);
 		return await this.authService.login(user, response, isMobile);
 	}
 
@@ -213,10 +222,7 @@ export class AuthController {
 	@Serialize(UserDto)
 	@ApiCurrentUserDocs()
 	async currentUser(@CurrentUser() user: User) {
-		const instance = plainToInstance(UserDto, user, {
-			excludeExtraneousValues: true,
-		});
-		return instance;
+		return user; // @Serialize(UserDto) does the one transform; doing it here too stripped stripeAccountId.
 	}
 
 	@Post("/refresh")
@@ -229,6 +235,7 @@ export class AuthController {
 		@Res({ passthrough: true }) response: Response
 	) {
 		const isMobile = request.headers.platform === "mobile";
+		assertMobileRole(user, isMobile);
 		return this.authService.login(user, response, isMobile);
 	}
 

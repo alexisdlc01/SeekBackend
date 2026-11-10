@@ -21,6 +21,8 @@ import {
 	ResolveFlagDocs
 } from "./decorators/flags-swagger.decorator";
 import { User } from "../users/users.schema";
+import { Flag } from "./flags.schema";
+import { ApiResponse } from "@nestjs/swagger";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 
 @Controller("flags")
@@ -46,6 +48,13 @@ export class FlagsController {
 	@Superuser()
 	resolve(@Param("id") id: string, @Body() resolveFlagDto: ResolveFlagDto) {
 		return this.flagsService.resolve(id, resolveFlagDto);
+	}
+
+	@ApiResponse({ status: 200, type: [Flag], description: "The caller's own reports, newest first." })
+	@Get("mine")
+	@StudentOrLandlordOrSuperuser()
+	mine(@CurrentUser() user: User) {
+		return this.flagsService.findMine(user._id);
 	}
 
 	@GetFlagDocs()

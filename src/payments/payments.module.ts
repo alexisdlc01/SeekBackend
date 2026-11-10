@@ -6,9 +6,11 @@ import { PaymentsController } from "./payments.controller";
 import { PaymentsService } from "./payments.service";
 import { PaymentsSweeper } from "./payments.sweeper";
 import { ApplicationModule } from "../application/application.module";
+import { AuthModule } from "../auth/auth.module";
+import { ConversationModule } from "../conversation/conversation.module";
 
 @Module({
-	imports: [SharedModule, TenanciesModule, NotificationsModule, ApplicationModule],
+	imports: [SharedModule, TenanciesModule, NotificationsModule, ApplicationModule, AuthModule, ConversationModule],
 	controllers: [PaymentsController],
 	providers: [PaymentsService, PaymentsSweeper]
 })

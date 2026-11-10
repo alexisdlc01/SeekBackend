@@ -238,9 +238,11 @@ export function filedLabelFor(type: TenancyDocumentType): string {
 }
 
 /** A reference letter for the student's Seek Passport, from its file name or subject. */
-export function referenceTypeFor(fileName: string, subject: string): DocumentType.LANDLORD_REFERENCE | DocumentType.CHARACTER_REFERENCE | null {
+export function referenceTypeFor(fileName: string, subject: string): DocumentType.LANDLORD_REFERENCE | DocumentType.AGENT_REFERENCE | DocumentType.CHARACTER_REFERENCE | null {
 	const text = `${fileName} ${subject}`;
 	if (!/\breference\b|reference[-_]/i.test(text)) return null;
+	// "Letting agent reference for …" is the subject Seek uses when it asks an agent (POST /users/me/passport/references).
+	if (/letting agent|agent reference/i.test(text)) return DocumentType.AGENT_REFERENCE;
 	return /landlord|letting|agent|tenan/i.test(text) ? DocumentType.LANDLORD_REFERENCE : DocumentType.CHARACTER_REFERENCE;
 }
 

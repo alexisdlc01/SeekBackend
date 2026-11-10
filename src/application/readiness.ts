@@ -1,4 +1,4 @@
-import { buildPassport, PassportDocumentInput } from "../users/passport";
+import { buildPassport, PassportDocumentInput, StudentEmailProof } from "../users/passport";
 import { DocumentStatus, DocumentType } from "../users/types/document-type";
 import { GuarantorCriterion } from "../listings/enums/guarantor-criterion.enum";
 
@@ -32,8 +32,10 @@ export interface HouseholdReadiness {
 
 const REFERENCE_TYPES = [DocumentType.LANDLORD_REFERENCE, DocumentType.AGENT_REFERENCE, DocumentType.RECOMMENDATION, DocumentType.CHARACTER_REFERENCE];
 
-function hasVerified(member: { documents?: PassportDocumentInput[] }, types: DocumentType[], now: Date) {
-	const passport = buildPassport(member.documents, now);
+type Member = { documents?: PassportDocumentInput[] } & StudentEmailProof;
+
+function hasVerified(member: Member, types: DocumentType[], now: Date) {
+	const passport = buildPassport(member.documents, now, member);
 	return passport.sections
 		.flatMap(section => section.items)
 		.some(item => types.includes(item.type) && item.status === DocumentStatus.VERIFIED);
@@ -48,12 +50,12 @@ function countLine(count: number, total: number, what: string) {
  * group is big enough for the property, so the landlord can offer straight away.
  */
 export function householdReadiness(
-	members: { documents?: PassportDocumentInput[] }[],
+	members: Member[],
 	numOfPeople: number | undefined,
 	now: Date = new Date(),
 	criteria?: ReadinessCriteria | null
 ): HouseholdReadiness {
-	const readyMembers = members.filter(member => buildPassport(member.documents, now).ready).length;
+	const readyMembers = members.filter(member => buildPassport(member.documents, now, member).ready).length;
 	const count = members.length;
 	const needed = Math.max(1, numOfPeople ?? 1);
 	const results: CriterionResult[] = [

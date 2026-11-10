@@ -32,6 +32,24 @@ export class UserDocument {
 
 export const UserDocumentSchema = SchemaFactory.createForClass(UserDocument);
 
+/** A guarantor or referee Seek emailed for the student (POST /users/me/passport/references). */
+@Schema({ _id: false })
+export class ReferenceRequest {
+	@Prop({ enum: DocumentType, required: true })
+	type: DocumentType;
+
+	@Prop({ required: true, trim: true })
+	name: string;
+
+	@Prop({ required: true, trim: true, lowercase: true })
+	email: string;
+
+	@Prop({ type: Date, required: true })
+	requestedAt: Date;
+}
+
+export const ReferenceRequestSchema = SchemaFactory.createForClass(ReferenceRequest);
+
 @Schema({ _id: false })
 export class LandlordRegistration {
 	@Prop({ enum: RegistrationKind, required: true })
@@ -184,6 +202,29 @@ export class User {
 	@Prop({ trim: true })
 	universityDetails?: string;
 
+	/** University address the student proved with a code (POST /users/me/student-email/verify). */
+	@Prop({ trim: true, lowercase: true, unique: true, sparse: true })
+	universityEmail?: string;
+
+	// select: true keeps the badge in every inclusive projection, e.g. the landlord's applicant populate.
+	@Prop({ select: true })
+	university?: string;
+
+	@Prop({ type: Date, select: true })
+	studentVerifiedAt?: Date;
+
+	@Prop({ select: false })
+	studentEmailPending?: string;
+
+	@Prop({ select: false })
+	studentEmailCodeHash?: string;
+
+	@Prop({ type: Date, select: false })
+	studentEmailCodeExpires?: Date;
+
+	@Prop({ select: false, default: 0 })
+	studentEmailAttempts?: number;
+
 	@Prop()
 	profilePicUrl?: string;
 
@@ -266,6 +307,10 @@ export class User {
 
 	@Prop({ type: [UserDocumentSchema], default: [] })
 	documents: UserDocument[];
+
+	// Referee addresses stay private: only the passport owner reads them.
+	@Prop({ type: [ReferenceRequestSchema], default: [], select: false })
+	referenceRequests?: ReferenceRequest[];
 
 	@Prop({ trim: true })
 	companyName?: string;

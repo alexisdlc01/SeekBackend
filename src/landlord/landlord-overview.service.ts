@@ -44,7 +44,7 @@ export class LandlordOverviewService {
 		const landlord = new Types.ObjectId(landlordId);
 		const month = monthRange(undefined, now);
 
-		const [listings, tenancies, monthPayments, applications, holdingPaid] = await Promise.all([
+		const [listings, tenancies, monthPayments, openApplications, holdingPaid, letListingIds] = await Promise.all([
 			this.listingModel
 				.find({ landlord, isDraft: { $ne: true } })
 				.select("propertyTitle streetAddress nation numOfPeople monthlyRent securityDeposit holdingDeposit gasSafetyExpiry eicrExpiry epcExpiry hmoLicenceExpiry")
@@ -63,7 +63,7 @@ export class LandlordOverviewService {
 				.exec(),
 			this.applicationModel
 				.find({ landlord, stage: { $in: LANDLORD_OPEN_STAGES } })
-				.populate({ path: "applicants", select: "documents" })
+				.populate({ path: "applicants", select: "documents studentVerifiedAt" })
 				.populate({ path: "listing", select: "numOfPeople criteria propertyTitle streetAddress" })
 				.select("applicants listing stage sentAt createdAt viewingAt offerExpiresAt offerExpiredAt")
 				.sort({ sentAt: 1, createdAt: 1 })
@@ -73,8 +73,14 @@ export class LandlordOverviewService {
 				.find({ landlord, kind: PaymentKind.HOLDING_DEPOSIT, status: PaymentStatus.PAID, dueDate: { $gte: month.start, $lt: month.end } })
 				.select("amount")
 				.lean()
-				.exec()
+				.exec(),
+			this.applicationModel.distinct("listing", { landlord, stage: { $in: [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] } }).exec()
 		]);
+		// A let property has no queue: applications still open on it are not waiting for an offer.
+		const letToHousehold = new Set(letListingIds.map(id => String(id)));
+		const applications = openApplications.filter(application =>
+			!letToHousehold.has(((application.listing as unknown as { _id?: Types.ObjectId })?._id ?? application.listing).toString())
+		);
 
 		const rent = { collected: 0, expected: 0, late: 0, lateAmount: 0, seekFee: 0 };
 		for (const payment of monthPayments) {
@@ -281,7 +287,7 @@ export class LandlordOverviewService {
 			this.listingModel.find({ landlord }).select("-likedBy -registerOfTitleKey -registrationNumber").sort({ lastUpdated: -1 }).lean().exec(),
 			this.applicationModel
 				.find({ landlord, stage: { $ne: ApplicationStage.NOT_SENT } })
-				.populate({ path: "applicants", select: "documents" })
+				.populate({ path: "applicants", select: "documents studentVerifiedAt" })
 				.select("listing stage applicants")
 				.lean()
 				.exec()
@@ -293,7 +299,8 @@ export class LandlordOverviewService {
 		}
 		return listings.map(listing => {
 			const sent = byListing.get(listing._id.toString()) ?? [];
-			const qualifiedCount = sent.filter(application =>
+			const isLet = sent.some(application => application.stage === ApplicationStage.ACCEPTED || application.stage === ApplicationStage.SIGNED);
+			const qualifiedCount = isLet ? 0 : sent.filter(application =>
 				LANDLORD_OPEN_STAGES.includes(application.stage as ApplicationStage) &&
 				householdReadiness(
 					application.applicants as unknown as { documents?: PassportDocumentInput[] }[],

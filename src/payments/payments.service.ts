@@ -15,7 +15,7 @@ import { Model, Types } from "mongoose";
 import { Payment } from "./payment.schema";
 import { RentPlan } from "./rent-plan.schema";
 import { PaymentKind, PaymentProvider, PaymentStatus, PayoutStatus, PlanFrequency } from "./payment.enums";
-import { allowedFrequencies, assertPlanAllowed, estimateNextPayout, restrictionReason, startOfUtcDay } from "./schedule";
+import { allowedFrequencies, assertPlanAllowed, estimateNextPayout, feeFor, restrictionReason, startOfUtcDay } from "./schedule";
 import { dueReminderStage, normaliseReminderSchedule, ReminderSchedule } from "./reminders";
 import { RentScheduleService } from "./rent-schedule.service";
 import {
@@ -66,6 +66,8 @@ import { ApplicationStage } from "../application/enums/application-stage.enum";
 import { NotificationsService } from "../notifications/notifications.service";
 import { NotificationKind } from "../notifications/notification-kind.enum";
 import { notificationTarget, NotificationTargetKind } from "../notifications/links";
+import { MailService } from "../auth/mail.service";
+import { ConversationService } from "../conversation/conversation.service";
 
 type Viewer = Pick<User, "_id" | "role">;
 type PaymentLean = Payment & { _id: Types.ObjectId };
@@ -125,20 +127,23 @@ export class PaymentsService {
 		private readonly rentSchedule: RentScheduleService,
 		private readonly notifications: NotificationsService,
 		private readonly config: ConfigService,
-		@InjectModel(Application.name) private readonly applicationModel: Model<Application>
+		@InjectModel(Application.name) private readonly applicationModel: Model<Application>,
+		private readonly mail?: MailService,
+		private readonly conversations?: ConversationService
 	) {}
 
 	/** A holding deposit is payable only while its offer is open. Returns when that offer lapses. */
 	private async assertHoldingPayable(payment: PaymentLean, now: Date = new Date()): Promise<Date | null> {
 		if (payment.kind !== PaymentKind.HOLDING_DEPOSIT) return null;
 		const application = await this.applicationModel
-			.findById(payment.application, { stage: 1, offerExpiresAt: 1 })
+			.findById(payment.application, { stage: 1, offerExpiresAt: 1, listing: 1 })
 			.lean()
 			.exec();
 		const expires = application?.offerExpiresAt ? new Date(application.offerExpiresAt) : null;
 		if (application?.stage !== ApplicationStage.OFFERED || !expires || expires <= now) {
 			throw new BadRequestException("This offer is no longer open, so its holding deposit can't be paid.");
 		}
+		await this.tenancies.assertNoCurrentTenancy([payment.tenant], application.listing);
 		return expires;
 	}
 
@@ -153,7 +158,7 @@ export class PaymentsService {
 
 	async getPlan(tenancyId: string, tenant: Viewer) {
 		const tenancy = await this.tenancies.findForTenant(tenancyId, tenant);
-		const listing = await this.listingModel.findById(tenancy.listing, { nation: 1 }).lean().exec();
+		const listing = await this.listingModel.findById(tenancy.listing, { nation: 1, paymentPlans: 1 }).lean().exec();
 		const plan = await this.planModel
 			.findOne({ tenancy: tenancy._id, tenant: tenant._id })
 			.lean()
@@ -180,9 +185,11 @@ export class PaymentsService {
 			},
 			monthlyRent: tenancy.monthlyRent,
 			nation: listing?.nation ?? "ENGLAND",
-			allowedFrequencies: allowedFrequencies(listing?.nation),
+			allowedFrequencies: allowedFrequencies(listing?.nation, listing?.paymentPlans ?? null),
 			restrictionReason: restrictionReason(listing?.nation),
 			mode: this.mode(),
+			// Same card condition sweepStripeAutopay charges on; the id itself stays server-side.
+			autopayCardSaved: plan ? Boolean(await this.planModel.exists({ _id: plan._id, paymentMethodId: { $nin: [null, ""] } })) : false,
 			upcoming: upcoming.map(forTenant)
 		};
 	}
@@ -196,13 +203,15 @@ export class PaymentsService {
 					: "This tenancy has ended."
 			);
 		}
-		const listing = await this.listingModel.findById(tenancy.listing, { nation: 1 }).lean().exec();
-		assertPlanAllowed(listing?.nation, dto.frequency);
-
 		const before = await this.planModel
 			.findOne({ tenancy: tenancy._id, tenant: tenant._id })
 			.lean()
 			.exec();
+		// A frequency the listing later stopped offering must not block the tenant's other settings.
+		if (before?.frequency !== dto.frequency) {
+			const listing = await this.listingModel.findById(tenancy.listing, { nation: 1, paymentPlans: 1 }).lean().exec();
+			assertPlanAllowed(listing?.nation, dto.frequency, listing?.paymentPlans ?? null);
+		}
 		const set: Partial<RentPlan> = { frequency: dto.frequency };
 		if (dto.autopay !== undefined) set.autopay = dto.autopay;
 		if (dto.notifyEveryPayment !== undefined) set.notifyEveryPayment = dto.notifyEveryPayment;
@@ -419,8 +428,10 @@ export class PaymentsService {
 				remindDaysBefore: plan?.remindDaysBefore ?? 3,
 				remindersSent: payment.remindersSent ?? 0,
 				refundDue: payment.refundDue ?? false,
-				fee: payment.seekFee,
-				payout: payment.payout,
+				// Rows still to collect show today's 1%, not the rate when they were scheduled.
+				fee: feeFor(payment).seekFee,
+				payout: feeFor(payment).payout,
+				holdingDepositCredit: payment.holdingDepositCredit ?? 0,
 				payoutStatus: payment.payoutStatus ?? null,
 				nextPayout: payoutsOnHold || held
 					? null
@@ -573,6 +584,11 @@ export class PaymentsService {
 				skipped += 1;
 				continue;
 			}
+			await this.deliverReminder(
+				payment,
+				`Reminder: rent of ${formatPence(payment.amount)} is overdue`,
+				`It was due on ${formatDay(payment.dueDate)}. Your landlord asked Seek to remind you.`
+			);
 			await this.paymentModel.updateOne(
 				{ _id: payment._id },
 				{ $inc: { remindersSent: 1 }, $set: { lastReminderAt: now } }
@@ -580,6 +596,41 @@ export class PaymentsService {
 			reminded += 1;
 		}
 		return { reminded, skipped };
+	}
+
+	/**
+	 * Besides the in-app notification, a reminder goes by email and into the
+	 * household's Seek thread, so a tenant who never opens the app still hears.
+	 * Never throws: a failed channel must not block the reminder bookkeeping.
+	 */
+	private async deliverReminder(payment: Pick<PaymentLean, "tenant" | "landlord" | "tenancy">, title: string, body: string) {
+		try {
+			const user = await this.userModel.findById(payment.tenant, { email: 1, name: 1 }).lean().exec();
+			const name = user?.name ?? "there";
+			// Test accounts use real university addresses: only production e-mails tenants.
+			if (this.mail && user?.email && this.config.get<string>("NODE_ENV") !== "production") {
+				this.logger.log("rent reminder e-mail skipped (non-production)");
+			} else if (this.mail && user?.email) {
+				const { link } = notificationTarget("student", NotificationTargetKind.PAYMENTS);
+				await this.mail.sendRentReminderEmail(user.email, name, title, body, link).catch(error =>
+					this.logger.warn(`Rent reminder email to ${payment.tenant.toString()} failed: ${(error as Error).message}`)
+				);
+			}
+			if (!this.conversations) return;
+			// Hand-made tenancies have no application, so no thread to post in.
+			const tenancy = await this.tenancyModel.findById(payment.tenancy, { application: 1 }).lean().exec();
+			const application = tenancy?.application
+				? await this.applicationModel.findById(tenancy.application, { conversation: 1 }).lean().exec()
+				: null;
+			if (!application?.conversation) return;
+			await this.conversations.sendMessage(
+				{ message: `Seek reminder for ${name}: ${title}. ${body}` },
+				application.conversation.toString(),
+				payment.landlord.toString()
+			);
+		} catch (error) {
+			this.logger.warn(`Rent reminder delivery for ${payment.tenant.toString()} failed: ${(error as Error).message}`);
+		}
 	}
 
 	/**
@@ -599,17 +650,20 @@ export class PaymentsService {
 		}
 		const late = payment.status === PaymentStatus.LATE;
 		const what = payment.kind === PaymentKind.HOLDING_DEPOSIT ? "Holding deposit" : "Rent";
+		const title = late
+			? `Reminder: ${what.toLowerCase()} of ${formatPence(payment.amount)} is overdue`
+			: `Reminder: ${what.toLowerCase()} of ${formatPence(payment.amount)} is due ${formatDay(payment.dueDate)}`;
+		const body = "Your landlord asked Seek to remind you. Pay in Seek in a couple of taps.";
 		const sent = await this.notifications.notify({
 			user: payment.tenant,
 			kind: NotificationKind.RENT_REMINDER,
-			title: late
-				? `Reminder: ${what.toLowerCase()} of ${formatPence(payment.amount)} is overdue`
-				: `Reminder: ${what.toLowerCase()} of ${formatPence(payment.amount)} is due ${formatDay(payment.dueDate)}`,
-			body: "Your landlord asked Seek to remind you. Pay in Seek in a couple of taps.",
+			title,
+			body,
 			...notificationTarget("student", NotificationTargetKind.PAYMENTS),
 			dedupeKey: `nudge:${payment._id.toString()}:${now.toISOString().slice(0, 10)}`
 		});
 		if (!sent) return { reminded: 0, skipped: 1 };
+		await this.deliverReminder(payment, title, body);
 		await this.paymentModel.updateOne(
 			{ _id: payment._id },
 			{ $inc: { remindersSent: 1 }, $set: { lastReminderAt: now } }
@@ -724,7 +778,7 @@ export class PaymentsService {
 						}
 					],
 					payment_intent_data: {
-						...toLandlord(destination, payment.seekFee),
+						...toLandlord(destination, feeFor(payment).seekFee),
 						...(saveCard ? { setup_future_usage: "off_session" } : {}),
 						metadata: this.stripeMetadata(payment)
 					},
@@ -1098,21 +1152,24 @@ export class PaymentsService {
 			});
 			if (!stage) continue;
 			const daysLate = Math.round((today.getTime() - startOfUtcDay(payment.dueDate).getTime()) / DAY_MS);
+			const title = stage === "LATE"
+				? `Rent of ${formatPence(payment.amount)} is ${daysLate} days overdue`
+				: stage === "DUE_DAY"
+					? `Rent of ${formatPence(payment.amount)} is due today`
+					: `Rent of ${formatPence(payment.amount)} is due on ${formatDay(payment.dueDate)}`;
+			const body = stage === "LATE"
+				? "Pay now to keep your record clean."
+				: plan?.autopay ? "Autopay will take it automatically." : "Pay in Seek in a couple of taps.";
 			const sent = await this.notifications.notify({
 				user: payment.tenant,
 				kind: NotificationKind.RENT_REMINDER,
-				title: stage === "LATE"
-					? `Rent of ${formatPence(payment.amount)} is ${daysLate} days overdue`
-					: stage === "DUE_DAY"
-						? `Rent of ${formatPence(payment.amount)} is due today`
-						: `Rent of ${formatPence(payment.amount)} is due on ${formatDay(payment.dueDate)}`,
-				body: stage === "LATE"
-					? "Pay now to keep your record clean."
-					: plan?.autopay ? "Autopay will take it automatically." : "Pay in Seek in a couple of taps.",
+				title,
+				body,
 				...notificationTarget("student", NotificationTargetKind.PAYMENTS),
 				dedupeKey: `reminder:${payment._id.toString()}:${stage}`
 			});
 			if (sent) {
+				await this.deliverReminder(payment, title, body);
 				await this.paymentModel.updateOne(
 					{ _id: payment._id },
 					{ $inc: { remindersSent: 1 }, $set: { lastReminderAt: now } }
@@ -1171,7 +1228,7 @@ export class PaymentsService {
 							payment_method: plan.paymentMethodId,
 							off_session: true,
 							confirm: true,
-							...toLandlord(destination, payment.seekFee),
+							...toLandlord(destination, feeFor(payment).seekFee),
 							description: await this.describe(payment),
 							metadata: this.stripeMetadata(payment)
 						},
@@ -1273,7 +1330,7 @@ export class PaymentsService {
 					amount: payment.amount,
 					currency: "gbp",
 					automatic_payment_methods: { enabled: true },
-					...toLandlord(destination, payment.seekFee),
+					...toLandlord(destination, feeFor(payment).seekFee),
 					description: await this.describe(payment),
 					metadata: this.stripeMetadata(payment)
 				},
@@ -1298,7 +1355,8 @@ export class PaymentsService {
 		const paid = await this.paymentModel
 			.findOneAndUpdate(
 				{ _id: payment._id, status: { $ne: PaymentStatus.PAID } },
-				{ $set: { status: PaymentStatus.PAID, paidAt: new Date(), provider, providerRef } },
+				// The fee is fixed when the money is collected (Seek keeps 1% of rent actually collected).
+				{ $set: { status: PaymentStatus.PAID, paidAt: new Date(), provider, providerRef, ...feeFor({ ...payment, status: undefined }) } },
 				{ new: true }
 			)
 			.lean()

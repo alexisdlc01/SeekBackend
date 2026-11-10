@@ -66,6 +66,18 @@ export class DocumentSharesService {
 		);
 	}
 
+	/** Access ends when the application closes: revokes its shares (only these owners' when given). */
+	async revokeForApplication(application: Types.ObjectId | string, ownerIds?: (Types.ObjectId | string)[]): Promise<void> {
+		await this.shareModel.updateMany(
+			{
+				application: new Types.ObjectId(application.toString()),
+				revokedAt: null,
+				...(ownerIds ? { owner: { $in: ownerIds.map(id => new Types.ObjectId(id.toString())) } } : {})
+			},
+			{ $set: { revokedAt: new Date() } }
+		);
+	}
+
 	async listForOwner(ownerId: string, now: Date = new Date()): Promise<ShareView[]> {
 		const shares = await this.shareModel
 			.find({ owner: new Types.ObjectId(ownerId) })

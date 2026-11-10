@@ -76,13 +76,18 @@ export class FlagsService {
 		const result = await this.flagModel
 			.findByIdAndUpdate(id, {
 				$set: {
-					status: resolveFlagDto.status
+					status: resolveFlagDto.status,
+					...(resolveFlagDto.supportResponse !== undefined ? { supportResponse: resolveFlagDto.supportResponse.trim() } : {})
 				}
 			})
 			.exec();
 		if (!result) {
 			throw new NotFoundException("Flag not found");
 		}
+	}
+
+	async findMine(userId: Types.ObjectId): Promise<Flag[]> {
+		return this.flagModel.find({ createdBy: userId }).sort({ createdAt: -1 }).lean().exec();
 	}
 
 	async getAll(): Promise<Flag[]> {

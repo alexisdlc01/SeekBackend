@@ -173,9 +173,10 @@ export class StripeClient {
 	/** The hosted onboarding page for an account (links are single use). */
 	createAccountLink(params: { account: string; return_url: string; refresh_url: string }): Promise<StripeAccountLink> {
 		const { account, ...urls } = params;
+		// Stripe-Version 2026-10-28.endive rejects `configurations` here; it onboards the account's own configuration.
 		return this.request("POST", "/v2/core/account_links", {
 			account,
-			use_case: { type: "account_onboarding", account_onboarding: { configurations: ["recipient"], ...urls } }
+			use_case: { type: "account_onboarding", account_onboarding: urls }
 		});
 	}
 

@@ -150,7 +150,9 @@ export class AccountService {
 					pendingEmailToken: 1,
 					resetPasswordToken: 1,
 					emailVerificationToken: 1,
-					otpVerificationCode: 1
+					otpVerificationCode: 1,
+					// Frees the university address so it can be verified again on a new account.
+					universityEmail: 1
 				}
 			}
 		);

@@ -14,7 +14,7 @@ import { ParseObjectIdPipe } from "../shared/parse-object-id.pipe";
 import { TenanciesService } from "./tenancies.service";
 import { Tenancy } from "./tenancy.schema";
 import { CreateTenancyDto } from "./dto/create-tenancy.dto";
-import { DepositReceivedDto, PrescribedInfoDto, UpdateDepositDto } from "./dto/update-deposit.dto";
+import { DepositReceivedDto, PrescribedInfoDto, UpdateDepositDto, UpdateEnergyAllowanceDto } from "./dto/update-deposit.dto";
 import { AddTenancyDocumentDto } from "./dto/add-tenancy-document.dto";
 
 @Controller("tenancies")
@@ -87,6 +87,21 @@ export class TenanciesController {
 		@CurrentUser() user: User
 	) {
 		return this.tenanciesService.updateDeposit(id, body, user);
+	}
+
+	@TeamAccess(TeamScope.TENANCIES)
+	@Patch(":id/energy-allowance")
+	@LandlordAgency()
+	@ApiOperation({ summary: "Set or remove the household's monthly energy fair-use allowance." })
+	@ApiResponse({ status: 200, type: Tenancy })
+	@ApiResponse({ status: 400, type: ErrorDto })
+	@ApiResponse({ status: 403, type: ErrorDto })
+	async energyAllowance(
+		@Param("id", ParseObjectIdPipe) id: string,
+		@Body() body: UpdateEnergyAllowanceDto,
+		@CurrentUser() user: User
+	) {
+		return this.tenanciesService.updateEnergyAllowance(id, body.energyAllowance, user);
 	}
 
 	@TeamAccess(TeamScope.TENANCIES)

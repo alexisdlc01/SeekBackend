@@ -3,8 +3,8 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { Payment } from "./payment.schema";
 import { RentPlan } from "./rent-plan.schema";
-import { PaymentStatus, PlanFrequency } from "./payment.enums";
-import { addMonths, buildSchedule, firstTrackedDate, startOfUtcDay } from "./schedule";
+import { PaymentKind, PaymentStatus, PlanFrequency } from "./payment.enums";
+import { addMonths, buildSchedule, computeFee, firstTrackedDate, startOfUtcDay } from "./schedule";
 
 interface TenancyForSchedule {
 	_id: Types.ObjectId;
@@ -13,6 +13,8 @@ interface TenancyForSchedule {
 	startDate: Date;
 	endDate?: Date | null;
 	monthlyRent: number;
+	/** Set when the tenancy came from an application: its paid holding deposits count toward rent. */
+	application?: Types.ObjectId | null;
 }
 
 /**
@@ -94,8 +96,18 @@ export class RentScheduleService {
 		});
 		if (instalments.length === 0) return [];
 
+		// Tenant Fees Act: a paid holding deposit goes towards the first rent.
+		let credit = await this.unusedHoldingCredit(tenancy, tenant);
+		const rows = instalments.map(instalment => {
+			const applied = Math.min(credit, instalment.amount);
+			credit -= applied;
+			if (applied === 0) return instalment;
+			const amount = instalment.amount - applied;
+			return { ...instalment, amount, ...computeFee(amount), holdingDepositCredit: applied };
+		});
+
 		return this.paymentModel.insertMany(
-			instalments.map(instalment => ({
+			rows.map(instalment => ({
 				tenancy: tenancy._id,
 				tenant,
 				landlord: tenancy.landlord,
@@ -103,5 +115,22 @@ export class RentScheduleService {
 				...instalment
 			}))
 		);
+	}
+
+	/** The tenant's paid holding deposits for this tenancy's application, less what rent rows already absorbed. */
+	private async unusedHoldingCredit(tenancy: TenancyForSchedule, tenant: Types.ObjectId): Promise<number> {
+		if (!tenancy.application) return 0;
+		const [paid, applied] = await Promise.all([
+			this.paymentModel
+				.find({ application: tenancy.application, tenant, kind: PaymentKind.HOLDING_DEPOSIT, status: PaymentStatus.PAID, refundDue: { $ne: true } }, { amount: 1 })
+				.lean()
+				.exec(),
+			this.paymentModel
+				.find({ tenancy: tenancy._id, tenant, holdingDepositCredit: { $gt: 0 } }, { holdingDepositCredit: 1 })
+				.lean()
+				.exec()
+		]);
+		const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
+		return Math.max(0, sum(paid.map(row => row.amount)) - sum(applied.map(row => row.holdingDepositCredit ?? 0)));
 	}
 }

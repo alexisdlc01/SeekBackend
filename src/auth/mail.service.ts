@@ -29,13 +29,15 @@ export class MailService {
 	private readonly domain: string;
 
 	constructor(private readonly configService: ConfigService) {
+		this.domain = this.configService.getOrThrow("MAILGUN_DOMAIN");
+		// Sandbox domains only exist in Mailgun's US region, so they need api.mailgun.net.
+		const url = this.domain.endsWith(".mailgun.org") ? "https://api.mailgun.net" : "https://api.eu.mailgun.net";
 		const mailgun = new Mailgun(formData);
 		this.mail = mailgun.client({
 			username: "api",
 			key: this.configService.getOrThrow("MAILGUN_API_KEY"),
-			url: "https://api.eu.mailgun.net"
+			url
 		});
-		this.domain = this.configService.getOrThrow("MAILGUN_DOMAIN");
 	}
 
 	async sendVerificationEmail(email: string, token: string, userId: string) {
@@ -56,6 +58,34 @@ export class MailService {
 			to: [email],
 			subject: "Activate your account",
 			text: `Use this code to verify your account: ${otp}`
+		});
+	}
+
+	async sendStudentVerificationCode(email: string, code: string) {
+		await this.mail.messages.create(this.domain, {
+			from: `Seek <noreply@${this.domain}>`,
+			to: [email],
+			subject: "Your Seek student verification code",
+			text: `Your Seek student verification code is ${code}. It expires in 15 minutes. If you didn't ask for it, ignore this email.`,
+			html: `<p>Your Seek student verification code is <b>${escapeHtml(code)}</b>.</p><p>It expires in 15 minutes. If you didn't ask for it, ignore this email.</p>`
+		});
+	}
+
+	/**
+	 * Asks a guarantor or referee to reply with the document. Replies go to the
+	 * student, and a connected inbox files a reply whose subject says "reference"
+	 * into their Seek Passport.
+	 */
+	async sendReferenceRequest(to: { name: string; email: string }, student: { name: string; email: string }, subject: string, ask: string) {
+		const intro = `Hi ${to.name}, ${student.name} is renting a student home through Seek and asked us to contact you.`;
+		const outro = `Just reply to this email: your reply goes straight to ${student.name} (${student.email}).`;
+		await this.mail.messages.create(this.domain, {
+			from: `Seek <noreply@${this.domain}>`,
+			"h:Reply-To": student.email,
+			to: [to.email],
+			subject,
+			text: `${intro}\n\n${ask}\n\n${outro}`,
+			html: `<p>${escapeHtml(intro)}</p><p>${escapeHtml(ask)}</p><p>${escapeHtml(outro)}</p>`
 		});
 	}
 
@@ -130,6 +160,18 @@ export class MailService {
 			subject: "Your tenancy agreement is ready to sign",
 			text: `${intro} Read and sign it here: ${link}`,
 			html: `<p>${escapeHtml(intro)}</p><p><a href="${escapeHtml(link)}">Read and sign it on Seek</a></p>`
+		});
+	}
+
+	/** A rent reminder (automatic or sent by the landlord) also reaches the tenant's inbox. */
+	async sendRentReminderEmail(email: string, name: string, title: string, body: string, path: string) {
+		const link = `${this.configService.getOrThrow<string>("FRONTEND_URL").split(",")[0].trim().replace(/\/$/, "")}${path}`;
+		await this.mail.messages.create(this.domain, {
+			from: `Seek <noreply@${this.domain}>`,
+			to: [email],
+			subject: title,
+			text: `Hi ${name}, ${body} Pay here: ${link}`,
+			html: `<p>Hi ${escapeHtml(name)},</p><p>${escapeHtml(title)}. ${escapeHtml(body)}</p><p><a href="${escapeHtml(link)}">Pay on Seek</a></p>`
 		});
 	}
 

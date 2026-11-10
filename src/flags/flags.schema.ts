@@ -37,6 +37,13 @@ export class Flag {
 	@ApiProperty({ required: false })
 	@Prop()
 	resolutionDate: Date;
+
+	@ApiProperty({ type: String, nullable: true, required: false, description: "Seek support's reply to the reporter." })
+	@Prop({ type: String, default: null })
+	supportResponse: string | null;
+
+	@ApiProperty({ type: String, format: "date-time" })
+	createdAt: Date;
 }
 
 export const FlagSchema = SchemaFactory.createForClass(Flag);

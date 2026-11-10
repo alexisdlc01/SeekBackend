@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { Types } from "mongoose";
 import { depositReceivedDate, TenanciesService } from "./tenancies.service";
 import { TenancyStatus } from "./tenancy.enums";
@@ -171,6 +171,84 @@ describe("TenanciesService create / accept", () => {
 		await expect(
 			service.accept(new Types.ObjectId().toString(), { _id: new Types.ObjectId(), role: Role.STUDENT } as any)
 		).rejects.toBeInstanceOf(ForbiddenException);
+	});
+
+	describe("one tenancy at a time (no overlapping dates)", () => {
+		const student = new Types.ObjectId();
+		const d = (iso: string) => new Date(iso);
+		// Evaluates the helper's exists() filter against `others`, like Mongo would.
+		const matches = (q: any, t: any) =>
+			q.status.$in.includes(t.status)
+			&& t.tenants.some((id: Types.ObjectId) => q.tenants.$in.some((x: Types.ObjectId) => x.equals(id)))
+			&& (!q._id || !t._id.equals(q._id.$ne))
+			&& (!q.startDate || t.startDate < q.startDate.$lt)
+			&& (!q.$or || t.endDate == null || t.endDate > q.$or[1].endDate.$gt);
+		function withExisting(status: TenancyStatus, startDate = d("2030-09-01"), endDate: Date | null = d("2031-06-30")) {
+			const ctx = setup();
+			const others = [{ _id: new Types.ObjectId(), tenants: [student], status, startDate, endDate }];
+			ctx.tenancyModel.exists.mockImplementation(async (q: any) => (q.tenants ? others.find(t => matches(q, t)) ?? null : null));
+			(ctx.tenancyModel as any).findOne = jest.fn().mockReturnValue(lean(null));
+			return ctx;
+		}
+		const fromApplication = () => ({ _id: new Types.ObjectId(), listing: listingId, landlord: landlordId, applicants: [student] });
+		const manual = (startDate: string, endDate?: string) => ({ ...base, startDate, endDate, tenants: [student.toString()] });
+
+		it("refuses a second tenancy whose dates overlap a current one (409)", async () => {
+			for (const status of [TenancyStatus.ACTIVE, TenancyStatus.PENDING_ACCEPTANCE]) {
+				const { service, tenancyModel, listingModel } = withExisting(status);
+				await expect(service.create(manual("2031-01-01", "2031-12-31"), landlord)).rejects.toThrow(ConflictException);
+				await expect(service.create(manual("2030-01-01"), landlord)).rejects.toThrow("already has a tenancy for these dates");
+				listingModel.findById.mockReturnValue(lean({ ...listing, availableFrom: d("2031-01-01"), availableUntil: d("2031-12-31") }));
+				await expect(service.createFromApplication(fromApplication())).rejects.toThrow("Seek allows one tenancy at a time.");
+				tenancyModel.findById.mockReturnValue(
+					lean({ _id: new Types.ObjectId(), tenants: [], pendingTenants: [student], status: TenancyStatus.PENDING_ACCEPTANCE, startDate: d("2031-03-01"), endDate: null })
+				);
+				await expect(service.accept(new Types.ObjectId().toString(), { _id: student, role: Role.STUDENT } as any)).rejects.toThrow(ConflictException);
+				expect(tenancyModel.create).not.toHaveBeenCalled();
+				expect(tenancyModel.updateOne).not.toHaveBeenCalled();
+			}
+			// No end date = open-ended: it overlaps everything after its start.
+			const { service } = withExisting(TenancyStatus.ACTIVE, d("2030-09-01"), null);
+			await expect(service.create(manual("2035-09-01", "2036-06-30"), landlord)).rejects.toThrow(ConflictException);
+		});
+
+		it("allows next year's home starting on or after the current one ends", async () => {
+			const { service, listingModel, created } = withExisting(TenancyStatus.ACTIVE);
+			await service.create(manual("2031-06-30", "2032-06-30"), landlord);
+			listingModel.findById.mockReturnValue(lean({ ...listing, availableFrom: d("2031-07-01"), availableUntil: d("2032-06-30") }));
+			await service.createFromApplication(fromApplication());
+			expect(created).toHaveLength(2);
+		});
+
+		it("lets an ENDED tenancy's dates be reused", async () => {
+			const { service, created } = withExisting(TenancyStatus.ENDED);
+			await service.create(manual("2031-01-01", "2031-12-31"), landlord);
+			expect(created).toHaveLength(1);
+		});
+	});
+
+	it("updateDeposit sets, clears or keeps the energy allowance", async () => {
+		const { service, tenancyModel } = setup();
+		jest.spyOn(service, "findForLandlord").mockResolvedValue({ _id: new Types.ObjectId(), listing: listingId, monthlyRent: 69500, depositAmount: 50000 } as any);
+		const deposit = { depositScheme: "DPS", depositReference: "DPS-1" } as any;
+		const lastSet = () => tenancyModel.updateOne.mock.calls.at(-1)![1].$set;
+
+		await service.updateDeposit("t", { ...deposit, energyAllowance: 20000 }, landlord);
+		expect(lastSet().energyAllowance).toBe(20000);
+		await service.updateDeposit("t", { ...deposit, energyAllowance: null }, landlord);
+		expect(lastSet()).toHaveProperty("energyAllowance", null);
+		await service.updateDeposit("t", deposit, landlord);
+		expect(lastSet()).not.toHaveProperty("energyAllowance");
+	});
+
+	it("sets or clears only the allowance for the owning landlord", async () => {
+		const { service, tenancyModel } = setup();
+		jest.spyOn(service, "findForLandlord").mockResolvedValue({ _id: new Types.ObjectId() } as any);
+		jest.spyOn(service, "getDetail").mockResolvedValue({} as any);
+		await service.updateEnergyAllowance("t", 15000, landlord);
+		expect(tenancyModel.updateOne.mock.calls.at(-1)![1]).toEqual({ $set: { energyAllowance: 15000 } });
+		await service.updateEnergyAllowance("t", null, landlord);
+		expect(tenancyModel.updateOne.mock.calls.at(-1)![1]).toEqual({ $set: { energyAllowance: null } });
 	});
 });
 

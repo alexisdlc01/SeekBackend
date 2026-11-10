@@ -27,4 +27,15 @@ describe("FlagsService", () => {
 			service.create({ reportedUser: "64b64b64b64b64b64b64b64b", text: "spam" } as never, { _id: "u", email: "a@st-andrews.ac.uk" } as never)
 		).resolves.toBe(stored);
 	});
+
+	it("lists only the caller's reports, newest first", async () => {
+		const sort = jest.fn().mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue([]) }) });
+		const flagModel = { find: jest.fn().mockReturnValue({ sort }) };
+		const service = new FlagsService(flagModel as never, {} as never, {} as never);
+		const me = "64b64b64b64b64b64b64b64b" as never;
+
+		await service.findMine(me);
+		expect(flagModel.find).toHaveBeenCalledWith({ createdBy: me });
+		expect(sort).toHaveBeenCalledWith({ createdAt: -1 });
+	});
 });

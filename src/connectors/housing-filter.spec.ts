@@ -10,8 +10,10 @@ import {
 	parseAddress,
 	parseAddressList,
 	parseAmountPence,
+	referenceTypeFor,
 	threadKeyFor
 } from "./housing-filter";
+import { DocumentType } from "../users/types/document-type";
 
 const james: HousingContact = {
 	email: "james@holloway-lets.co.uk",
@@ -88,6 +90,13 @@ describe("attachment filing", () => {
 		["scan.pdf", "Your CP12 for 14 Cotham Grove", TenancyDocumentType.GAS_SAFETY]
 	])("%s → %s", (name, subject, type) => {
 		expect(documentTypeFor(name, subject)).toBe(type);
+	});
+
+	it("files replies to Seek's reference requests under the right passport row", () => {
+		expect(referenceTypeFor("ref.pdf", "Re: Letting agent reference for Sam")).toBe(DocumentType.AGENT_REFERENCE);
+		expect(referenceTypeFor("ref.pdf", "Re: Landlord reference for Sam")).toBe(DocumentType.LANDLORD_REFERENCE);
+		expect(referenceTypeFor("ref.pdf", "Re: Character reference for Sam's housing application")).toBe(DocumentType.CHARACTER_REFERENCE);
+		expect(classifyEmail({ from: "lets@agent.co.uk", fromName: "", to: [], subject: "Re: Letting agent reference for Sam", outgoing: false } as never, new Map()).housing).toBe(true);
 	});
 
 	it("leaves unrelated files alone", () => {

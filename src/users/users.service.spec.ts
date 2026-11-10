@@ -1,4 +1,5 @@
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ServiceUnavailableException } from "@nestjs/common";
+import { DocumentType } from "./types/document-type";
 import UsersService from "./users.service";
 
 describe("UsersService", () => {
@@ -11,7 +12,31 @@ describe("UsersService", () => {
 		userModel = {
 			findByIdAndUpdate: jest.fn()
 		};
-		service = new UsersService(userModel as never, {} as never);
+		service = new UsersService(userModel as never, {} as never, {} as never);
+	});
+
+	it("emails a referee before saving the pending request, and saves nothing when the email fails", async () => {
+		const updateOne = jest.fn().mockResolvedValue({});
+		const sendReferenceRequest = jest.fn().mockResolvedValue(undefined);
+		const model = { updateOne, findById: () => ({ lean: () => ({ exec: async () => ({ documents: [], referenceRequests: [] }) }) }) };
+		const users = new UsersService(model as never, {} as never, { sendReferenceRequest } as never);
+		const student = { _id: "u1", name: "Sam", email: "sam@example.com" } as never;
+		const body = { type: DocumentType.AGENT_REFERENCE, name: " Bristol Lets ", email: "Lets@Agent.co.uk" } as const;
+
+		await users.requestReference(student, body);
+		expect(sendReferenceRequest).toHaveBeenCalledWith(
+			{ name: "Bristol Lets", email: "lets@agent.co.uk" }, { name: "Sam", email: "sam@example.com" },
+			"Letting agent reference for Sam", expect.any(String)
+		);
+		expect(updateOne).toHaveBeenLastCalledWith({ _id: "u1" }, {
+			$push: { referenceRequests: { type: DocumentType.AGENT_REFERENCE, name: "Bristol Lets", email: "lets@agent.co.uk", requestedAt: expect.any(Date) } }
+		});
+
+		updateOne.mockClear();
+		sendReferenceRequest.mockRejectedValue(new Error("mailgun down"));
+		await expect(users.requestReference(student, body)).rejects.toBeInstanceOf(ServiceUnavailableException);
+		expect(updateOne).not.toHaveBeenCalled();
+		await expect(users.requestReference(student, { ...body, email: "SAM@example.com" })).rejects.toBeInstanceOf(BadRequestException);
 	});
 
 	it("should be defined", () => {
@@ -157,5 +182,30 @@ describe("UsersService", () => {
 				)
 			).rejects.toThrow("Document key was not issued to this account.");
 		});
+	});
+
+	it("lists PENDING uploads oldest first with a signed private link only", async () => {
+		const find = jest.fn().mockReturnValue({ lean: () => ({ exec: async () => [
+			{ _id: { toString: () => "u1" }, name: "Maya", email: "maya@ucl.ac.uk", documents: [
+				{ type: DocumentType.PASSPORT, status: "PENDING", key: "private/u1/a.pdf", url: "https://bucket/private/u1/a.pdf", uploadedAt: new Date("2026-11-05") },
+				{ type: DocumentType.RIGHT_TO_RENT, status: "VERIFIED", key: "private/u1/b.pdf", uploadedAt: new Date("2026-11-01") }
+			] },
+			{ _id: { toString: () => "u2" }, name: "Sam", email: "sam@kcl.ac.uk", documents: [
+				{ type: DocumentType.PROOF_OF_FUNDS, status: "PENDING", key: "public/old.pdf", url: "https://bucket/public/old.pdf", uploadedAt: new Date("2026-11-02") }
+			] }
+		] }) });
+		const getPresignedDownloadUrl = jest.fn().mockResolvedValue("https://signed");
+		const users = new UsersService({ find } as never, {} as never, {} as never, { getPresignedDownloadUrl } as never);
+
+		const pending = await users.listPendingDocuments();
+
+		expect(find.mock.calls[0][0]).toEqual({ deletedAt: null, documents: { $elemMatch: { status: "PENDING" } } });
+		expect(pending.map(p => [p.userId, p.type, p.url])).toEqual([
+			["u2", DocumentType.PROOF_OF_FUNDS, null],
+			["u1", DocumentType.PASSPORT, "https://signed"]
+		]);
+		expect(pending[1]).toMatchObject({ name: "Maya", email: "maya@ucl.ac.uk" });
+		expect(getPresignedDownloadUrl).toHaveBeenCalledTimes(1);
+		expect(getPresignedDownloadUrl).toHaveBeenCalledWith("private/u1/a.pdf", "private");
 	});
 });

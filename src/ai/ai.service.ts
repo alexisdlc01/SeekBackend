@@ -30,7 +30,7 @@ import { ChatTurn } from "./anthropic.client";
 import { LlmClient, LlmProvider } from "./llm.client";
 import { matchHome } from "./listing-match";
 import { householdReadiness, ReadinessCriteria } from "../application/readiness";
-import { buildPassport, PassportDocumentInput } from "../users/passport";
+import { buildPassport, PassportDocumentInput, StudentEmailProof } from "../users/passport";
 import {
 	AREAS,
 	SearchFilters,
@@ -659,12 +659,12 @@ export class AiService {
 	private async householdAdvice(user: Viewer, applicationId: string, now: Date): Promise<AdviceDraft> {
 		const application = await this.applicationModel
 			.findById(applicationId)
-			.populate({ path: "applicants", select: "name documents" })
+			.populate({ path: "applicants", select: "name documents studentVerifiedAt universityEmail" })
 			.lean()
 			.exec();
 		if (!application) throw new NotFoundException("Application not found");
 		const uid = user._id.toString();
-		const members = (application.applicants as unknown as { _id: Types.ObjectId; name?: string; documents?: PassportDocumentInput[] }[])
+		const members = (application.applicants as unknown as ({ _id: Types.ObjectId; name?: string; documents?: PassportDocumentInput[] } & StudentEmailProof)[])
 			.filter(member => member && typeof member === "object" && "_id" in member);
 		const landlord = application.landlord?.toString() === uid;
 		if (!landlord && !members.some(member => member._id.toString() === uid)) {
@@ -684,7 +684,7 @@ export class AiService {
 				: `${landlord ? "This household" : "Your household"} doesn't qualify for ${home} yet. Not met: ${missing.map(criterion => `${criterion.label} (${criterion.detail})`).join("; ")}.`
 		];
 		for (const member of members) {
-			const passport = buildPassport(member.documents, now);
+			const passport = buildPassport(member.documents, now, member);
 			const todo = passport.sections.flatMap(section => section.items).filter(item => passport.missingRequired.includes(item.type)).map(item => item.label);
 			lines.push(passport.ready ? `${member.name ?? "A member"}: Seek Passport ready.` : `${member.name ?? "A member"}: still needs ${todo.join(", ")}.`);
 		}
@@ -742,8 +742,8 @@ export class AiService {
 			return {
 				title: "Rent",
 				advice: landlord
-					? "Seek's fee is 0.5% of the rent collected, paid by you. Tenants pay no fee. In England rent in advance is capped at one month."
-					: "On Seek you pay rent monthly with no fee; your landlord pays Seek's 0.5% fee. In England a landlord can't ask for more than one month's rent in advance.",
+					? "Seek's fee is 1% of the rent collected, paid by you. Tenants pay no fee. In England rent in advance is capped at one month."
+					: "On Seek you pay rent monthly with no fee; your landlord pays Seek's 1% fee. In England a landlord can't ask for more than one month's rent in advance.",
 				actions: [{ label: "Open rent", link: "/rent" }]
 			};
 		}
@@ -770,7 +770,7 @@ export class AiService {
 				tenants > 1
 					? `Rent at ${home} is ${money(tenancy.monthlyRent)} a month per tenant (${money(collected)} from ${tenants} tenants).`
 					: `Rent at ${home} is ${money(tenancy.monthlyRent)} a month.`,
-				`Seek's fee is 0.5% of rent collected (${money(fee)} a month), paid by you; tenants pay no fee.`
+				`Seek's fee is 1% of rent collected (${money(fee)} a month), paid by you; tenants pay no fee.`
 			);
 			if (late.length) lines.push(`${late.length} payment${late.length === 1 ? " is" : "s are"} overdue.`);
 		} else {

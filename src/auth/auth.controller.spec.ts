@@ -1,4 +1,7 @@
+import { firstValueFrom, of } from "rxjs";
 import { AuthController } from "./auth.controller";
+import { SerializeInterceptor } from "../interceptors/serialize.interceptor";
+import { UserDto } from "../users/dto/user.dto";
 
 describe("AuthController", () => {
 	let controller: AuthController;
@@ -19,6 +22,15 @@ describe("AuthController", () => {
 		};
 		response = { cookie: jest.fn(), clearCookie: jest.fn() };
 		controller = new AuthController(authService as never, {} as never);
+	});
+
+	it("currentUser keeps payoutsConnected true after serialization", async () => {
+		const user = { _id: "u1", name: "Ada", stripeAccountId: "acct_123" };
+		const handled = await controller.currentUser(user as never);
+		const out: any = await firstValueFrom(
+			new SerializeInterceptor(UserDto).intercept({} as never, { handle: () => of(handled) })
+		);
+		expect(out.payoutsConnected).toBe(true);
 	});
 
 	it("returns tokens immediately for mobile signup when verification is disabled", async () => {
@@ -59,6 +71,17 @@ describe("AuthController", () => {
 			userId: "user-1"
 		});
 		expect(authService.login).not.toHaveBeenCalled();
+	});
+
+	it("refuses a landlord signing in from the mobile app, but not from the web", async () => {
+		const landlord = { _id: "l1", role: "LANDLORD_AGENCY" };
+		await expect(controller.login(landlord as never, { headers: { platform: "mobile" } } as never, response as never))
+			.rejects.toThrow("Landlords use Seek on the web");
+		expect(authService.login).not.toHaveBeenCalled();
+
+		await controller.login(landlord as never, { headers: {} } as never, response as never);
+		await controller.login({ _id: "s1", role: "STUDENT" } as never, { headers: { platform: "mobile" } } as never, response as never);
+		expect(authService.login).toHaveBeenCalledTimes(2);
 	});
 
 	it("selects the mobile reset-link flow from the platform header", async () => {

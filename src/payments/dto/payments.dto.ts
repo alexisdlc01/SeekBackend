@@ -29,6 +29,9 @@ export class RentPlanViewDto {
 	@ApiProperty({ enum: ["stripe", "simulated", "unavailable"] })
 	mode: "stripe" | "simulated" | "unavailable";
 
+	@ApiProperty({ description: "True once a card is saved for autopay (Stripe charges it off-session)." })
+	autopayCardSaved: boolean;
+
 	@ApiProperty({ type: [StudentPaymentDto], description: "Next payments due (up to 3)." })
 	upcoming: StudentPaymentDto[];
 }
@@ -274,11 +277,14 @@ export class LandlordPaymentRowDto {
 	@ApiProperty({ description: "A paid holding deposit the landlord must refund within 7 days (Tenant Fees Act)." })
 	refundDue: boolean;
 
-	@ApiProperty({ description: "Seek's 0.5% fee on this payment, pence." })
+	@ApiProperty({ description: "Seek's 1% fee on this payment, pence." })
 	fee: number;
 
 	@ApiProperty({ description: "What the landlord receives for this payment, pence." })
 	payout: number;
+
+	@ApiProperty({ description: "The tenant's paid holding deposit counted toward this rent, pence (0 if none). `amount` is already reduced by it." })
+	holdingDepositCredit: number;
 
 	@ApiProperty({
 		type: String,

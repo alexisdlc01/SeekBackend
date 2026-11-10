@@ -136,7 +136,7 @@ export class PaymentsController {
 	@Student()
 	@HttpCode(200)
 	@ApiOperation({
-		summary: "Pay with Stripe's hosted Checkout page. Returns its url; Seek's 0.5% fee goes to Seek, the rest to the landlord's connected account."
+		summary: "Pay with Stripe's hosted Checkout page. Returns its url; Seek's 1% fee goes to Seek, the rest to the landlord's connected account."
 	})
 	@ApiResponse({ status: 200, type: CheckoutResponseDto })
 	@ApiResponse({ status: 400, type: ErrorDto })

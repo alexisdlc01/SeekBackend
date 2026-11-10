@@ -16,8 +16,8 @@ describe("PaymentsService.checkout (Stripe)", () => {
 		tenant,
 		landlord,
 		amount: 69500,
-		seekFee: 348,
-		payout: 69152,
+		seekFee: 695,
+		payout: 68805,
 		status: PaymentStatus.SCHEDULED,
 		dueDate: new Date("2026-12-01T00:00:00Z"),
 		providerRef: null
@@ -60,7 +60,7 @@ describe("PaymentsService.checkout (Stripe)", () => {
 			tenancyModel as any,
 			{} as any,
 			userModel as any,
-			{} as any,
+			{ assertNoCurrentTenancy: jest.fn() } as any,
 			{} as any,
 			{} as any,
 			config as any,
@@ -125,7 +125,7 @@ describe("PaymentsService.checkout (Stripe)", () => {
 		const session = calls.find(call => call.url.endsWith("/checkout/sessions"))!.body;
 		expect(session.get("mode")).toBe("payment");
 		expect(session.get("line_items[0][price_data][unit_amount]")).toBe("69500");
-		expect(session.get("payment_intent_data[application_fee_amount]")).toBe("348");
+		expect(session.get("payment_intent_data[application_fee_amount]")).toBe("695");
 		expect(session.get("payment_intent_data[transfer_data][destination]")).toBe("acct_123");
 		expect(session.get("payment_intent_data[setup_future_usage]")).toBe("off_session");
 		expect(session.get("metadata[paymentId]")).toBe(payment._id.toString());
@@ -148,7 +148,7 @@ describe("PaymentsService.checkout (Stripe)", () => {
 		);
 	});
 
-	it("releases held payments to a ready account, minus Seek's 0.5% fee, tied to the original charge", async () => {
+	it("releases held payments to a ready account, minus Seek's 1% fee, tied to the original charge", async () => {
 		const service = setup({ capabilities: { transfers: "active" } }, false);
 		const held = { ...payment, status: PaymentStatus.PAID, payoutStatus: PayoutStatus.HELD, providerRef: "pi_1" };
 		lastPaymentModel.find = jest.fn().mockReturnValue(lean([held]));
@@ -160,7 +160,7 @@ describe("PaymentsService.checkout (Stripe)", () => {
 		calls.length = 0;
 		expect(await service.releaseHeldPayouts()).toBe(1);
 		const transfer = calls.find(call => call.url.endsWith("/transfers"))!.body;
-		expect(transfer.get("amount")).toBe(String(69500 - Math.round(69500 * 0.005)));
+		expect(transfer.get("amount")).toBe(String(69500 - Math.round(69500 * 0.01)));
 		expect(transfer.get("destination")).toBe("acct_123");
 		expect(transfer.get("source_transaction")).toBe("ch_1");
 		expect(lastPaymentModel.updateOne).toHaveBeenCalledWith(
@@ -204,7 +204,7 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 	let failExpire: boolean;
 
 	function setup(stored: Record<string, unknown> = {}) {
-		doc = { _id: id, kind: PaymentKind.RENT, tenancy, tenant, landlord, amount: 69500, seekFee: 348, payout: 69152, status: PaymentStatus.SCHEDULED, dueDate: new Date("2026-12-01T00:00:00Z"), providerRef: "cs_1", ...stored };
+		doc = { _id: id, kind: PaymentKind.RENT, tenancy, tenant, landlord, amount: 69500, seekFee: 695, payout: 68805, status: PaymentStatus.SCHEDULED, dueDate: new Date("2026-12-01T00:00:00Z"), providerRef: "cs_1", ...stored };
 		session = { id: "cs_1", status: "complete", payment_status: "paid", amount_total: 69500, customer: "cus_1", metadata: { paymentId: id.toString() }, payment_intent: { id: "pi_checkout", payment_method: "pm_card" } };
 		stripeCalls = [];
 		failExpire = false;
@@ -212,7 +212,7 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 			stripeCalls.push({ method: init?.method ?? "GET", url, body: new URLSearchParams(String(init?.body ?? "")) });
 			if (url.includes("/expire") && failExpire) return { ok: false, status: 400, json: async () => ({ error: { message: "nope" } }) } as Response;
 			const body = url.includes("/checkout/sessions/") ? session
-				: url.includes("/payment_intents/") ? { id: url.split("/payment_intents/")[1], transfer_data: { destination: "acct_123" }, application_fee_amount: 348 }
+				: url.includes("/payment_intents/") ? { id: url.split("/payment_intents/")[1], transfer_data: { destination: "acct_123" }, application_fee_amount: 695 }
 				: url.endsWith("/payment_intents") ? { id: "pi_autopay", status: "succeeded" }
 				: url.includes("/accounts/") ? { capabilities: { transfers: "active" } }
 				: { id: "re_1", status: "succeeded" };
@@ -429,10 +429,9 @@ describe("PaymentsService.connectOnboard (Stripe Accounts v2)", () => {
 			configuration: { recipient: { capabilities: { stripe_balance: { stripe_transfers: { requested: true } } } } }
 		});
 		expect(link.url).toBe("https://api.stripe.com/v2/core/account_links");
-		expect(JSON.parse(String(link.init.body))).toMatchObject({
-			account: "acct_v2",
-			use_case: { type: "account_onboarding", account_onboarding: { configurations: ["recipient"] } }
-		});
+		const linkBody = JSON.parse(String(link.init.body));
+		expect(linkBody).toMatchObject({ account: "acct_v2", use_case: { type: "account_onboarding" } });
+		expect(linkBody.use_case.account_onboarding).not.toHaveProperty("configurations");
 		expect(userModel.updateOne).toHaveBeenCalledWith({ _id: landlord }, { $set: { stripeAccountId: "acct_v2" } });
 	});
 
@@ -457,5 +456,53 @@ describe("StripeClient.retrieveAccount", () => {
 		await new StripeClient("sk_test_x").retrieveAccount("acct_old");
 		expect((fetchMock.mock.calls[0] as unknown[])[0]).toBe("https://api.stripe.com/v1/accounts/acct_old");
 		global.fetch = realFetch;
+	});
+});
+
+describe("PaymentsService.getPlan", () => {
+	it("says whether a card is saved for autopay without exposing it", async () => {
+		const tenancy = { _id: new Types.ObjectId(), listing: new Types.ObjectId(), monthlyRent: 69500 };
+		const plan = { _id: new Types.ObjectId(), autopay: true };
+		const planModel = { findOne: jest.fn().mockReturnValue(lean(plan)), exists: jest.fn().mockResolvedValue({ _id: plan._id }) };
+		const paymentModel = { find: () => ({ sort: () => ({ limit: () => lean([]) }) }) };
+		const service = new PaymentsService(
+			paymentModel as any, planModel as any, {} as any,
+			{ findById: () => lean({ nation: "ENGLAND" }) } as any,
+			{} as any, { findForTenant: jest.fn().mockResolvedValue(tenancy) } as any,
+			{} as any, {} as any, { get: () => undefined } as any, {} as any
+		);
+		const viewer = { _id: new Types.ObjectId() } as any;
+
+		const view = await service.getPlan("t", viewer);
+		expect(view.autopayCardSaved).toBe(true);
+		expect(planModel.exists).toHaveBeenCalledWith({ _id: plan._id, paymentMethodId: { $nin: [null, ""] } });
+		expect(view.plan).not.toHaveProperty("paymentMethodId");
+
+		planModel.exists.mockResolvedValue(null);
+		expect((await service.getPlan("t", viewer)).autopayCardSaved).toBe(false);
+	});
+});
+
+describe("PaymentsService.updatePlan", () => {
+	it("skips the listing's plan check when the frequency is unchanged, and applies it when it changes", async () => {
+		const tenancy = { _id: new Types.ObjectId(), status: "ACTIVE", listing: new Types.ObjectId() };
+		const listingModel = { findById: jest.fn().mockReturnValue(lean({ nation: "ENGLAND", paymentPlans: ["MONTHLY"] })) };
+		const planModel = { findOne: jest.fn().mockReturnValue(lean({ frequency: "SIX_MONTHS" })), updateOne: jest.fn(), exists: jest.fn() };
+		const service = new PaymentsService(
+			{ exists: jest.fn().mockResolvedValue(true) } as any,
+			planModel as any,
+			{} as any,
+			listingModel as any,
+			{} as any,
+			{ findForTenant: jest.fn().mockResolvedValue(tenancy) } as any,
+			{} as any,
+			{} as any,
+			{ get: () => undefined } as any,
+			{} as any
+		);
+		jest.spyOn(service, "getPlan").mockResolvedValue({} as any);
+		const tenant = { _id: new Types.ObjectId() } as any;
+		await expect(service.updatePlan("t", { frequency: "SIX_MONTHS" } as any, tenant)).resolves.toBeDefined();
+		await expect(service.updatePlan("t", { frequency: "YEARLY" } as any, tenant)).rejects.toBeInstanceOf(BadRequestException);
 	});
 });
