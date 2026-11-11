@@ -607,10 +607,7 @@ export class PaymentsService {
 		try {
 			const user = await this.userModel.findById(payment.tenant, { email: 1, name: 1 }).lean().exec();
 			const name = user?.name ?? "there";
-			// Test accounts use real university addresses: only production e-mails tenants.
-			if (this.mail && user?.email && this.config.get<string>("NODE_ENV") !== "production") {
-				this.logger.log("rent reminder e-mail skipped (non-production)");
-			} else if (this.mail && user?.email) {
+			if (this.mail && user?.email) {
 				const { link } = notificationTarget("student", NotificationTargetKind.PAYMENTS);
 				await this.mail.sendRentReminderEmail(user.email, name, title, body, link).catch(error =>
 					this.logger.warn(`Rent reminder email to ${payment.tenant.toString()} failed: ${(error as Error).message}`)

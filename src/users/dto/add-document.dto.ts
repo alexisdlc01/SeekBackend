@@ -15,7 +15,7 @@ export class AddDocumentDto {
 	documentType: DocumentType;
 
 	@ApiProperty()
-	@IsUrl()
+	@IsUrl({ protocols: ["https"], require_protocol: true })
 	url: string;
 
 	@ApiProperty({

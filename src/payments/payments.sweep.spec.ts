@@ -111,26 +111,4 @@ describe("PaymentsService.remindOne channels", () => {
 		await service.remindOne(landlord.toString(), payment._id.toString(), new Date(Date.now() + 2 * 86400000));
 		expect(conversations.sendMessage).not.toHaveBeenCalled();
 	});
-
-	it("skips the e-mail outside production but keeps the thread message", async () => {
-		nodeEnv = "development";
-		const landlord = new Types.ObjectId();
-		const conversation = new Types.ObjectId();
-		const payment = { _id: new Types.ObjectId(), tenancy: new Types.ObjectId(), tenant: new Types.ObjectId(), landlord, amount: 69500, status: PaymentStatus.LATE, dueDate: new Date("2026-11-01"), kind: "RENT" };
-		const notify = jest.fn().mockResolvedValue(true);
-		const mail = { sendRentReminderEmail: jest.fn() };
-		const conversations = { sendMessage: jest.fn().mockResolvedValue(undefined) };
-		const service = new PaymentsService(
-			{ findById: jest.fn().mockReturnValue(lean(payment)), updateOne: jest.fn() } as any, {} as any,
-			{ findById: jest.fn().mockReturnValue(lean({ application: new Types.ObjectId() })) } as any, {} as any,
-			{ findById: jest.fn().mockReturnValue(lean({ email: "maya@ucl.ac.uk", name: "Maya" })) } as any, {} as any, {} as any,
-			{ notify } as any, { get: (key: string) => (key === "NODE_ENV" ? nodeEnv : undefined) } as any,
-			{ findById: jest.fn().mockReturnValue(lean({ conversation })) } as any, mail as any, conversations as any
-		);
-
-		await expect(service.remindOne(landlord.toString(), payment._id.toString())).resolves.toEqual({ reminded: 1, skipped: 0 });
-		expect(mail.sendRentReminderEmail).not.toHaveBeenCalled();
-		expect(notify).toHaveBeenCalled();
-		expect(conversations.sendMessage).toHaveBeenCalled();
-	});
 });

@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import Mailgun from "mailgun.js";
 import { User } from "../users/users.schema";
@@ -25,6 +25,7 @@ function escapeHtml(value: unknown): string {
 
 @Injectable()
 export class MailService {
+	private readonly logger = new Logger(MailService.name);
 	private mail: any;
 	private readonly domain: string;
 
@@ -40,10 +41,22 @@ export class MailService {
 		});
 	}
 
+	/** Every e-mail goes through here: dev/test accounts use real addresses, so development and test skip sending unless explicitly opted in. */
+	private async send(message: { subject: string; [key: string]: unknown }) {
+		// Fails open: prod may not set NODE_ENV (npm run start:prod), so only dev/test skip.
+		const env = this.configService.get("NODE_ENV");
+		const skip = (env === "development" || env === "test") && this.configService.get("MAIL_SEND_OUTSIDE_PRODUCTION") !== "true";
+		if (skip) {
+			this.logger.log(`e-mail skipped (non-production): ${message.subject}`);
+			return;
+		}
+		await this.mail.messages.create(this.domain, message);
+	}
+
 	async sendVerificationEmail(email: string, token: string, userId: string) {
 		const link: string = `${this.configService.getOrThrow("FRONTEND_URL")}/verify-email?token=${token}&userId=${userId}`;
 
-		await this.mail.messages.create(this.domain, {
+		await this.send({
 			from: `Seek <noreply@${this.domain}>`,
 			to: [email],
 			subject: "Verify your email",
@@ -53,7 +66,7 @@ export class MailService {
 	}
 
 	async sendOtpEmail(email: string, otp: string) {
-		await this.mail.messages.create(this.domain, {
+		await this.send({
 			from: `Seek <noreply@${this.domain}>`,
 			to: [email],
 			subject: "Activate your account",
@@ -62,7 +75,7 @@ export class MailService {
 	}
 
 	async sendStudentVerificationCode(email: string, code: string) {
-		await this.mail.messages.create(this.domain, {
+		await this.send({
 			from: `Seek <noreply@${this.domain}>`,
 			to: [email],
 			subject: "Your Seek student verification code",
@@ -79,7 +92,7 @@ export class MailService {
 	async sendReferenceRequest(to: { name: string; email: string }, student: { name: string; email: string }, subject: string, ask: string) {
 		const intro = `Hi ${to.name}, ${student.name} is renting a student home through Seek and asked us to contact you.`;
 		const outro = `Just reply to this email: your reply goes straight to ${student.name} (${student.email}).`;
-		await this.mail.messages.create(this.domain, {
+		await this.send({
 			from: `Seek <noreply@${this.domain}>`,
 			"h:Reply-To": student.email,
 			to: [to.email],
@@ -90,7 +103,7 @@ export class MailService {
 	}
 
 	async sendNewListingEmail(user: User) {
-		await this.mail.messages.create(this.domain, {
+		await this.send({
 			from: `Seek <noreply@${this.domain}>`,
 			to: ["admin@seekapp.uk"],
 			subject: "New Listing Request",
@@ -100,7 +113,7 @@ export class MailService {
 	}
 
 	async sendResetPasswordEmail(email: string, link: string) {
-		await this.mail.messages.create(this.domain, {
+		await this.send({
 			from: `Seek <noreply@${this.domain}>`,
 			to: [email],
 			subject: "Password reset",
@@ -123,7 +136,7 @@ export class MailService {
 			`${baseUrl}${separator}token=${encodeURIComponent(token)}` +
 			`&userId=${encodeURIComponent(userId)}`;
 
-		await this.mail.messages.create(this.domain, {
+		await this.send({
 			from: `Seek <noreply@${this.domain}>`,
 			to: [newEmail],
 			subject: "Confirm your new email address",
@@ -141,7 +154,7 @@ export class MailService {
 			`A request was made to change the email address on your Seek account to ${newEmail}. ` +
 			`If this wasn't you, sign in and change your password immediately.`;
 
-		await this.mail.messages.create(this.domain, {
+		await this.send({
 			from: `Seek <noreply@${this.domain}>`,
 			to: [currentEmail],
 			subject: "Email change requested on your account",
@@ -154,7 +167,7 @@ export class MailService {
 	async sendContractSentEmail(email: string, name: string, contractTitle: string, path: string) {
 		const link = `${this.configService.getOrThrow<string>("FRONTEND_URL").split(",")[0].trim().replace(/\/$/, "")}${path}`;
 		const intro = `Hi ${name}, your landlord sent you "${contractTitle}" to sign on Seek.`;
-		await this.mail.messages.create(this.domain, {
+		await this.send({
 			from: `Seek <noreply@${this.domain}>`,
 			to: [email],
 			subject: "Your tenancy agreement is ready to sign",
@@ -166,7 +179,7 @@ export class MailService {
 	/** A rent reminder (automatic or sent by the landlord) also reaches the tenant's inbox. */
 	async sendRentReminderEmail(email: string, name: string, title: string, body: string, path: string) {
 		const link = `${this.configService.getOrThrow<string>("FRONTEND_URL").split(",")[0].trim().replace(/\/$/, "")}${path}`;
-		await this.mail.messages.create(this.domain, {
+		await this.send({
 			from: `Seek <noreply@${this.domain}>`,
 			to: [email],
 			subject: title,
@@ -176,7 +189,7 @@ export class MailService {
 	}
 
 	async sendContactEmail(name: string, email: string, message: string) {
-		await this.mail.messages.create(this.domain, {
+		await this.send({
 			from: `Seek <noreply@${this.domain}>`,
 			// Lets staff reply to the sender without the sender controlling
 			// who the message appears to come from.
@@ -195,7 +208,7 @@ export class MailService {
 		reportedAccount?: string
 	) {
 		const reported = reportedAccount?.trim();
-		await this.mail.messages.create(this.domain, {
+		await this.send({
 			from: `Seek <noreply@${this.domain}>`,
 			"h:Reply-To": reporterEmail,
 			to: ["admin@seekapp.uk"],
@@ -215,7 +228,7 @@ export class MailService {
 		reportedUserEmail: string,
 		message: { category: FlagCategory; text: string }
 	) {
-		await this.mail.messages.create(this.domain, {
+		await this.send({
 			from: `Seek <noreply@${this.domain}>`,
 			to: ["admin@seekapp.uk"],
 			subject: "New flag created",
