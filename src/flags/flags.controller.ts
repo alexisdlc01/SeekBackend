@@ -50,6 +50,13 @@ export class FlagsController {
 		return this.flagsService.resolve(id, resolveFlagDto);
 	}
 
+	@ApiResponse({ status: 200, description: "Suspension lifted. The account's listings stay offline until resubmitted." })
+	@Patch("/lift-suspension/:userId")
+	@Superuser()
+	liftSuspension(@Param("userId") userId: string) {
+		return this.flagsService.liftSuspension(userId);
+	}
+
 	@ApiResponse({ status: 200, type: [Flag], description: "The caller's own reports, newest first." })
 	@Get("mine")
 	@StudentOrLandlordOrSuperuser()

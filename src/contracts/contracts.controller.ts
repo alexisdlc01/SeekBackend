@@ -174,6 +174,19 @@ export class ContractsController {
 		return this.contractsService.send(id, user);
 	}
 
+	@TeamAccess(TeamScope.TENANCIES)
+	@Post(":id/remind")
+	@LandlordAgency()
+	@HttpCode(200)
+	@ApiOperation({ summary: "Email the signing link again to tenants who have not signed a sent contract (once per 24 hours)." })
+	@ApiResponse({ status: 200, type: Contract })
+	@ApiResponse({ status: 400, type: ErrorDto })
+	@ApiResponse({ status: 403, type: ErrorDto })
+	@ApiResponse({ status: 429, type: ErrorDto })
+	async remind(@Param("id", ParseObjectIdPipe) id: string, @CurrentUser() user: User) {
+		return this.contractsService.remind(id, user);
+	}
+
 	@Post(":id/sign")
 	@Student()
 	@HttpCode(200)

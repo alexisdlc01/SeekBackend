@@ -26,6 +26,23 @@ describe("Seek Passport", () => {
 		expect(passport.missingRequired).toEqual([]);
 	});
 
+	it("counts PROVIDED identity documents and shows the student why a document was rejected", () => {
+		const provided = (type: DocumentType) => verified(type, { status: DocumentStatus.PROVIDED });
+		const passport = buildPassport([
+			provided(DocumentType.PASSPORT),
+			provided(DocumentType.RIGHT_TO_RENT),
+			verified(DocumentType.STUDENT_STATUS),
+			verified(DocumentType.PROOF_OF_FUNDS),
+			verified(DocumentType.CAS_LETTER, { status: DocumentStatus.REJECTED, rejectionReason: "Upload a current one." })
+		], now);
+		expect(passport.ready).toBe(true);
+		expect(passport.completed).toBe(4);
+		const items = (p: typeof passport) => p.sections.flatMap(section => section.items);
+		expect(items(passport).find(item => item.type === DocumentType.PASSPORT)?.status).toBe(DocumentStatus.PROVIDED);
+		expect(items(passport).find(item => item.type === DocumentType.CAS_LETTER)?.reason).toBe("Upload a current one.");
+		expect(items(withoutFiles(passport)).find(item => item.type === DocumentType.CAS_LETTER)?.reason).toBeUndefined();
+	});
+
 	it("accepts legacy document types and lists what is missing", () => {
 		const passport = buildPassport([
 			verified(DocumentType.IDENTIFICATION),

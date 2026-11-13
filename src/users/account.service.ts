@@ -8,8 +8,23 @@ import { Tenancy } from "../tenancies/tenancy.schema";
 import { TenancyStatus } from "../tenancies/tenancy.enums";
 import { Payment } from "../payments/payment.schema";
 import { PaymentStatus } from "../payments/payment.enums";
+import { DocumentShare } from "./shares/document-share.schema";
+import { ConnectionStatus, EmailConnection } from "../connectors/email-connection.schema";
+import { ConnectorsService } from "../connectors/connectors.service";
+import { UploadService } from "../upload/upload.service";
+import { isKeyOwnedBy } from "../upload/object-key";
 
 const MAX_TEAM = 20;
+
+/** Object key of a stored public file (`https://bucket.s3.region.amazonaws.com/<key>`), or null if not a public/ key. */
+function publicKeyFromUrl(url: string): string | null {
+	try {
+		const key = new URL(url).pathname.slice(1);
+		return key.startsWith("public/") ? key : null;
+	} catch {
+		return null;
+	}
+}
 
 /** A landlord's team, and closing an account. */
 @Injectable()
@@ -17,7 +32,11 @@ export class AccountService {
 	constructor(
 		@InjectModel(User.name) private readonly userModel: Model<User>,
 		@InjectModel(Tenancy.name) private readonly tenancyModel: Model<Tenancy>,
-		@InjectModel(Payment.name) private readonly paymentModel: Model<Payment>
+		@InjectModel(Payment.name) private readonly paymentModel: Model<Payment>,
+		@InjectModel(DocumentShare.name) private readonly shareModel: Model<DocumentShare>,
+		@InjectModel(EmailConnection.name) private readonly connectionModel: Model<EmailConnection>,
+		private readonly connectors: ConnectorsService,
+		private readonly uploads: UploadService
 	) {}
 
 	async listTeam(ownerId: Types.ObjectId): Promise<TeamMemberDto[]> {
@@ -112,6 +131,10 @@ export class AccountService {
 	 * Soft delete: the record stays for tenancy and payment history, but the
 	 * account can no longer sign in (sessions and password cleared, email
 	 * replaced). Refused while an active tenancy still has unpaid rent.
+	 * Mailboxes are disconnected (token revoked, synced emails deleted), landlord
+	 * shares revoked and Seek Passport files erased first, so a failure leaves
+	 * the account intact and the user can retry. Tenancy files, contracts and
+	 * payments are kept: they belong to the tenancy record, not the profile.
 	 */
 	async deleteAccount(userId: Types.ObjectId) {
 		const tenancies = await this.tenancyModel
@@ -132,6 +155,23 @@ export class AccountService {
 			}
 		}
 		const deletedAt = new Date();
+		const connections = await this.connectionModel
+			.find({ user: userId, status: { $ne: ConnectionStatus.DISCONNECTED } })
+			.select("_id")
+			.lean()
+			.exec();
+		for (const connection of connections) await this.connectors.disconnect({ _id: userId }, connection._id.toString());
+		await this.shareModel.updateMany({ owner: userId, revokedAt: null }, { $set: { revokedAt: deletedAt } });
+		const profile = await this.userModel.findById(userId).select("documents.key profilePicUrl").lean().exec();
+		const keys = (profile?.documents ?? []).map(doc => doc.key).filter(key => key?.startsWith("private/"));
+		// A file also filed on a tenancy stays: the landlord and co-tenants keep that record.
+		const tenancyKeys = new Set(
+			keys.length ? (await this.tenancyModel.distinct("documents.key", { "documents.key": { $in: keys } })).map(String) : []
+		);
+		for (const key of keys) if (!tenancyKeys.has(key)) await this.uploads.deletePrivateObject(key);
+		// Uploaded avatar (public/<userId>/...): erase the object too. A Google avatar URL is not ours, so it is skipped.
+		const picKey = profile?.profilePicUrl ? publicKeyFromUrl(profile.profilePicUrl) : null;
+		if (picKey && isKeyOwnedBy(picKey, userId.toString())) await this.uploads.deletePublicObject(picKey);
 		const result = await this.userModel.updateOne(
 			{ _id: userId, deletedAt: null },
 			{
@@ -140,7 +180,10 @@ export class AccountService {
 					email: `deleted-${userId.toString()}@deleted.invalid`,
 					refreshSessions: [],
 					isGoogle: false,
-					team: []
+					team: [],
+					name: "Deleted user",
+					documents: [],
+					referenceRequests: []
 				},
 				$unset: {
 					password: 1,
@@ -152,7 +195,11 @@ export class AccountService {
 					emailVerificationToken: 1,
 					otpVerificationCode: 1,
 					// Frees the university address so it can be verified again on a new account.
-					universityEmail: 1
+					universityEmail: 1,
+					dateOfBirth: 1,
+					profilePicUrl: 1,
+					universityDetails: 1,
+					university: 1
 				}
 			}
 		);

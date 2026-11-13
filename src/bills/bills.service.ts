@@ -11,6 +11,31 @@ import { splitPence } from "./shares";
 type Viewer = Pick<User, "_id" | "role"> & { name?: string };
 type Allowanced = { energyAllowance?: number | null; tenants?: { toString(): string }[] };
 
+/**
+ * Energy fair-use: the tenancy's monthly allowance, scaled to the months the
+ * bill covers, against what the bill used. Anything over is split between the tenants.
+ */
+export function allowanceFor(bill: Bill, tenancy: Allowanced) {
+	if (bill.category !== BillCategory.ENERGY || tenancy?.energyAllowance == null) return null;
+	const days =
+		bill.periodStart && bill.periodEnd
+			? (new Date(bill.periodEnd).getTime() - new Date(bill.periodStart).getTime()) / 86_400_000
+			: 0;
+	const months = Math.max(1, Math.round(days / 30.44));
+	const allowance = tenancy.energyAllowance * months;
+	const used = bill.amount;
+	const overage = Math.max(0, used - allowance);
+	const members = (tenancy.tenants ?? []).map(id => id.toString());
+	return {
+		utility: bill.category,
+		allowance,
+		used,
+		percentUsed: allowance > 0 ? Math.round((used / allowance) * 100) : 0,
+		overage,
+		overagePerMember: splitPence(overage, members)
+	};
+}
+
 @Injectable()
 export class BillsService {
 	constructor(
@@ -104,31 +129,6 @@ export class BillsService {
 		return this.withShares(updated!, viewerId, tenancy);
 	}
 
-	/**
-	 * Energy fair-use: the tenancy's monthly allowance, scaled to the months the
-	 * bill covers, against what the bill used. Anything over is split between the tenants.
-	 */
-	private allowanceFor(bill: Bill, tenancy: Allowanced) {
-		if (bill.category !== BillCategory.ENERGY || tenancy?.energyAllowance == null) return null;
-		const days =
-			bill.periodStart && bill.periodEnd
-				? (new Date(bill.periodEnd).getTime() - new Date(bill.periodStart).getTime()) / 86_400_000
-				: 0;
-		const months = Math.max(1, Math.round(days / 30.44));
-		const allowance = tenancy.energyAllowance * months;
-		const used = bill.amount;
-		const overage = Math.max(0, used - allowance);
-		const members = (tenancy.tenants ?? []).map(id => id.toString());
-		return {
-			utility: bill.category,
-			allowance,
-			used,
-			percentUsed: allowance > 0 ? Math.round((used / allowance) * 100) : 0,
-			overage,
-			overagePerMember: splitPence(overage, members)
-		};
-	}
-
 	/** paidBy arrives populated with the payer's name; the API returns the id plus paidByName. */
 	private withShares(bill: Bill, viewerId: string, tenancy?: Allowanced) {
 		const payer = bill.paidBy as unknown as { _id?: Types.ObjectId; name?: string } | Types.ObjectId | null;
@@ -147,7 +147,7 @@ export class BillsService {
 			shares,
 			myShare: shares.find(share => share.user === viewerId)?.amount ?? 0,
 			myPaid: settled(viewerId),
-			allowance: tenancy ? this.allowanceFor(bill, tenancy) : null
+			allowance: tenancy ? allowanceFor(bill, tenancy) : null
 		};
 	}
 }

@@ -6,11 +6,13 @@ describe("UsersService", () => {
 	let service: UsersService;
 	let userModel: {
 		findByIdAndUpdate: jest.Mock;
+		updateOne: jest.Mock;
 	};
 
 	beforeEach(() => {
 		userModel = {
-			findByIdAndUpdate: jest.fn()
+			findByIdAndUpdate: jest.fn(),
+			updateOne: jest.fn().mockResolvedValue({})
 		};
 		service = new UsersService(userModel as never, {} as never, {} as never);
 	});
@@ -79,6 +81,13 @@ describe("UsersService", () => {
 			{ new: true, runValidators: true, upsert: false }
 		);
 		expect(result.username).toBe("rinat.dev");
+		// A new name sends documents verified, or rejected (name mismatch), against the old one back to the automatic check.
+		const checked = { $in: ["VERIFIED", "REJECTED"] };
+		expect(userModel.updateOne).toHaveBeenCalledWith(
+			{ _id: "user-1", name: { $ne: "Rinat" }, documents: { $elemMatch: { type: { $nin: expect.any(Array) }, status: checked } } },
+			{ $set: { "documents.$[doc].status": "PENDING", "documents.$[doc].rejectionReason": null, "documents.$[doc].reviewAttempts": 0, "documents.$[doc].lastReviewAt": null } },
+			{ arrayFilters: [{ "doc.type": { $nin: expect.arrayContaining(["PASSPORT"]) }, "doc.status": checked }] }
+		);
 	});
 
 	it("unsets optional fields when they are cleared", async () => {
@@ -161,6 +170,20 @@ describe("UsersService", () => {
 			).resolves.toMatchObject({ message: "Document added successfully" });
 		});
 
+		it("marks identity uploads PROVIDED without a review, and reviews the rest in the background", async () => {
+			const review = jest.fn().mockResolvedValue(undefined);
+			const users = new UsersService(userModel as never, {} as never, {} as never, undefined, { review } as never);
+			const pushed = () => (userModel as unknown as { bulkWrite: jest.Mock }).bulkWrite.mock.calls.at(-1)[0][1].updateOne.update.$push.documents.status;
+
+			await users.addDocument("507f1f77bcf86cd799439011", DocumentType.PASSPORT, "https://example.com/doc.pdf", OWNED_KEY);
+			expect(pushed()).toBe("PROVIDED");
+			expect(review).not.toHaveBeenCalled();
+
+			await users.addDocument("507f1f77bcf86cd799439011", DocumentType.PROOF_OF_FUNDS, "https://example.com/doc.pdf", OWNED_KEY);
+			expect(pushed()).toBe("PENDING");
+			expect(review).toHaveBeenCalledWith("507f1f77bcf86cd799439011", DocumentType.PROOF_OF_FUNDS);
+		});
+
 		it("rejects a key issued to a different user", async () => {
 			await expect(
 				service.addDocument(
@@ -170,6 +193,17 @@ describe("UsersService", () => {
 					OWNED_KEY
 				)
 			).rejects.toThrow("Document key was not issued to this account.");
+		});
+
+		it("rejects a public/ key even when it is owned by the user", async () => {
+			await expect(
+				service.addDocument(
+					"507f1f77bcf86cd799439011",
+					"IDENTIFICATION" as never,
+					"https://example.com/doc.pdf",
+					OWNED_KEY.replace("private/", "public/")
+				)
+			).rejects.toThrow("Documents must be uploaded privately.");
 		});
 
 		it("rejects an unscoped legacy-shaped key", async () => {
@@ -206,6 +240,30 @@ describe("UsersService", () => {
 		]);
 		expect(pending[1]).toMatchObject({ name: "Maya", email: "maya@ucl.ac.uk" });
 		expect(getPresignedDownloadUrl).toHaveBeenCalledTimes(1);
-		expect(getPresignedDownloadUrl).toHaveBeenCalledWith("private/u1/a.pdf", "private");
+		expect(getPresignedDownloadUrl).toHaveBeenCalledWith("private/u1/a.pdf", "private", 600);
+	});
+
+	it("staff can only re-run the automatic check: never verify a document by hand, never touch identity documents", async () => {
+		const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1 });
+		const review = { review: jest.fn().mockResolvedValue(undefined) };
+		const users = new UsersService({ updateOne } as never, {} as never, {} as never, undefined, review as never);
+		jest.spyOn(users, "getPassport").mockResolvedValue({} as never);
+
+		await expect(users.setDocumentStatus("u1", DocumentType.PASSPORT, "PENDING" as never)).rejects.toThrow("landlord checks them");
+		await expect(users.setDocumentStatus("u1", DocumentType.PROOF_OF_FUNDS, "VERIFIED" as never)).rejects.toThrow("checked automatically");
+		expect(updateOne).not.toHaveBeenCalled();
+
+		await users.setDocumentStatus("u1", DocumentType.PROOF_OF_FUNDS, "PENDING" as never);
+		expect(updateOne.mock.calls[0][1].$set).toMatchObject({ "documents.$.status": "PENDING", "documents.$.reviewAttempts": 0 });
+		expect(review.review).toHaveBeenCalledWith("u1", DocumentType.PROOF_OF_FUNDS);
+	});
+
+	it("refuses a suspended account's session, so open sockets are cut at their next revalidation", async () => {
+		const session = { sessionId: "s1", expiresAt: new Date(Date.now() + 60_000) };
+		const getUserById = jest.fn().mockResolvedValue({ _id: "u1", refreshSessions: [session], suspendedAt: new Date() });
+		const users = new UsersService({} as never, { getUserById } as never, {} as never);
+		await expect(users.getUserForSession("u1", "s1")).rejects.toThrow("Session not found.");
+		getUserById.mockResolvedValue({ _id: "u1", refreshSessions: [session], suspendedAt: null });
+		await expect(users.getUserForSession("u1", "s1")).resolves.toMatchObject({ _id: "u1" });
 	});
 });

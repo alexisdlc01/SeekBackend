@@ -94,15 +94,51 @@ describe("ListingsService", () => {
 		});
 	});
 
-	it("notifies the owner after a superuser verifies a listing", async () => {
-		const listing = makeListing(false);
-		listingModel.findByIdAndUpdate.mockReturnValue({
-			exec: jest.fn().mockResolvedValue(listing)
+	describe("reviewed fields", () => {
+		const found = (doc: object | null) => ({
+			select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(doc) }) })
+		});
+		const uuid = "123e4567-e89b-12d3-a456-426614174000";
+		const ownKey = `private/64b64b64b64b64b64b64b64b/${uuid}.pdf`;
+		const updateOf = () => listingModel.findOneAndUpdate.mock.calls[0][1].$set;
+
+		beforeEach(() => {
+			listingModel.findOneAndUpdate = jest.fn().mockResolvedValue(makeListing(false));
 		});
 
-		await service.verifyListing(listing._id.toString());
+		it("refuses a register-of-title key minted for someone else, such as an applicant's passport", async () => {
+			listingModel.findOne = jest.fn().mockReturnValue(found({ isDraft: true }));
+			const studentKey = `private/${new Types.ObjectId().toHexString()}/${uuid}.pdf`;
+			await expect(
+				service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { registerOfTitleKey: studentKey } as never)
+			).rejects.toThrow("Document key was not issued to this account.");
+			expect(listingModel.findOneAndUpdate).not.toHaveBeenCalled();
+		});
 
-		expect(gateway.emitListingUpdated).toHaveBeenCalledWith(listing);
+		it("accepts the landlord's own key and an unchanged legacy key", async () => {
+			listingModel.findOne = jest.fn().mockReturnValue(found({ isDraft: true, registerOfTitleKey: "private/old.pdf" }));
+			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { registerOfTitleKey: "private/old.pdf" } as never);
+			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { registerOfTitleKey: ownKey } as never);
+			expect(listingModel.findOneAndUpdate).toHaveBeenCalledTimes(2);
+		});
+
+		it("sends a verified live listing back to moderation when its address changes", async () => {
+			listingModel.findOne = jest.fn().mockReturnValue(found({ isDraft: false, streetAddress: "1 Old Road" }));
+			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { streetAddress: "9 New Road" } as never);
+			expect(updateOf().isVerified).toBe(false);
+		});
+
+		it("keeps verification when only an unreviewed field is sent, even with reviewed keys present as undefined", async () => {
+			listingModel.findOne = jest.fn().mockReturnValue(found({ isDraft: false, photos: ["a.jpg"] }));
+			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { videoTourLink: "https://youtu.be/x", photos: undefined } as never);
+			expect(updateOf().isVerified).toBeUndefined();
+		});
+
+		it("keeps verification when the reviewed fields are resent unchanged", async () => {
+			listingModel.findOne = jest.fn().mockReturnValue(found({ isDraft: false, streetAddress: "1 Old Road", photos: ["a.jpg"] }));
+			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { streetAddress: "1 Old Road", photos: ["a.jpg"] } as never);
+			expect(updateOf().isVerified).toBeUndefined();
+		});
 	});
 
 	describe("filters", () => {

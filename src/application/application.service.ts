@@ -528,9 +528,14 @@ export class ApplicationService {
 			if (valid && row.status !== PaymentStatus.PAID && members.has(tenant) && !paid.has(tenant) && !kept.has(tenant)) kept.set(tenant, row);
 		}
 		const keptIds = new Set([...kept.values()].map(row => row._id.toString()));
-		const stale = existing.filter(row => row.status !== PaymentStatus.PAID && !keptIds.has(row._id.toString())).map(row => row._id);
+		const staleRows = existing.filter(row => row.status !== PaymentStatus.PAID && !keptIds.has(row._id.toString()));
+		// Close the open session of every row dropped or repriced, so nobody pays a row that is gone.
+		const paidAtStripe = await this.closeCheckoutSessions([...staleRows, ...[...kept.values()].filter(row => row.amount !== amount)]);
+		const stale = staleRows.filter(row => !paidAtStripe.has(row._id.toString())).map(row => row._id);
 		if (stale.length > 0) await this.paymentModel.deleteMany({ _id: { $in: stale }, status: { $ne: PaymentStatus.PAID } });
 		for (const row of kept.values()) {
+			// Stripe already took the old amount: leave the row as it is so the webhook can still mark it paid.
+			if (paidAtStripe.has(row._id.toString())) continue;
 			await this.paymentModel.updateOne(
 				{ _id: row._id, status: { $ne: PaymentStatus.PAID } },
 				{ $set: { amount, seekFee: 0, payout: amount, dueDate: application.offerExpiresAt, ...(row.amount === amount ? {} : { providerRef: null }) } }
@@ -688,22 +693,32 @@ export class ApplicationService {
 	private async dropUnpaidHoldingDeposits(applicationId: Types.ObjectId) {
 		const unpaid = { application: applicationId, kind: PaymentKind.HOLDING_DEPOSIT, status: { $ne: PaymentStatus.PAID } };
 		const keep: Types.ObjectId[] = [];
-		const key = process.env.STRIPE_SECRET_KEY;
-		if (key) {
-			const stripe = new StripeClient(key);
+		if (process.env.STRIPE_SECRET_KEY) {
 			const withSession = await this.paymentModel.find({ ...unpaid, providerRef: /^cs_/ }, { providerRef: 1 }).lean().exec();
-			for (const row of withSession) {
-				try {
-					await stripe.expireCheckoutSession(row.providerRef!);
-				} catch (error) {
-					if (!(error instanceof StripeApiError)) throw error;
-					// Not open any more: already expired (fine to drop) or completed (kept for the webhook).
-					const session = await stripe.retrieveCheckoutSession(row.providerRef!).catch(() => null);
-					if (!session || session.status === "complete" || session.payment_status === "paid") keep.push(row._id);
-				}
-			}
+			const paid = await this.closeCheckoutSessions(withSession);
+			keep.push(...withSession.filter(row => paid.has(row._id.toString())).map(row => row._id));
 		}
 		await this.paymentModel.deleteMany({ ...unpaid, _id: { $nin: keep } });
+	}
+
+	/** Expires each row's open Checkout session; returns the ids of rows whose session Stripe already took payment on. */
+	private async closeCheckoutSessions(rows: { _id: Types.ObjectId; providerRef?: string | null }[]): Promise<Set<string>> {
+		const paid = new Set<string>();
+		const key = process.env.STRIPE_SECRET_KEY;
+		const open = rows.filter(row => row.providerRef?.startsWith("cs_"));
+		if (!key || open.length === 0) return paid;
+		const stripe = new StripeClient(key);
+		for (const row of open) {
+			try {
+				await stripe.expireCheckoutSession(row.providerRef!);
+			} catch (error) {
+				if (!(error instanceof StripeApiError)) throw error;
+				// Not open any more: already expired (fine to drop) or completed (kept for the webhook).
+				const session = await stripe.retrieveCheckoutSession(row.providerRef!).catch(() => null);
+				if (!session || session.status === "complete" || session.payment_status === "paid") paid.add(row._id.toString());
+			}
+		}
+		return paid;
 	}
 
 	async reject(applicationId: string, reason?: string): Promise<void> {

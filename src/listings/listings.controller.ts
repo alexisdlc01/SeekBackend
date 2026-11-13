@@ -5,7 +5,6 @@ import {
 	Controller,
 	Delete,
 	Get,
-	Logger,
 	Param,
 	Patch,
 	Post,
@@ -21,13 +20,13 @@ import {
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "../users/users.schema";
 import { ListingsService } from "./listings.service";
+import { ListingModerationService } from "./listing-moderation.service";
 import { Listing } from "./listings.schema";
 import {
 	LandlordAgency,
 	Student,
 	Superuser
 } from "../auth/decorators/role-auth.decorator";
-import { MailService } from "../auth/mail.service";
 import { OwnsListing } from "./decorators/owns-listing.decorator";
 import {
 	ApiCreateStep1Docs,
@@ -53,12 +52,16 @@ import { requiredDocuments } from "../application/required-documents";
 
 @Controller("listings")
 export class ListingsController {
-	private readonly logger = new Logger(ListingsController.name);
-
 	constructor(
 		private readonly listingsService: ListingsService,
-		private readonly mailService: MailService
+		private readonly moderation?: ListingModerationService
 	) { }
+
+	/** A live listing that is not verified (new content, or waiting on fixes) is re-checked on every save. */
+	private async checked(listing: Listing, user: User): Promise<Listing> {
+		if (listing.isDraft || listing.isVerified || !this.moderation) return listing;
+		return (await this.moderation.moderate(listing._id, user._id.toString())) ?? listing;
+	}
 
 	@TeamAccess(TeamScope.LISTINGS)
 	@Post("/draft")
@@ -77,7 +80,7 @@ export class ListingsController {
 		@Param("id") listingId: string,
 		@Body() body: Step1ListingDto
 	) {
-		return await this.listingsService.updateDraft(listingId, user, { ...body, draftStep: 1 });
+		return this.checked(await this.listingsService.updateDraft(listingId, user, { ...body, draftStep: 1 }), user);
 	}
 
 	@TeamAccess(TeamScope.LISTINGS)
@@ -89,7 +92,7 @@ export class ListingsController {
 		@Param("id") listingId: string,
 		@Body() body: Step2ListingDto
 	) {
-		return this.listingsService.updateDraft(listingId, user, { ...body, draftStep: 2 });
+		return this.checked(await this.listingsService.updateDraft(listingId, user, { ...body, draftStep: 2 }), user);
 	}
 
 	@TeamAccess(TeamScope.LISTINGS)
@@ -101,7 +104,7 @@ export class ListingsController {
 		@Param("id") listingId: string,
 		@Body() body: Step3ListingDto
 	) {
-		return this.listingsService.updateDraft(listingId, user, { ...body, draftStep: 3 });
+		return this.checked(await this.listingsService.updateDraft(listingId, user, { ...body, draftStep: 3 }), user);
 	}
 
 	@TeamAccess(TeamScope.LISTINGS)
@@ -112,7 +115,7 @@ export class ListingsController {
 		@Param("id") listingId: string,
 		@Body() body: Step4ListingDto
 	) {
-		return this.listingsService.updateDraft(listingId, user, { ...body, draftStep: 4 });
+		return this.checked(await this.listingsService.updateDraft(listingId, user, { ...body, draftStep: 4 }), user);
 	}
 
 	@TeamAccess(TeamScope.LISTINGS)
@@ -142,12 +145,10 @@ export class ListingsController {
 				}
 				: {})
 		});
-		const listing = await this.listingsService.publishDraft(listingId, user);
-		// The admin email is a heads-up only: an email outage must never block publishing.
-		await this.mailService.sendNewListingEmail(user).catch((error: Error) =>
-			this.logger.error(`New listing email failed for ${listingId}: ${error?.message}`)
-		);
-		return listing;
+		const published = await this.listingsService.publishDraft(listingId, user);
+		// Goes live only once the automatic check passes (no admin queue, no admin email).
+		// An approved listing the update left verified stays live: no new AI call that could hide it.
+		return this.checked(published, user);
 	}
 
 	@TeamAccess(TeamScope.LISTINGS)
@@ -223,7 +224,9 @@ export class ListingsController {
 	@Superuser()
 	@ApiVerifyListingDocs()
 	async verifyListing(@Param("id") id: string) {
-		await this.listingsService.verifyListing(id);
+		// No staff approval: this only runs the automatic check again (rules, suspension, anti-scam AI).
+		const listing = await this.listingsService.findListingById(id);
+		return (await this.moderation?.moderate(listing._id)) ?? listing;
 	}
 
 	@Patch("/like/:id")

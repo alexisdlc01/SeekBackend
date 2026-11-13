@@ -28,6 +28,20 @@ describe("LlmClient provider chain", () => {
 		expect(JSON.parse(init.body).generationConfig.responseMimeType).toBe("application/json");
 	});
 
+	it("sends an attached file inline to Gemini, and skips Anthropic for a type it cannot read", async () => {
+		const fetchMock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: "{}" }] } }] }) });
+		global.fetch = fetchMock as any;
+		const file = { mimeType: "application/pdf", data: "JVBERg==" };
+		await new GeminiClient(config({ GEMINI_API_KEY: "k" })).complete({ system: "s", messages, file });
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body).contents[0].parts).toEqual([{ inlineData: file }, { text: "2-bed in Cotham" }]);
+
+		fetchMock.mockClear();
+		const { AnthropicClient } = await import("./anthropic.client");
+		const anthropic = new AnthropicClient(config({ ANTHROPIC_API_KEY: "k" }));
+		expect(await anthropic.complete({ system: "s", messages, file: { mimeType: "image/heic", data: "x" } })).toBeNull();
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
 	it("falls back to Anthropic when Gemini fails, then to null", async () => {
 		global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 503 }) as any;
 		const gemini = new GeminiClient(config({ GEMINI_API_KEY: "k" }));

@@ -169,6 +169,13 @@ describe("PaymentsService.checkout (Stripe)", () => {
 		);
 	});
 
+	it("never releases a held deposit that is owed back to the student", async () => {
+		const service = setup({ capabilities: { transfers: "active" } }, false);
+		lastPaymentModel.find = jest.fn().mockReturnValue(lean([]));
+		await service.releaseHeldPayouts();
+		expect(lastPaymentModel.find).toHaveBeenCalledWith(expect.objectContaining({ payoutStatus: PayoutStatus.HELD, refundDue: { $ne: true } }));
+	});
+
 	it("keys the session on the whole request, so a changed autopay choice opens a new session", async () => {
 		const sessionKey = async (autopay: boolean) => {
 			await setup({ capabilities: { transfers: "active" } }, autopay).checkout(payment._id.toString(), { _id: tenant } as any, {}, "mobile");
@@ -268,11 +275,15 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 		expect(doc.status).toBe(PaymentStatus.SCHEDULED);
 	});
 
-	it("leaves the payment unpaid when Stripe's amount differs", async () => {
-		const { service } = setup();
+	it("leaves the payment unpaid and refunds the charge when Stripe's amount differs", async () => {
+		const { service, webhook, refunds } = setup();
 		session.amount_total = 100;
 		await service.confirmCheckout(id.toString(), "cs_1", { _id: tenant } as any);
+		await webhook({ type: "payment_intent.succeeded", data: { object: { id: "pi_checkout", amount: 100, metadata: { paymentId: id.toString() } } } });
 		expect(doc.status).toBe(PaymentStatus.SCHEDULED);
+		expect(refunds()).toHaveLength(2);
+		expect(refunds().map(call => call.body.get("payment_intent"))).toEqual(["pi_checkout", "pi_checkout"]);
+		expect(refunds()[0].body.get("reverse_transfer")).toBe("true");
 	});
 
 	it("marks paid once and sends one receipt when confirm and the webhook both arrive", async () => {
@@ -318,6 +329,21 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 	it("returns no url for a payment already paid", async () => {
 		const { service } = setup({ status: PaymentStatus.PAID });
 		await expect(service.checkout(id.toString(), { _id: tenant } as any, {}, "web")).resolves.toMatchObject({ url: null, status: PaymentStatus.PAID });
+	});
+
+	it("puts autopay back to SCHEDULED when Stripe doesn't answer, and charges on the next sweep", async () => {
+		const { service } = setup({ dueDate: new Date("2026-11-01T00:00:00Z"), providerRef: null });
+		const answering = global.fetch;
+		global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+			if (url.endsWith("/payment_intents")) throw new DOMException("The operation timed out.", "TimeoutError");
+			return (answering as any)(url, init);
+		}) as never;
+		await expect((service as any).sweepStripeAutopay(new Date("2026-11-07T00:00:00Z"))).resolves.toBeUndefined();
+		expect(doc.status).toBe(PaymentStatus.SCHEDULED);
+
+		global.fetch = answering;
+		await (service as any).sweepStripeAutopay(new Date("2026-11-07T01:00:00Z"));
+		expect(doc).toMatchObject({ status: PaymentStatus.PAID, providerRef: "pi_autopay" });
 	});
 
 	it("closes an open Checkout session before autopay charges, and skips when it can't", async () => {
@@ -504,5 +530,19 @@ describe("PaymentsService.updatePlan", () => {
 		const tenant = { _id: new Types.ObjectId() } as any;
 		await expect(service.updatePlan("t", { frequency: "SIX_MONTHS" } as any, tenant)).resolves.toBeDefined();
 		await expect(service.updatePlan("t", { frequency: "YEARLY" } as any, tenant)).rejects.toBeInstanceOf(BadRequestException);
+	});
+});
+
+describe("PaymentsService.mode", () => {
+	const build = (env: Record<string, string | undefined>) =>
+		new PaymentsService({} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, { get: (key: string) => env[key] } as any, {} as any);
+
+	it("simulates payments only under NODE_ENV development or test, never when NODE_ENV is unset or unknown", () => {
+		expect(build({ NODE_ENV: "development" }).mode()).toBe("simulated");
+		expect(build({ NODE_ENV: "test" }).mode()).toBe("simulated");
+		expect(build({}).mode()).toBe("unavailable");
+		expect(build({ NODE_ENV: "prod" }).mode()).toBe("unavailable");
+		expect(build({ NODE_ENV: "production" }).mode()).toBe("unavailable");
+		expect(build({ NODE_ENV: "production", STRIPE_SECRET_KEY: "sk_test_x" }).mode()).toBe("stripe");
 	});
 });

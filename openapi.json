@@ -23,6 +23,28 @@
         ]
       }
     },
+    "/health": {
+      "get": {
+        "operationId": "AppController_health",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "App"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
     "/users/me/student-email": {
       "post": {
         "operationId": "UsersController_sendStudentEmailCode",
@@ -973,7 +995,7 @@
             }
           }
         },
-        "summary": "Seek Passport uploads waiting for a check, oldest first (Seek staff). Record the result with PATCH users/{id}/documents/{type}/status.",
+        "summary": "Seek Passport uploads waiting for the automatic check, oldest first (Seek staff, monitoring only).",
         "tags": [
           "Users"
         ],
@@ -1050,7 +1072,7 @@
             }
           }
         },
-        "summary": "Record the result of a document check (Seek staff).",
+        "summary": "Run the automatic check again on a document (Seek staff). Only status PENDING is accepted; identity documents are refused.",
         "tags": [
           "Users"
         ],
@@ -1309,6 +1331,1149 @@
         },
         "tags": [
           "Upload"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/connectors": {
+      "get": {
+        "operationId": "ConnectorsController_overview",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorsOverviewDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Your connected mailboxes and the providers this server can connect.",
+        "tags": [
+          "Connectors"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/connectors/settings": {
+      "patch": {
+        "operationId": "ConnectorsController_updateSettings",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateConnectorSettingsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorSettingsDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Choose what mailboxes import (housing only or all emails) and whether attachments are filed automatically.",
+        "tags": [
+          "Connectors"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/connectors/imap": {
+      "post": {
+        "description": "Outside production, a server that cannot be signed in to falls back to the demo mailbox (mode: demo).",
+        "operationId": "ConnectorsController_connectImap",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectImapDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImapConnectResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Sign-in failed (production).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Connect any mailbox over IMAP with an app password (stored encrypted), then sync it.",
+        "tags": [
+          "Connectors"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/connectors/{provider}/auth-url": {
+      "get": {
+        "operationId": "ConnectorsController_authUrl",
+        "parameters": [
+          {
+            "name": "provider",
+            "required": true,
+            "in": "path",
+            "description": "Canonical lowercase; any casing is accepted.",
+            "schema": {
+              "enum": [
+                "gmail",
+                "outlook"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "client",
+            "required": false,
+            "in": "query",
+            "description": "Where to send the user back after consent.",
+            "schema": {
+              "default": "web",
+              "type": "string",
+              "enum": [
+                "web",
+                "mobile"
+              ]
+            }
+          },
+          {
+            "name": "returnTo",
+            "required": false,
+            "in": "query",
+            "description": "Web path to return to (must start with /).",
+            "schema": {
+              "example": "/connectors",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUrlDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Provider not set up on this server.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "OAuth consent URL for Gmail or Outlook (read housing emails, reply from your address).",
+        "tags": [
+          "Connectors"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/connectors/{provider}/confirm": {
+      "post": {
+        "operationId": "ConnectorsController_confirm",
+        "parameters": [
+          {
+            "name": "provider",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "enum": [
+                "gmail",
+                "outlook"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmConnectorDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailConnectionViewDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Expired, already used, or started from another account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Mobile: activate the mailbox from the OAuth redirect (status=pending&nonce=...) for the signed-in user.",
+        "tags": [
+          "Connectors"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/connectors/demo": {
+      "post": {
+        "operationId": "ConnectorsController_connectDemo",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncResultDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Connect the demo mailbox (sample housing emails). Not available in production.",
+        "tags": [
+          "Connectors"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/connectors/{id}/sync": {
+      "post": {
+        "operationId": "ConnectorsController_sync",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncResultDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Fetch new housing emails and file their attachments.",
+        "tags": [
+          "Connectors"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/connectors/{id}/matches": {
+      "get": {
+        "operationId": "ConnectorsController_matches",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ConnectionMatchDto"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Housing contacts matched in this mailbox (up to 50, newest first). No message content.",
+        "tags": [
+          "Connectors"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/connectors/{id}": {
+      "delete": {
+        "operationId": "ConnectorsController_disconnect",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisconnectResultDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Disconnect a mailbox and delete the emails stored from it.",
+        "tags": [
+          "Connectors"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/tenancies/mine": {
+      "get": {
+        "operationId": "TenanciesController_mine",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Tenancy"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Tenancies the student lives in, with compliance status.",
+        "tags": [
+          "Tenancies"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/tenancies/landlord": {
+      "get": {
+        "operationId": "TenanciesController_landlord",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Tenancy"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "The landlord's tenancies, with compliance status.",
+        "tags": [
+          "Tenancies"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/tenancies/{id}": {
+      "get": {
+        "operationId": "TenanciesController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenancy"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "One tenancy: listing, people, deposit, documents, compliance.",
+        "tags": [
+          "Tenancies"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/tenancies": {
+      "post": {
+        "operationId": "TenanciesController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTenancyDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenancy"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Application not ACCEPTED, or no student invited.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Listing or application is not yours.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The application already has a tenancy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Create a tenancy for one of your listings. From an ACCEPTED application its applicants become the tenants and rent is scheduled. By hand, the students are invited (PENDING_ACCEPTANCE) and rent starts once all have accepted.",
+        "tags": [
+          "Tenancies"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/tenancies/{id}/accept": {
+      "post": {
+        "operationId": "TenanciesController_accept",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenancy"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Accept a tenancy you were invited to. Rent is scheduled when every invited student has accepted.",
+        "tags": [
+          "Tenancies"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/tenancies/{id}/deposit": {
+      "patch": {
+        "operationId": "TenanciesController_deposit",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateDepositDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenancy"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Record where the deposit is protected.",
+        "tags": [
+          "Tenancies"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/tenancies/{id}/energy-allowance": {
+      "patch": {
+        "operationId": "TenanciesController_energyAllowance",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateEnergyAllowanceDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenancy"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Set or remove the household's monthly energy fair-use allowance.",
+        "tags": [
+          "Tenancies"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/tenancies/{id}/deposit-received": {
+      "patch": {
+        "operationId": "TenanciesController_depositReceived",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DepositReceivedDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenancy"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Record the day the deposit was received. The 30-day protection deadline runs from it.",
+        "tags": [
+          "Tenancies"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/tenancies/{id}/prescribed-info": {
+      "post": {
+        "operationId": "TenanciesController_prescribedInfo",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrescribedInfoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenancy"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Record that the tenants were sent the deposit scheme's prescribed information.",
+        "tags": [
+          "Tenancies"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/tenancies/{id}/documents": {
+      "post": {
+        "operationId": "TenanciesController_addDocument",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddTenancyDocumentDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenancy"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Add a document (agreement, certificate, inventory...) to the tenancy.",
+        "tags": [
+          "Tenancies"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/notifications": {
+      "get": {
+        "operationId": "NotificationsController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Notification"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "The signed-in user's latest notifications, newest first.",
+        "tags": [
+          "Notifications"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/notifications/{id}/read": {
+      "patch": {
+        "operationId": "NotificationsController_markRead",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Notification"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Mark a notification as read.",
+        "tags": [
+          "Notifications"
         ],
         "security": [
           {
@@ -3094,6 +4259,16 @@
           }
         ],
         "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Listing"
+                }
+              }
+            }
+          },
           "400": {
             "description": "",
             "content": {
@@ -3125,6 +4300,7 @@
             }
           }
         },
+        "summary": "Run the automatic check again on a listing (Seek staff). Never approves a listing by hand.",
         "tags": [
           "Listings"
         ],
@@ -4153,667 +5329,6 @@
         ]
       }
     },
-    "/tenancies/mine": {
-      "get": {
-        "operationId": "TenanciesController_mine",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Tenancy"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "summary": "Tenancies the student lives in, with compliance status.",
-        "tags": [
-          "Tenancies"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/tenancies/landlord": {
-      "get": {
-        "operationId": "TenanciesController_landlord",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Tenancy"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "summary": "The landlord's tenancies, with compliance status.",
-        "tags": [
-          "Tenancies"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/tenancies/{id}": {
-      "get": {
-        "operationId": "TenanciesController_get",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Tenancy"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "One tenancy: listing, people, deposit, documents, compliance.",
-        "tags": [
-          "Tenancies"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/tenancies": {
-      "post": {
-        "operationId": "TenanciesController_create",
-        "parameters": [],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateTenancyDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Tenancy"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Application not ACCEPTED, or no student invited.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Listing or application is not yours.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The application already has a tenancy.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Create a tenancy for one of your listings. From an ACCEPTED application its applicants become the tenants and rent is scheduled. By hand, the students are invited (PENDING_ACCEPTANCE) and rent starts once all have accepted.",
-        "tags": [
-          "Tenancies"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/tenancies/{id}/accept": {
-      "post": {
-        "operationId": "TenanciesController_accept",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Tenancy"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Accept a tenancy you were invited to. Rent is scheduled when every invited student has accepted.",
-        "tags": [
-          "Tenancies"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/tenancies/{id}/deposit": {
-      "patch": {
-        "operationId": "TenanciesController_deposit",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateDepositDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Tenancy"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Record where the deposit is protected.",
-        "tags": [
-          "Tenancies"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/tenancies/{id}/energy-allowance": {
-      "patch": {
-        "operationId": "TenanciesController_energyAllowance",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateEnergyAllowanceDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Tenancy"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Set or remove the household's monthly energy fair-use allowance.",
-        "tags": [
-          "Tenancies"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/tenancies/{id}/deposit-received": {
-      "patch": {
-        "operationId": "TenanciesController_depositReceived",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DepositReceivedDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Tenancy"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Record the day the deposit was received. The 30-day protection deadline runs from it.",
-        "tags": [
-          "Tenancies"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/tenancies/{id}/prescribed-info": {
-      "post": {
-        "operationId": "TenanciesController_prescribedInfo",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PrescribedInfoDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Tenancy"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Record that the tenants were sent the deposit scheme's prescribed information.",
-        "tags": [
-          "Tenancies"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/tenancies/{id}/documents": {
-      "post": {
-        "operationId": "TenanciesController_addDocument",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AddTenancyDocumentDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Tenancy"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Add a document (agreement, certificate, inventory...) to the tenancy.",
-        "tags": [
-          "Tenancies"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/notifications": {
-      "get": {
-        "operationId": "NotificationsController_list",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Notification"
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "The signed-in user's latest notifications, newest first.",
-        "tags": [
-          "Notifications"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/notifications/{id}/read": {
-      "patch": {
-        "operationId": "NotificationsController_markRead",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Notification"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Mark a notification as read.",
-        "tags": [
-          "Notifications"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
     "/flags": {
       "post": {
         "operationId": "FlagsController_create",
@@ -4998,6 +5513,37 @@
                 }
               }
             }
+          }
+        },
+        "tags": [
+          "Flags"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/flags/lift-suspension/{userId}": {
+      "patch": {
+        "operationId": "FlagsController_liftSuspension",
+        "parameters": [
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Suspension lifted. The account's listings stay offline until resubmitted."
           }
         },
         "tags": [
@@ -5753,6 +6299,75 @@
           }
         },
         "summary": "Send a draft contract to the tenants for signature.",
+        "tags": [
+          "Contracts"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/contracts/{id}/remind": {
+      "post": {
+        "operationId": "ContractsController_remind",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Contract"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Email the signing link again to tenants who have not signed a sent contract (once per 24 hours).",
         "tags": [
           "Contracts"
         ],
@@ -6995,426 +7610,6 @@
         ]
       }
     },
-    "/connectors": {
-      "get": {
-        "operationId": "ConnectorsController_overview",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConnectorsOverviewDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Your connected mailboxes and the providers this server can connect.",
-        "tags": [
-          "Connectors"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/connectors/settings": {
-      "patch": {
-        "operationId": "ConnectorsController_updateSettings",
-        "parameters": [],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateConnectorSettingsDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConnectorSettingsDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Choose what mailboxes import (housing only or all emails) and whether attachments are filed automatically.",
-        "tags": [
-          "Connectors"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/connectors/imap": {
-      "post": {
-        "description": "Outside production, a server that cannot be signed in to falls back to the demo mailbox (mode: demo).",
-        "operationId": "ConnectorsController_connectImap",
-        "parameters": [],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConnectImapDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ImapConnectResultDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Sign-in failed (production).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Connect any mailbox over IMAP with an app password (stored encrypted), then sync it.",
-        "tags": [
-          "Connectors"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/connectors/{provider}/auth-url": {
-      "get": {
-        "operationId": "ConnectorsController_authUrl",
-        "parameters": [
-          {
-            "name": "provider",
-            "required": true,
-            "in": "path",
-            "description": "Canonical lowercase; any casing is accepted.",
-            "schema": {
-              "enum": [
-                "gmail",
-                "outlook"
-              ],
-              "type": "string"
-            }
-          },
-          {
-            "name": "client",
-            "required": false,
-            "in": "query",
-            "description": "Where to send the user back after consent.",
-            "schema": {
-              "default": "web",
-              "type": "string",
-              "enum": [
-                "web",
-                "mobile"
-              ]
-            }
-          },
-          {
-            "name": "returnTo",
-            "required": false,
-            "in": "query",
-            "description": "Web path to return to (must start with /).",
-            "schema": {
-              "example": "/connectors",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthUrlDto"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Provider not set up on this server.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "OAuth consent URL for Gmail or Outlook (read housing emails, reply from your address).",
-        "tags": [
-          "Connectors"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/connectors/{provider}/confirm": {
-      "post": {
-        "operationId": "ConnectorsController_confirm",
-        "parameters": [
-          {
-            "name": "provider",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "enum": [
-                "gmail",
-                "outlook"
-              ],
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConfirmConnectorDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EmailConnectionViewDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Expired, already used, or started from another account.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Mobile: activate the mailbox from the OAuth redirect (status=pending&nonce=...) for the signed-in user.",
-        "tags": [
-          "Connectors"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/connectors/demo": {
-      "post": {
-        "operationId": "ConnectorsController_connectDemo",
-        "parameters": [],
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SyncResultDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Connect the demo mailbox (sample housing emails). Not available in production.",
-        "tags": [
-          "Connectors"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/connectors/{id}/sync": {
-      "post": {
-        "operationId": "ConnectorsController_sync",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SyncResultDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          },
-          "502": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Fetch new housing emails and file their attachments.",
-        "tags": [
-          "Connectors"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/connectors/{id}": {
-      "delete": {
-        "operationId": "ConnectorsController_disconnect",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DisconnectResultDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Disconnect a mailbox and delete the emails stored from it.",
-        "tags": [
-          "Connectors"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
     "/inbox/threads": {
       "get": {
         "operationId": "InboxController_threads",
@@ -7898,13 +8093,23 @@
             "type": "string"
           },
           "verified": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Always false: Seek does not check numbers against the registers. Use status."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "DECLARED",
+              "INVALID_FORMAT"
+            ],
+            "description": "Format check only: DECLARED or INVALID_FORMAT."
           }
         },
         "required": [
           "kind",
           "number",
-          "verified"
+          "verified",
+          "status"
         ]
       },
       "NotificationPrefsDto": {
@@ -8252,6 +8457,7 @@
               "VERIFIED",
               "EXPIRED",
               "REJECTED",
+              "PROVIDED",
               "MISSING"
             ]
           },
@@ -8298,6 +8504,11 @@
             "format": "date-time",
             "nullable": true,
             "description": "When Seek emailed the guarantor or referee (source \"request\" only)."
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "description": "Status REJECTED only: what to fix, from the automatic review. Only for the owner or a viewer with an active share."
           }
         },
         "required": [
@@ -8536,13 +8747,10 @@
               "PENDING",
               "VERIFIED",
               "EXPIRED",
-              "REJECTED"
-            ]
-          },
-          "expiresAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
+              "REJECTED",
+              "PROVIDED"
+            ],
+            "description": "Only PENDING is accepted: it runs the automatic check again."
           }
         },
         "required": [
@@ -8609,6 +8817,870 @@
           "uploadUrl",
           "fileUrl",
           "key"
+        ]
+      },
+      "ProviderAvailabilityDto": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "GMAIL",
+              "OUTLOOK",
+              "DEMO",
+              "IMAP"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "example": "Gmail"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the provider cannot be connected on this server."
+          }
+        },
+        "required": [
+          "provider",
+          "label",
+          "available"
+        ]
+      },
+      "ConnectorSettingsDto": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "housing"
+            ],
+            "description": "Connected mailboxes only ever import housing-related emails."
+          },
+          "autoFileAttachments": {
+            "type": "boolean",
+            "description": "File leases, certificates and bills found in attachments automatically."
+          },
+          "addReferencesToProfile": {
+            "type": "boolean",
+            "description": "Students: add landlord and character references found in emails to the Seek Passport."
+          },
+          "readUtilityBills": {
+            "type": "boolean",
+            "description": "Read utility bills from emails so they can be split."
+          },
+          "copySignedContracts": {
+            "type": "boolean",
+            "description": "File signed tenancy agreements in the tenancy, where every tenant sees them."
+          },
+          "aiDraftReplies": {
+            "type": "boolean",
+            "description": "Let Seek AI suggest replies in the inbox (the user always presses send)."
+          }
+        },
+        "required": [
+          "scope",
+          "autoFileAttachments",
+          "addReferencesToProfile",
+          "readUtilityBills",
+          "copySignedContracts",
+          "aiDraftReplies"
+        ]
+      },
+      "MatchedContactDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "James Holloway"
+          },
+          "email": {
+            "type": "string",
+            "example": "james@holloway-lets.co.uk"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "LANDLORD",
+              "TENANT",
+              "APPLICANT",
+              "BILLS",
+              "DEPOSIT",
+              "HOUSEHOLD",
+              "UNIVERSITY",
+              "OTHER"
+            ]
+          },
+          "emailCount": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "category",
+          "emailCount"
+        ]
+      },
+      "EmailConnectionViewDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "GMAIL",
+              "OUTLOOK",
+              "DEMO",
+              "IMAP"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "example": "Gmail"
+          },
+          "emailAddress": {
+            "type": "string",
+            "example": "maya.rahman@gmail.com"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "CONNECTED",
+              "ERROR",
+              "DISCONNECTED"
+            ]
+          },
+          "canSend": {
+            "type": "boolean",
+            "description": "Replies can be sent from this mailbox. False for IMAP (read-only)."
+          },
+          "housingOnly": {
+            "type": "boolean",
+            "description": "Only housing emails are synced (your connector settings scope is housing)."
+          },
+          "lastSyncAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastError": {
+            "type": "string",
+            "nullable": true
+          },
+          "emailCount": {
+            "type": "number",
+            "description": "Housing emails stored from this mailbox."
+          },
+          "contactCount": {
+            "type": "number",
+            "description": "Distinct senders and recipients matched."
+          },
+          "matchedContacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MatchedContactDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "label",
+          "emailAddress",
+          "status",
+          "canSend",
+          "housingOnly",
+          "lastSyncAt",
+          "lastError",
+          "emailCount",
+          "contactCount",
+          "matchedContacts"
+        ]
+      },
+      "ConnectorsOverviewDto": {
+        "type": "object",
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderAvailabilityDto"
+            }
+          },
+          "settings": {
+            "$ref": "#/components/schemas/ConnectorSettingsDto"
+          },
+          "connections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EmailConnectionViewDto"
+            }
+          }
+        },
+        "required": [
+          "providers",
+          "settings",
+          "connections"
+        ]
+      },
+      "UpdateConnectorSettingsDto": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "housing"
+            ]
+          },
+          "autoFileAttachments": {
+            "type": "boolean"
+          },
+          "addReferencesToProfile": {
+            "type": "boolean"
+          },
+          "readUtilityBills": {
+            "type": "boolean"
+          },
+          "copySignedContracts": {
+            "type": "boolean"
+          },
+          "aiDraftReplies": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ConnectImapDto": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "example": "imap.mail.me.com"
+          },
+          "port": {
+            "type": "number",
+            "example": 993,
+            "description": "IMAP over TLS port (usually 993)."
+          },
+          "username": {
+            "type": "string",
+            "example": "maya.rahman@icloud.com",
+            "description": "Usually your email address."
+          },
+          "appPassword": {
+            "type": "string",
+            "description": "An app password from your email provider, not your normal password. Stored encrypted."
+          }
+        },
+        "required": [
+          "host",
+          "port",
+          "username",
+          "appPassword"
+        ]
+      },
+      "ImapConnectResultDto": {
+        "type": "object",
+        "properties": {
+          "scanned": {
+            "type": "number",
+            "description": "Emails looked at."
+          },
+          "imported": {
+            "type": "number",
+            "description": "Housing emails stored."
+          },
+          "skipped": {
+            "type": "number",
+            "description": "Emails dropped because they are not about housing."
+          },
+          "filed": {
+            "type": "number",
+            "description": "Attachments filed into tenancy documents or bills."
+          },
+          "connection": {
+            "$ref": "#/components/schemas/EmailConnectionViewDto"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "imap",
+              "demo"
+            ],
+            "description": "demo: the IMAP sign-in failed outside production, so the demo mailbox was connected instead."
+          },
+          "notice": {
+            "type": "string",
+            "description": "Why the demo mailbox was used."
+          }
+        },
+        "required": [
+          "scanned",
+          "imported",
+          "skipped",
+          "filed",
+          "connection",
+          "mode"
+        ]
+      },
+      "AuthUrlDto": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "GMAIL",
+              "OUTLOOK"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "description": "Open this URL to grant read and send access to the mailbox."
+          }
+        },
+        "required": [
+          "provider",
+          "url"
+        ]
+      },
+      "ConfirmConnectorDto": {
+        "type": "object",
+        "properties": {
+          "nonce": {
+            "type": "string",
+            "description": "The nonce from the seekapp://connectors?status=pending redirect."
+          }
+        },
+        "required": [
+          "nonce"
+        ]
+      },
+      "SyncResultDto": {
+        "type": "object",
+        "properties": {
+          "scanned": {
+            "type": "number",
+            "description": "Emails looked at."
+          },
+          "imported": {
+            "type": "number",
+            "description": "Housing emails stored."
+          },
+          "skipped": {
+            "type": "number",
+            "description": "Emails dropped because they are not about housing."
+          },
+          "filed": {
+            "type": "number",
+            "description": "Attachments filed into tenancy documents or bills."
+          },
+          "connection": {
+            "$ref": "#/components/schemas/EmailConnectionViewDto"
+          }
+        },
+        "required": [
+          "scanned",
+          "imported",
+          "skipped",
+          "filed",
+          "connection"
+        ]
+      },
+      "ConnectionMatchDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "James Holloway"
+          },
+          "email": {
+            "type": "string",
+            "example": "james@holloway-lets.co.uk"
+          },
+          "lastMessageAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "lastMessageAt"
+        ]
+      },
+      "DisconnectResultDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "DISCONNECTED"
+            ]
+          },
+          "removedEmails": {
+            "type": "number",
+            "description": "Stored emails deleted with the connection."
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "removedEmails"
+        ]
+      },
+      "TenancyDocument": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "TENANCY_AGREEMENT",
+              "DEPOSIT_CERTIFICATE",
+              "GAS_SAFETY",
+              "EPC",
+              "EICR",
+              "INVENTORY",
+              "COUNCIL_TAX_EXEMPTION",
+              "HOW_TO_RENT",
+              "OTHER"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "EMAIL",
+              "UPLOAD",
+              "SEEK"
+            ]
+          },
+          "addedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "_id",
+          "type",
+          "title",
+          "url",
+          "source",
+          "addedAt"
+        ]
+      },
+      "Tenancy": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string"
+          },
+          "listing": {
+            "type": "string"
+          },
+          "landlord": {
+            "type": "string"
+          },
+          "tenants": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pendingTenants": {
+            "description": "Students invited to a hand-made tenancy who have not accepted yet. They move to tenants on accept.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "application": {
+            "type": "string",
+            "nullable": true
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endDate": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "periodic": {
+            "type": "boolean",
+            "description": "Rolling (periodic) tenancy, the default under the Renters' Rights Act."
+          },
+          "monthlyRent": {
+            "type": "number",
+            "description": "Rent per tenant per month, in pence."
+          },
+          "depositAmount": {
+            "type": "number",
+            "description": "Deposit per tenant, in pence."
+          },
+          "energyAllowance": {
+            "type": "number",
+            "nullable": true,
+            "description": "Energy fair-use allowance for the whole household, in pence per month. Usage above it is split between the tenants."
+          },
+          "depositScheme": {
+            "type": "string",
+            "enum": [
+              "DPS",
+              "TDS",
+              "MYDEPOSITS",
+              "SAFEDEPOSITS_SCOTLAND",
+              "LPS_SCOTLAND",
+              "MYDEPOSITS_SCOTLAND"
+            ],
+            "nullable": true
+          },
+          "depositReference": {
+            "type": "string"
+          },
+          "depositProtectedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "depositReceivedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When the deposit reached the landlord. It must be protected within 30 days of this date."
+          },
+          "prescribedInfoSentAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When the landlord gave tenants the deposit's prescribed information."
+          },
+          "documents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TenancyDocument"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING_ACCEPTANCE",
+              "ACTIVE",
+              "ENDED"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "_id",
+          "listing",
+          "landlord",
+          "tenants",
+          "pendingTenants",
+          "startDate",
+          "endDate",
+          "periodic",
+          "monthlyRent",
+          "depositAmount",
+          "energyAllowance",
+          "depositScheme",
+          "depositProtectedAt",
+          "depositReceivedAt",
+          "prescribedInfoSentAt",
+          "documents",
+          "status",
+          "createdAt"
+        ]
+      },
+      "CreateTenancyDto": {
+        "type": "object",
+        "properties": {
+          "listing": {
+            "type": "string",
+            "description": "Listing id (must be yours)."
+          },
+          "tenants": {
+            "description": "Student user ids to invite, for a tenancy made by hand. Each must accept before rent is scheduled. Ignored when application is given.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "application": {
+            "type": "string",
+            "description": "ACCEPTED application on your listing this tenancy comes from. Its applicants become the tenants."
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "periodic": {
+            "type": "boolean",
+            "default": true
+          },
+          "monthlyRent": {
+            "type": "number",
+            "description": "Rent per tenant per month, in pence.",
+            "example": 69500
+          },
+          "depositAmount": {
+            "type": "number",
+            "description": "Deposit per tenant, in pence.",
+            "example": 80100
+          },
+          "energyAllowance": {
+            "type": "number",
+            "description": "Energy fair-use allowance for the household, in pence per month.",
+            "example": 20000
+          },
+          "depositScheme": {
+            "type": "string",
+            "enum": [
+              "DPS",
+              "TDS",
+              "MYDEPOSITS",
+              "SAFEDEPOSITS_SCOTLAND",
+              "LPS_SCOTLAND",
+              "MYDEPOSITS_SCOTLAND"
+            ]
+          },
+          "depositReference": {
+            "type": "string"
+          },
+          "depositProtectedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "depositReceivedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the deposit was received."
+          }
+        },
+        "required": [
+          "listing",
+          "startDate",
+          "monthlyRent"
+        ]
+      },
+      "UpdateDepositDto": {
+        "type": "object",
+        "properties": {
+          "depositScheme": {
+            "type": "string",
+            "enum": [
+              "DPS",
+              "TDS",
+              "MYDEPOSITS",
+              "SAFEDEPOSITS_SCOTLAND",
+              "LPS_SCOTLAND",
+              "MYDEPOSITS_SCOTLAND"
+            ]
+          },
+          "depositReference": {
+            "type": "string",
+            "example": "DPS-4471-2209"
+          },
+          "depositProtectedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Defaults to now."
+          },
+          "depositReceivedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the deposit was received."
+          },
+          "depositAmount": {
+            "type": "number",
+            "description": "Correct the deposit per tenant, in pence."
+          },
+          "energyAllowance": {
+            "type": "number",
+            "nullable": true,
+            "description": "Energy fair-use allowance for the household, in pence per month. null removes it.",
+            "example": 20000
+          }
+        },
+        "required": [
+          "depositScheme",
+          "depositReference"
+        ]
+      },
+      "UpdateEnergyAllowanceDto": {
+        "type": "object",
+        "properties": {
+          "energyAllowance": {
+            "type": "number",
+            "nullable": true,
+            "description": "Energy fair-use allowance for the household, in pence per month. null removes it.",
+            "example": 20000
+          }
+        },
+        "required": [
+          "energyAllowance"
+        ]
+      },
+      "DepositReceivedDto": {
+        "type": "object",
+        "properties": {
+          "receivedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Defaults to now."
+          }
+        }
+      },
+      "PrescribedInfoDto": {
+        "type": "object",
+        "properties": {
+          "sentAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Defaults to now."
+          }
+        }
+      },
+      "AddTenancyDocumentDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "TENANCY_AGREEMENT",
+              "DEPOSIT_CERTIFICATE",
+              "GAS_SAFETY",
+              "EPC",
+              "EICR",
+              "INVENTORY",
+              "COUNCIL_TAX_EXEMPTION",
+              "HOW_TO_RENT",
+              "OTHER"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "example": "Gas safety certificate 2026"
+          },
+          "url": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "description": "Private upload key from /upload/presign."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "EMAIL",
+              "UPLOAD",
+              "SEEK"
+            ],
+            "default": "UPLOAD"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "url"
+        ]
+      },
+      "Notification": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string"
+          },
+          "user": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "RENT_RECEIPT",
+              "RENT_REMINDER",
+              "RENT_LATE",
+              "PAYMENT_RECEIVED",
+              "PAYMENT_FAILED",
+              "NEW_QUALIFIED_HOUSEHOLD",
+              "COMPLIANCE_DUE",
+              "CONTRACT_SENT",
+              "CONTRACT_SIGNED",
+              "INVENTORY_RECORDED",
+              "DEPOSIT_DEDUCTIONS",
+              "REPAIR_REPORTED",
+              "REPAIR_UPDATED",
+              "TENANCY_CREATED",
+              "TENANCY_INVITE",
+              "VIEWING_SCHEDULED",
+              "OFFER_MADE",
+              "OFFER_EXPIRED",
+              "APPLICATION_REJECTED",
+              "LISTING_NEEDS_CHANGES",
+              "REPORT_ACTIONED"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "link": {
+            "type": "string",
+            "description": "seek-web path to open, e.g. /student/home/rent. Same route as `target`."
+          },
+          "target": {
+            "type": "object",
+            "description": "Typed destination: a logical `screen` plus the `id` it is about. Clients route on `screen`;\n`link` is the seek-web path and `mobile` the seek-mobile path (students only).\n\n| kind | student screen → web / mobile | landlord screen → web |\n|---|---|---|\n| PAYMENTS | rent → /student/home/rent / /(app)/(tabs)/rent | landlord-rent → /rent |\n| COMPLIANCE | deposit → /student/home/deposit / /(app)/deposit | dashboard → /dashboard |\n| TENANCY | home → /student/home / /(app)/(tabs)/my-home | contracts → /contracts |\n| CONTRACTS | contract → /student/home / /(app)/contract | contracts → /contracts |\n| REPAIRS | repairs → /student/home / /(app)/repairs | dashboard → /dashboard |\n| APPLICATION | applications → /student/home / /(app)/(tabs)/applied | application → /application?listing=<listing>&id=<id> (or /applicants) |",
+            "example": {
+              "kind": "PAYMENTS",
+              "screen": "rent",
+              "mobile": "/(app)/(tabs)/rent"
+            }
+          },
+          "readAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "_id",
+          "user",
+          "kind",
+          "title",
+          "readAt",
+          "createdAt"
         ]
       },
       "LoginDto": {
@@ -9182,6 +10254,23 @@
           "isVerified": {
             "type": "boolean"
           },
+          "moderationStatus": {
+            "type": "string",
+            "enum": [
+              "APPROVED",
+              "NEEDS_CHANGES",
+              "PENDING"
+            ],
+            "nullable": true,
+            "description": "Automatic check result; null until the listing is first checked."
+          },
+          "moderationReasons": {
+            "description": "What the landlord must fix before the listing goes live.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "isDraft": {
             "type": "boolean"
           },
@@ -9519,6 +10608,23 @@
           },
           "isVerified": {
             "type": "boolean"
+          },
+          "moderationStatus": {
+            "type": "string",
+            "enum": [
+              "APPROVED",
+              "NEEDS_CHANGES",
+              "PENDING"
+            ],
+            "nullable": true,
+            "description": "Automatic check result; null until the listing is first checked."
+          },
+          "moderationReasons": {
+            "description": "What the landlord must fix before the listing goes live.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "isDraft": {
             "type": "boolean"
@@ -10109,452 +11215,6 @@
           }
         }
       },
-      "TenancyDocument": {
-        "type": "object",
-        "properties": {
-          "_id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "TENANCY_AGREEMENT",
-              "DEPOSIT_CERTIFICATE",
-              "GAS_SAFETY",
-              "EPC",
-              "EICR",
-              "INVENTORY",
-              "COUNCIL_TAX_EXEMPTION",
-              "HOW_TO_RENT",
-              "OTHER"
-            ]
-          },
-          "title": {
-            "type": "string"
-          },
-          "url": {
-            "type": "string"
-          },
-          "key": {
-            "type": "string"
-          },
-          "source": {
-            "type": "string",
-            "enum": [
-              "EMAIL",
-              "UPLOAD",
-              "SEEK"
-            ]
-          },
-          "addedAt": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "required": [
-          "_id",
-          "type",
-          "title",
-          "url",
-          "source",
-          "addedAt"
-        ]
-      },
-      "Tenancy": {
-        "type": "object",
-        "properties": {
-          "_id": {
-            "type": "string"
-          },
-          "listing": {
-            "type": "string"
-          },
-          "landlord": {
-            "type": "string"
-          },
-          "tenants": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "pendingTenants": {
-            "description": "Students invited to a hand-made tenancy who have not accepted yet. They move to tenants on accept.",
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "application": {
-            "type": "string",
-            "nullable": true
-          },
-          "startDate": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "endDate": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
-          },
-          "periodic": {
-            "type": "boolean",
-            "description": "Rolling (periodic) tenancy, the default under the Renters' Rights Act."
-          },
-          "monthlyRent": {
-            "type": "number",
-            "description": "Rent per tenant per month, in pence."
-          },
-          "depositAmount": {
-            "type": "number",
-            "description": "Deposit per tenant, in pence."
-          },
-          "energyAllowance": {
-            "type": "number",
-            "nullable": true,
-            "description": "Energy fair-use allowance for the whole household, in pence per month. Usage above it is split between the tenants."
-          },
-          "depositScheme": {
-            "type": "string",
-            "enum": [
-              "DPS",
-              "TDS",
-              "MYDEPOSITS",
-              "SAFEDEPOSITS_SCOTLAND",
-              "LPS_SCOTLAND",
-              "MYDEPOSITS_SCOTLAND"
-            ],
-            "nullable": true
-          },
-          "depositReference": {
-            "type": "string"
-          },
-          "depositProtectedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
-          },
-          "depositReceivedAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true,
-            "description": "When the deposit reached the landlord. It must be protected within 30 days of this date."
-          },
-          "prescribedInfoSentAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true,
-            "description": "When the landlord gave tenants the deposit's prescribed information."
-          },
-          "documents": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TenancyDocument"
-            }
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "PENDING_ACCEPTANCE",
-              "ACTIVE",
-              "ENDED"
-            ]
-          },
-          "createdAt": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "required": [
-          "_id",
-          "listing",
-          "landlord",
-          "tenants",
-          "pendingTenants",
-          "startDate",
-          "endDate",
-          "periodic",
-          "monthlyRent",
-          "depositAmount",
-          "energyAllowance",
-          "depositScheme",
-          "depositProtectedAt",
-          "depositReceivedAt",
-          "prescribedInfoSentAt",
-          "documents",
-          "status",
-          "createdAt"
-        ]
-      },
-      "CreateTenancyDto": {
-        "type": "object",
-        "properties": {
-          "listing": {
-            "type": "string",
-            "description": "Listing id (must be yours)."
-          },
-          "tenants": {
-            "description": "Student user ids to invite, for a tenancy made by hand. Each must accept before rent is scheduled. Ignored when application is given.",
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "application": {
-            "type": "string",
-            "description": "ACCEPTED application on your listing this tenancy comes from. Its applicants become the tenants."
-          },
-          "startDate": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "endDate": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "periodic": {
-            "type": "boolean",
-            "default": true
-          },
-          "monthlyRent": {
-            "type": "number",
-            "description": "Rent per tenant per month, in pence.",
-            "example": 69500
-          },
-          "depositAmount": {
-            "type": "number",
-            "description": "Deposit per tenant, in pence.",
-            "example": 80100
-          },
-          "energyAllowance": {
-            "type": "number",
-            "description": "Energy fair-use allowance for the household, in pence per month.",
-            "example": 20000
-          },
-          "depositScheme": {
-            "type": "string",
-            "enum": [
-              "DPS",
-              "TDS",
-              "MYDEPOSITS",
-              "SAFEDEPOSITS_SCOTLAND",
-              "LPS_SCOTLAND",
-              "MYDEPOSITS_SCOTLAND"
-            ]
-          },
-          "depositReference": {
-            "type": "string"
-          },
-          "depositProtectedAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "depositReceivedAt": {
-            "type": "string",
-            "format": "date-time",
-            "description": "When the deposit was received."
-          }
-        },
-        "required": [
-          "listing",
-          "startDate",
-          "monthlyRent"
-        ]
-      },
-      "UpdateDepositDto": {
-        "type": "object",
-        "properties": {
-          "depositScheme": {
-            "type": "string",
-            "enum": [
-              "DPS",
-              "TDS",
-              "MYDEPOSITS",
-              "SAFEDEPOSITS_SCOTLAND",
-              "LPS_SCOTLAND",
-              "MYDEPOSITS_SCOTLAND"
-            ]
-          },
-          "depositReference": {
-            "type": "string",
-            "example": "DPS-4471-2209"
-          },
-          "depositProtectedAt": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Defaults to now."
-          },
-          "depositReceivedAt": {
-            "type": "string",
-            "format": "date-time",
-            "description": "When the deposit was received."
-          },
-          "depositAmount": {
-            "type": "number",
-            "description": "Correct the deposit per tenant, in pence."
-          },
-          "energyAllowance": {
-            "type": "number",
-            "nullable": true,
-            "description": "Energy fair-use allowance for the household, in pence per month. null removes it.",
-            "example": 20000
-          }
-        },
-        "required": [
-          "depositScheme",
-          "depositReference"
-        ]
-      },
-      "UpdateEnergyAllowanceDto": {
-        "type": "object",
-        "properties": {
-          "energyAllowance": {
-            "type": "number",
-            "nullable": true,
-            "description": "Energy fair-use allowance for the household, in pence per month. null removes it.",
-            "example": 20000
-          }
-        },
-        "required": [
-          "energyAllowance"
-        ]
-      },
-      "DepositReceivedDto": {
-        "type": "object",
-        "properties": {
-          "receivedAt": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Defaults to now."
-          }
-        }
-      },
-      "PrescribedInfoDto": {
-        "type": "object",
-        "properties": {
-          "sentAt": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Defaults to now."
-          }
-        }
-      },
-      "AddTenancyDocumentDto": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "enum": [
-              "TENANCY_AGREEMENT",
-              "DEPOSIT_CERTIFICATE",
-              "GAS_SAFETY",
-              "EPC",
-              "EICR",
-              "INVENTORY",
-              "COUNCIL_TAX_EXEMPTION",
-              "HOW_TO_RENT",
-              "OTHER"
-            ]
-          },
-          "title": {
-            "type": "string",
-            "example": "Gas safety certificate 2026"
-          },
-          "url": {
-            "type": "string"
-          },
-          "key": {
-            "type": "string",
-            "description": "Private upload key from /upload/presign."
-          },
-          "source": {
-            "type": "string",
-            "enum": [
-              "EMAIL",
-              "UPLOAD",
-              "SEEK"
-            ],
-            "default": "UPLOAD"
-          }
-        },
-        "required": [
-          "type",
-          "title",
-          "url"
-        ]
-      },
-      "Notification": {
-        "type": "object",
-        "properties": {
-          "_id": {
-            "type": "string"
-          },
-          "user": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "RENT_RECEIPT",
-              "RENT_REMINDER",
-              "RENT_LATE",
-              "PAYMENT_RECEIVED",
-              "PAYMENT_FAILED",
-              "NEW_QUALIFIED_HOUSEHOLD",
-              "COMPLIANCE_DUE",
-              "CONTRACT_SENT",
-              "CONTRACT_SIGNED",
-              "INVENTORY_RECORDED",
-              "DEPOSIT_DEDUCTIONS",
-              "REPAIR_REPORTED",
-              "REPAIR_UPDATED",
-              "TENANCY_CREATED",
-              "TENANCY_INVITE",
-              "VIEWING_SCHEDULED",
-              "OFFER_MADE",
-              "OFFER_EXPIRED",
-              "APPLICATION_REJECTED"
-            ]
-          },
-          "title": {
-            "type": "string"
-          },
-          "body": {
-            "type": "string"
-          },
-          "link": {
-            "type": "string",
-            "description": "seek-web path to open, e.g. /student/home/rent. Same route as `target`."
-          },
-          "target": {
-            "type": "object",
-            "description": "Typed destination: a logical `screen` plus the `id` it is about. Clients route on `screen`;\n`link` is the seek-web path and `mobile` the seek-mobile path (students only).\n\n| kind | student screen → web / mobile | landlord screen → web |\n|---|---|---|\n| PAYMENTS | rent → /student/home/rent / /(app)/(tabs)/rent | landlord-rent → /rent |\n| COMPLIANCE | deposit → /student/home/deposit / /(app)/deposit | dashboard → /dashboard |\n| TENANCY | home → /student/home / /(app)/(tabs)/my-home | contracts → /contracts |\n| CONTRACTS | contract → /student/home / /(app)/contract | contracts → /contracts |\n| REPAIRS | repairs → /student/home / /(app)/repairs | dashboard → /dashboard |\n| APPLICATION | applications → /student/home / /(app)/(tabs)/applied | application → /application?listing=<listing>&id=<id> (or /applicants) |",
-            "example": {
-              "kind": "PAYMENTS",
-              "screen": "rent",
-              "mobile": "/(app)/(tabs)/rent"
-            }
-          },
-          "readAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
-          },
-          "createdAt": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "required": [
-          "_id",
-          "user",
-          "kind",
-          "title",
-          "readAt",
-          "createdAt"
-        ]
-      },
       "CreateFlagDto": {
         "type": "object",
         "properties": {
@@ -10617,6 +11277,11 @@
             "type": "string",
             "nullable": true,
             "description": "Seek support's reply to the reporter."
+          },
+          "triage": {
+            "type": "object",
+            "nullable": true,
+            "description": "Automatic AI triage (admins only): category, severity and a short summary."
           },
           "createdAt": {
             "type": "string",
@@ -10883,6 +11548,12 @@
             "format": "date-time",
             "nullable": true
           },
+          "lastRemindedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "Last signing reminder sent to the tenants."
+          },
           "templateKind": {
             "type": "string",
             "enum": [
@@ -10929,6 +11600,7 @@
           "signatures",
           "sentAt",
           "signedAt",
+          "lastRemindedAt",
           "templateKind",
           "prescribedInformationUrl",
           "inventory",
@@ -12536,394 +13208,6 @@
           "advice",
           "source",
           "provider"
-        ]
-      },
-      "ProviderAvailabilityDto": {
-        "type": "object",
-        "properties": {
-          "provider": {
-            "type": "string",
-            "enum": [
-              "GMAIL",
-              "OUTLOOK",
-              "DEMO",
-              "IMAP"
-            ]
-          },
-          "label": {
-            "type": "string",
-            "example": "Gmail"
-          },
-          "available": {
-            "type": "boolean"
-          },
-          "reason": {
-            "type": "string",
-            "description": "Why the provider cannot be connected on this server."
-          }
-        },
-        "required": [
-          "provider",
-          "label",
-          "available"
-        ]
-      },
-      "ConnectorSettingsDto": {
-        "type": "object",
-        "properties": {
-          "scope": {
-            "type": "string",
-            "enum": [
-              "housing"
-            ],
-            "description": "Connected mailboxes only ever import housing-related emails."
-          },
-          "autoFileAttachments": {
-            "type": "boolean",
-            "description": "File leases, certificates and bills found in attachments automatically."
-          },
-          "addReferencesToProfile": {
-            "type": "boolean",
-            "description": "Students: add landlord and character references found in emails to the Seek Passport."
-          },
-          "readUtilityBills": {
-            "type": "boolean",
-            "description": "Read utility bills from emails so they can be split."
-          },
-          "copySignedContracts": {
-            "type": "boolean",
-            "description": "File signed tenancy agreements in the tenancy, where every tenant sees them."
-          },
-          "aiDraftReplies": {
-            "type": "boolean",
-            "description": "Let Seek AI suggest replies in the inbox (the user always presses send)."
-          }
-        },
-        "required": [
-          "scope",
-          "autoFileAttachments",
-          "addReferencesToProfile",
-          "readUtilityBills",
-          "copySignedContracts",
-          "aiDraftReplies"
-        ]
-      },
-      "MatchedContactDto": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "example": "James Holloway"
-          },
-          "email": {
-            "type": "string",
-            "example": "james@holloway-lets.co.uk"
-          },
-          "category": {
-            "type": "string",
-            "enum": [
-              "LANDLORD",
-              "TENANT",
-              "APPLICANT",
-              "BILLS",
-              "DEPOSIT",
-              "HOUSEHOLD",
-              "UNIVERSITY",
-              "OTHER"
-            ]
-          },
-          "emailCount": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "name",
-          "email",
-          "category",
-          "emailCount"
-        ]
-      },
-      "EmailConnectionViewDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "provider": {
-            "type": "string",
-            "enum": [
-              "GMAIL",
-              "OUTLOOK",
-              "DEMO",
-              "IMAP"
-            ]
-          },
-          "label": {
-            "type": "string",
-            "example": "Gmail"
-          },
-          "emailAddress": {
-            "type": "string",
-            "example": "maya.rahman@gmail.com"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "CONNECTED",
-              "ERROR",
-              "DISCONNECTED"
-            ]
-          },
-          "housingOnly": {
-            "type": "boolean",
-            "description": "Only housing emails are synced (your connector settings scope is housing)."
-          },
-          "lastSyncAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
-          },
-          "lastError": {
-            "type": "string",
-            "nullable": true
-          },
-          "emailCount": {
-            "type": "number",
-            "description": "Housing emails stored from this mailbox."
-          },
-          "contactCount": {
-            "type": "number",
-            "description": "Distinct senders and recipients matched."
-          },
-          "matchedContacts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MatchedContactDto"
-            }
-          }
-        },
-        "required": [
-          "id",
-          "provider",
-          "label",
-          "emailAddress",
-          "status",
-          "housingOnly",
-          "lastSyncAt",
-          "lastError",
-          "emailCount",
-          "contactCount",
-          "matchedContacts"
-        ]
-      },
-      "ConnectorsOverviewDto": {
-        "type": "object",
-        "properties": {
-          "providers": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ProviderAvailabilityDto"
-            }
-          },
-          "settings": {
-            "$ref": "#/components/schemas/ConnectorSettingsDto"
-          },
-          "connections": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/EmailConnectionViewDto"
-            }
-          }
-        },
-        "required": [
-          "providers",
-          "settings",
-          "connections"
-        ]
-      },
-      "UpdateConnectorSettingsDto": {
-        "type": "object",
-        "properties": {
-          "scope": {
-            "type": "string",
-            "enum": [
-              "housing"
-            ]
-          },
-          "autoFileAttachments": {
-            "type": "boolean"
-          },
-          "addReferencesToProfile": {
-            "type": "boolean"
-          },
-          "readUtilityBills": {
-            "type": "boolean"
-          },
-          "copySignedContracts": {
-            "type": "boolean"
-          },
-          "aiDraftReplies": {
-            "type": "boolean"
-          }
-        }
-      },
-      "ConnectImapDto": {
-        "type": "object",
-        "properties": {
-          "host": {
-            "type": "string",
-            "example": "imap.mail.me.com"
-          },
-          "port": {
-            "type": "number",
-            "example": 993,
-            "description": "IMAP over TLS port (usually 993)."
-          },
-          "username": {
-            "type": "string",
-            "example": "maya.rahman@icloud.com",
-            "description": "Usually your email address."
-          },
-          "appPassword": {
-            "type": "string",
-            "description": "An app password from your email provider, not your normal password. Stored encrypted."
-          }
-        },
-        "required": [
-          "host",
-          "port",
-          "username",
-          "appPassword"
-        ]
-      },
-      "ImapConnectResultDto": {
-        "type": "object",
-        "properties": {
-          "scanned": {
-            "type": "number",
-            "description": "Emails looked at."
-          },
-          "imported": {
-            "type": "number",
-            "description": "Housing emails stored."
-          },
-          "skipped": {
-            "type": "number",
-            "description": "Emails dropped because they are not about housing."
-          },
-          "filed": {
-            "type": "number",
-            "description": "Attachments filed into tenancy documents or bills."
-          },
-          "connection": {
-            "$ref": "#/components/schemas/EmailConnectionViewDto"
-          },
-          "mode": {
-            "type": "string",
-            "enum": [
-              "imap",
-              "demo"
-            ],
-            "description": "demo: the IMAP sign-in failed outside production, so the demo mailbox was connected instead."
-          },
-          "notice": {
-            "type": "string",
-            "description": "Why the demo mailbox was used."
-          }
-        },
-        "required": [
-          "scanned",
-          "imported",
-          "skipped",
-          "filed",
-          "connection",
-          "mode"
-        ]
-      },
-      "AuthUrlDto": {
-        "type": "object",
-        "properties": {
-          "provider": {
-            "type": "string",
-            "enum": [
-              "GMAIL",
-              "OUTLOOK"
-            ]
-          },
-          "url": {
-            "type": "string",
-            "description": "Open this URL to grant read and send access to the mailbox."
-          }
-        },
-        "required": [
-          "provider",
-          "url"
-        ]
-      },
-      "ConfirmConnectorDto": {
-        "type": "object",
-        "properties": {
-          "nonce": {
-            "type": "string",
-            "description": "The nonce from the seekapp://connectors?status=pending redirect."
-          }
-        },
-        "required": [
-          "nonce"
-        ]
-      },
-      "SyncResultDto": {
-        "type": "object",
-        "properties": {
-          "scanned": {
-            "type": "number",
-            "description": "Emails looked at."
-          },
-          "imported": {
-            "type": "number",
-            "description": "Housing emails stored."
-          },
-          "skipped": {
-            "type": "number",
-            "description": "Emails dropped because they are not about housing."
-          },
-          "filed": {
-            "type": "number",
-            "description": "Attachments filed into tenancy documents or bills."
-          },
-          "connection": {
-            "$ref": "#/components/schemas/EmailConnectionViewDto"
-          }
-        },
-        "required": [
-          "scanned",
-          "imported",
-          "skipped",
-          "filed",
-          "connection"
-        ]
-      },
-      "DisconnectResultDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "DISCONNECTED"
-            ]
-          },
-          "removedEmails": {
-            "type": "number",
-            "description": "Stored emails deleted with the connection."
-          }
-        },
-        "required": [
-          "id",
-          "status",
-          "removedEmails"
         ]
       },
       "InboxThreadDto": {

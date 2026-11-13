@@ -7,6 +7,12 @@ export type LlmProvider = "gemini" | "anthropic";
 /** Whole-chain budget: past it the caller's rule-based answer is used instead of waiting on each provider. */
 const CHAIN_BUDGET_MS = 8_000;
 
+/** A PDF or image sent with the first user turn (base64, no data: prefix). */
+export interface LlmFile {
+	mimeType: string;
+	data: string;
+}
+
 export interface LlmAnswer {
 	text: string;
 	provider: LlmProvider;
@@ -37,8 +43,11 @@ export class LlmClient {
 		messages: ChatTurn[];
 		maxTokens?: number;
 		responseSchema?: Record<string, unknown>;
+		file?: LlmFile;
+		/** Background callers (document review) can wait longer than a user-facing request. */
+		budgetMs?: number;
 	}): Promise<LlmAnswer | null> {
-		const signal = AbortSignal.timeout(CHAIN_BUDGET_MS);
+		const signal = AbortSignal.timeout(params.budgetMs ?? CHAIN_BUDGET_MS);
 		if (this.gemini.isConfigured()) {
 			const answer = await this.gemini.complete({ ...params, signal });
 			if (answer) {

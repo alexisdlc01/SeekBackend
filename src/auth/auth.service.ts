@@ -464,7 +464,9 @@ export class AuthService {
 		const consumed = await this.usersRepo.consumePasswordReset(
 			userId,
 			user.resetPasswordToken,
-			passwordHash
+			passwordHash,
+			// Unproven account: a squatter's team must not survive the real owner's reset.
+			!user.isVerified
 		);
 		if (!consumed) {
 			throw new BadRequestException("Invalid or expired reset token.");
@@ -648,9 +650,18 @@ export class AuthService {
 				isVerified: true
 			});
 		} else if (!savedUser.isGoogle) {
+			// An unproven password may be a squatter's (pre-account takeover): Google
+			// now proves the mailbox, so drop that password, its sessions and any team
+			// the squatter built (team members act as the owner via findTeamOwner).
+			const unproven = !savedUser.isVerified;
 			await this.usersService.updateUser(
 				{ _id: savedUser._id },
-				{ $set: { isGoogle: true, isVerified: true } }
+				unproven
+					? {
+						$set: { isGoogle: true, isVerified: true, refreshSessions: [], team: [] },
+						$unset: { password: 1 }
+					}
+					: { $set: { isGoogle: true, isVerified: true } }
 			);
 			savedUser = await this.usersRepo.getUserById(savedUser._id.toString());
 		}

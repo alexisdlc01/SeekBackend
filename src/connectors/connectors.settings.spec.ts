@@ -13,20 +13,22 @@ const SECRET = "test-jwt-secret";
 
 function setup(env: Record<string, string> = {}, connectorSettings?: Record<string, boolean>) {
 	const userId = new Types.ObjectId();
-	const values: Record<string, string> = { JWT_ACCESS_TOKEN_SECRET: SECRET, ...env };
+	const values: Record<string, string> = { NODE_ENV: "test", JWT_ACCESS_TOKEN_SECRET: SECRET, ...env };
 	const config = {
 		get: (key: string) => values[key],
 		getOrThrow: (key: string) => values[key]
 	};
 	const connectionModel = {
-		updateOne: jest.fn().mockResolvedValue({}),
+		updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }),
 		updateMany: jest.fn().mockResolvedValue({}),
+		exists: jest.fn().mockResolvedValue({ _id: "c" }),
 		findOneAndUpdate: jest.fn((_q, update) => lean({ _id: new Types.ObjectId(), user: userId, ...update.$set }))
 	};
-	const messageModel = { exists: jest.fn().mockResolvedValue(null) };
+	const messageModel = { exists: jest.fn().mockResolvedValue(null), deleteMany: jest.fn().mockResolvedValue({}) };
 	const userModel = {
 		findById: jest.fn(() => selectLean({ _id: userId, name: "Maya", email: "maya@example.com", connectorSettings })),
-		updateOne: jest.fn().mockResolvedValue({})
+		updateOne: jest.fn().mockResolvedValue({}),
+		exists: jest.fn().mockResolvedValue(null)
 	};
 	const store = new Map<string, string>();
 	const redis = {
@@ -47,7 +49,7 @@ function setup(env: Record<string, string> = {}, connectorSettings?: Record<stri
 		{} as any,
 		redis as any
 	);
-	return { service, userId, connectionModel, userModel };
+	return { service, userId, connectionModel, userModel, messageModel };
 }
 
 const mail = (id: string, from: string, subject: string) => ({
@@ -203,25 +205,49 @@ describe("ConnectorsService settings", () => {
 		}
 	});
 
+	it("stops storing once the mailbox is disconnected mid-sync, then deletes what slipped in", async () => {
+		jest.spyOn(imap, "listRecentImap").mockResolvedValue([mail("1", "lettings@holloway-lets.co.uk", "Your tenancy agreement"), mail("2", "lettings@holloway-lets.co.uk", "Rent reminder")]);
+		const { service, userId, connectionModel, messageModel } = setup();
+		jest.spyOn(service, "contactBook").mockResolvedValue({ byEmail: new Map(), byUser: new Map() });
+		jest.spyOn(service as any, "imapCredentials").mockReturnValue({ host: "imap.example.com", port: 993, username: "u", password: "p" });
+		const store = jest.spyOn(service as any, "store").mockImplementation(async () => {
+			connectionModel.exists.mockResolvedValue(null); // the user clicks Disconnect during the first store()
+			connectionModel.updateOne.mockResolvedValue({ matchedCount: 0 });
+			return 0;
+		});
+		const connection = { _id: new Types.ObjectId(), user: userId, provider: EmailProvider.IMAP, emailAddress: "maya@example.com" };
+		await service.syncConnection(connection as any);
+		expect(store).toHaveBeenCalledTimes(1);
+		expect(messageModel.deleteMany).toHaveBeenCalledWith({ connection: connection._id });
+	});
+
+	it("treats an unset NODE_ENV as production: no demo mailbox, no private IMAP hosts", async () => {
+		const { service } = setup({ NODE_ENV: "" });
+		await expect(service.connectDemo({ _id: new Types.ObjectId() } as any)).rejects.toThrow("not available");
+		expect(service.providers().some(item => item.provider === EmailProvider.DEMO)).toBe(false);
+	});
+
 	describe("store() honours the toggles", () => {
-		const tenancy = { _id: new Types.ObjectId(), documents: [] };
+		const landlordId = new Types.ObjectId();
+		const tenancy = { _id: new Types.ObjectId(), landlord: landlordId, documents: [] };
 		const classification = { housing: true, category: "BILLS", counterpartName: "", contact: null };
+		const fromLandlord = { ...classification, contact: { role: "LANDLORD", userId: landlordId.toString(), tenancyId: null } };
 		const withFile = (subject: string, name: string) => ({ ...mail("9", "hello@octopus.energy", subject), body: "Total: £214.00", attachments: [{ name, mimeType: "application/pdf", size: 10 }] });
 
-		function storeSetup(toggles: Partial<Record<string, boolean>>, role = "STUDENT") {
-			const { service, userModel } = setup();
+		function storeSetup(toggles: Partial<Record<string, boolean>>, role = "STUDENT", from: any = classification) {
+			const { service, userModel, connectionModel } = setup();
 			const created = { _id: new Types.ObjectId(), toObject: () => ({ attachments: [{ name: "x" }] }) };
-			(service as any).messageModel = { create: jest.fn().mockResolvedValue(created), updateOne: jest.fn().mockResolvedValue({}) };
+			(service as any).messageModel = { create: jest.fn().mockResolvedValue(created), updateOne: jest.fn().mockResolvedValue({}), deleteOne: jest.fn().mockResolvedValue({}) };
 			jest.spyOn(service as any, "tenancyFor").mockResolvedValue({ tenancy, listing: null, label: "My home" });
 			jest.spyOn(service as any, "storeFile").mockResolvedValue({ url: "https://files.example/x.pdf", key: null });
 			const fileDocument = jest.spyOn(service as any, "fileDocument").mockResolvedValue(undefined);
 			const fileBill = jest.spyOn(service as any, "fileBill").mockResolvedValue(true);
 			const run = (mailFull: any) =>
-				(service as any).store({ _id: new Types.ObjectId() }, { _id: new Types.ObjectId(), role }, mailFull, classification, false, {
+				(service as any).store({ _id: new Types.ObjectId() }, { _id: new Types.ObjectId(), role }, mailFull, from, false, {
 					...allOn,
 					...toggles
 				});
-			return { run, fileDocument, fileBill, userModel };
+			return { run, fileDocument, fileBill, userModel, connectionModel };
 		}
 
 		it("files bills only when reading utility bills is on", async () => {
@@ -243,19 +269,48 @@ describe("ConnectorsService settings", () => {
 			const off = storeSetup({ copySignedContracts: false });
 			await off.run(withFile("Tenancy agreement", "Tenancy-agreement.pdf"));
 			expect(off.fileDocument).not.toHaveBeenCalled();
-			const on = storeSetup({});
+			const on = storeSetup({}, "STUDENT", fromLandlord);
 			await on.run(withFile("Tenancy agreement", "Tenancy-agreement.pdf"));
 			expect(on.fileDocument).toHaveBeenCalledWith(tenancy, "TENANCY_AGREEMENT", "Tenancy-agreement.pdf", expect.anything());
+		});
+
+		it("files a contract or certificate from anyone but the landlord or their team as a plain document", async () => {
+			const stranger = storeSetup({});
+			await stranger.run(withFile("Your tenancy agreement", "Tenancy-agreement.pdf"));
+			await stranger.run(withFile("Gas safety", "gas-safety.pdf"));
+			expect(stranger.fileDocument.mock.calls.map(call => call[1])).toEqual(["OTHER", "OTHER"]);
+			expect(stranger.userModel.exists.mock.calls[0][0]).toMatchObject({ _id: landlordId, $or: [{ email: "hello@octopus.energy" }, { "team.email": "hello@octopus.energy" }] });
+
+			const team = storeSetup({});
+			team.userModel.exists.mockResolvedValue({ _id: landlordId });
+			await team.run(withFile("Your tenancy agreement", "Tenancy-agreement.pdf"));
+			expect(team.fileDocument.mock.calls[0][1]).toBe("TENANCY_AGREEMENT");
+		});
+
+		it("files nothing once the mailbox was disconnected while the email was being saved", async () => {
+			const gone = storeSetup({}, "STUDENT", fromLandlord);
+			gone.connectionModel.exists.mockResolvedValue(null);
+			await expect(gone.run(withFile("Tenancy agreement", "Tenancy-agreement.pdf"))).resolves.toBe(0);
+			expect(gone.fileDocument).not.toHaveBeenCalled();
 		});
 
 		it("adds references to a student's profile only when that toggle is on", async () => {
 			const off = storeSetup({ addReferencesToProfile: false });
 			await off.run(withFile("Your landlord reference", "Landlord-reference.pdf"));
 			expect(off.userModel.updateOne).not.toHaveBeenCalled();
-			const on = storeSetup({});
+			const on = storeSetup({}, "STUDENT", fromLandlord);
 			await expect(on.run(withFile("Your landlord reference", "Landlord-reference.pdf"))).resolves.toBe(1);
 			const [, update] = on.userModel.updateOne.mock.calls[0] as any;
 			expect(update.$push.documents).toMatchObject({ type: "LANDLORD_REFERENCE", status: "PENDING" });
+		});
+
+		it("never adds a reference sent by a housemate or a stranger", async () => {
+			const housemate = { ...classification, contact: { role: "HOUSEHOLD", userId: new Types.ObjectId().toString(), tenancyId: null } };
+			for (const from of [classification, housemate]) {
+				const other = storeSetup({}, "STUDENT", from);
+				await other.run(withFile("Your landlord reference", "Landlord-reference.pdf"));
+				expect(other.userModel.updateOne).not.toHaveBeenCalled();
+			}
 		});
 	});
 });

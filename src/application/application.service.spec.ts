@@ -748,6 +748,37 @@ describe("ApplicationService pipeline", () => {
 		expect(paymentModel.insertMany).not.toHaveBeenCalled();
 	});
 
+	it("on renewal closes the open session of a dropped or repriced deposit, and keeps one Stripe already took", async () => {
+		const previousKey = process.env.STRIPE_SECRET_KEY;
+		process.env.STRIPE_SECRET_KEY = "sk_test_x";
+		const expire = jest.spyOn(StripeClient.prototype, "expireCheckoutSession").mockImplementation(async (id: string) => {
+			if (id === "cs_test_paid") throw new StripeApiError("not open", 400);
+			return {} as never;
+		});
+		const retrieve = jest.spyOn(StripeClient.prototype, "retrieveCheckoutSession").mockResolvedValue({ status: "complete", payment_status: "paid" } as never);
+		try {
+			queue({ id: applicationId, qualified: true });
+			applicationModel.findById.mockReturnValue(exec(stored(ApplicationStage.VIEWED)));
+			applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.OFFERED, { offeredAt: new Date() })));
+			// The member's old session was for a different amount and was paid; a co-applicant who left had one open.
+			const repriced = { _id: new Types.ObjectId(), tenant: studentId, amount: 10000, status: "SCHEDULED", providerRef: "cs_test_paid" };
+			const leaver = { _id: new Types.ObjectId(), tenant: new Types.ObjectId(), amount: 15000, status: "SCHEDULED", providerRef: "cs_test_leaver" };
+			paymentModel.find.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue([repriced, leaver]) }) });
+			paymentModel.updateOne = jest.fn().mockResolvedValue({});
+
+			await service.offer(applicationId.toString());
+
+			expect(expire.mock.calls.map(call => call[0]).sort()).toEqual(["cs_test_leaver", "cs_test_paid"]);
+			expect(paymentModel.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ _id: { $in: [leaver._id] } }));
+			expect(paymentModel.updateOne).not.toHaveBeenCalled();
+			expect(paymentModel.insertMany).not.toHaveBeenCalled();
+		} finally {
+			expire.mockRestore();
+			retrieve.mockRestore();
+			if (previousKey === undefined) delete process.env.STRIPE_SECRET_KEY; else process.env.STRIPE_SECRET_KEY = previousKey;
+		}
+	});
+
 	it("puts a lapsed offer back in the queue and tells the household", async () => {
 		const lapsed = stored(ApplicationStage.OFFERED, { offerExpiresAt: new Date(Date.now() - 1000), viewingAt: future });
 		applicationModel.find = jest.fn()

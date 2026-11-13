@@ -1,6 +1,8 @@
 import {
 	BadRequestException,
 	ForbiddenException,
+	HttpException,
+	HttpStatus,
 	Injectable,
 	Logger,
 	NotFoundException
@@ -18,7 +20,7 @@ import { notificationTarget, NotificationTargetKind } from "../notifications/lin
 import { User } from "../users/users.schema";
 import { MailService } from "../auth/mail.service";
 import { isKeyOwnedBy } from "../upload/object-key";
-import { allTenantsSigned } from "./signing";
+import { allTenantsSigned, unsignedTenants } from "./signing";
 import { ContractTemplate } from "./contract-template.schema";
 import { CreateContractTemplateDto } from "./dto/create-contract-template.dto";
 import { Application } from "../application/application.schema";
@@ -37,6 +39,11 @@ import {
 import { DeductionsDto, InventoryDto, RespondDeductionsDto } from "./dto/contract-extras.dto";
 
 type Viewer = Pick<User, "_id" | "role">;
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** The daily sweep stops after this many reminders; the landlord can still remind by hand. */
+const MAX_AUTO_REMINDERS = 3;
+// $not also matches contracts saved before the counter existed.
+const UNDER_AUTO_LIMIT = { autoReminderCount: { $not: { $gte: MAX_AUTO_REMINDERS } } };
 
 @Injectable()
 export class ContractsService {
@@ -374,6 +381,74 @@ export class ContractsService {
 		);
 	}
 
+	/** The landlord nudges the tenants who have not signed yet: one reminder per contract per 24 hours. */
+	async remind(contractId: string, landlord: Viewer) {
+		const contract = await this.find(contractId);
+		const tenancy = await this.tenancies.findForLandlord(contract.tenancy.toString(), landlord);
+		if (contract.status !== ContractStatus.SENT) {
+			throw new BadRequestException("Only a contract waiting for signatures can be reminded.");
+		}
+		const claimed = await this.claimReminder(contract._id, new Date(Date.now() - DAY_MS));
+		if (!claimed) throw new HttpException("A reminder was already sent in the last 24 hours.", HttpStatus.TOO_MANY_REQUESTS);
+		await this.emailContractSent(unsignedTenants(tenancy.tenants, claimed.signatures), contract.title);
+		return claimed;
+	}
+
+	/** Daily: contracts SENT over 3 days ago and not reminded in the last 72 hours, at most MAX_AUTO_REMINDERS times. The atomic claim keeps reruns idempotent. */
+	async remindStale(now = new Date()) {
+		const cutoff = new Date(now.getTime() - 3 * DAY_MS);
+		const stale = await this.contractModel
+			.find(
+				{ status: ContractStatus.SENT, sentAt: { $lte: cutoff }, ...UNDER_AUTO_LIMIT, $or: [{ lastRemindedAt: null }, { lastRemindedAt: { $lte: cutoff } }] },
+				{ _id: 1 }
+			)
+			.lean()
+			.exec();
+		let reminded = 0;
+		for (const { _id } of stale) {
+			const claimed = await this.claimReminder(_id, cutoff, now, true);
+			if (!claimed) continue;
+			const tenancy = await this.tenancyModel.findById(claimed.tenancy, { tenants: 1 }).lean().exec();
+			if (!tenancy) continue;
+			await this.emailContractSent(unsignedTenants(tenancy.tenants, claimed.signatures), claimed.title);
+			reminded += 1;
+		}
+		return reminded;
+	}
+
+	/** Stamps lastRemindedAt only if the contract is still SENT and was not reminded after `notSince`. `auto` also counts toward the sweep's limit. */
+	private claimReminder(id: Types.ObjectId, notSince: Date, now = new Date(), auto = false) {
+		return this.contractModel
+			.findOneAndUpdate(
+				{ _id: id, status: ContractStatus.SENT, ...(auto ? UNDER_AUTO_LIMIT : {}), $or: [{ lastRemindedAt: null }, { lastRemindedAt: { $lte: notSince } }] },
+				{ $set: { lastRemindedAt: now }, ...(auto ? { $inc: { autoReminderCount: 1 } } : {}) },
+				{ new: true }
+			)
+			.lean()
+			.exec();
+	}
+
+	/** Every tenant and the landlord get the fully signed agreement by email. A mail failure never undoes the signature. */
+	private async emailContractSigned(tenancy: Pick<Tenancy, "landlord" | "tenants"> & { _id: Types.ObjectId }, title: string) {
+		if (!this.mail || !this.userModel) return;
+		const landlordId = tenancy.landlord.toString();
+		const users = await this.userModel
+			.find({ _id: { $in: [...tenancy.tenants, tenancy.landlord] } }, { email: 1, name: 1 })
+			.lean()
+			.exec();
+		await Promise.all(
+			users.map(user => {
+				const { link } =
+					user._id.toString() === landlordId
+						? notificationTarget("landlord", NotificationTargetKind.CONTRACTS, tenancy._id)
+						: notificationTarget("student", NotificationTargetKind.CONTRACTS);
+				return this.mail!.sendContractSignedEmail(user.email, user.name ?? "there", title, link).catch(error =>
+					this.logger.warn(`Signed-contract email to ${user._id.toString()} failed: ${(error as Error).message}`)
+				);
+			})
+		);
+	}
+
 	async sign(contractId: string, tenant: Viewer) {
 		const contract = await this.find(contractId);
 		const tenancy = await this.tenancies.findForTenant(contract.tenancy.toString(), tenant);
@@ -437,6 +512,9 @@ export class ContractsService {
 						)
 						.exec();
 				}
+				await this.emailContractSigned(tenancy, contract.title).catch(error =>
+					this.logger.warn(`Signed-contract emails for ${contract._id.toString()} failed: ${(error as Error).message}`)
+				);
 				return signed;
 			}
 		}

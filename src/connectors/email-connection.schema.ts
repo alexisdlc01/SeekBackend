@@ -66,6 +66,10 @@ export class EmailConnection {
 	@Prop({ type: String, default: null })
 	lastError: string | null;
 
+	/** ERROR only: when background sync tries again. Null for errors that need the user to reconnect. */
+	@Prop({ type: Date, default: null })
+	retryAt: Date | null;
+
 	createdAt?: Date;
 	updatedAt?: Date;
 }

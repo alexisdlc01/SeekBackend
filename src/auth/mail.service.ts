@@ -1,8 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import Mailgun from "mailgun.js";
-import { User } from "../users/users.schema";
-import { FlagCategory } from "../flags/enums/category";
 
 const formData = require("form-data");
 
@@ -102,16 +100,6 @@ export class MailService {
 		});
 	}
 
-	async sendNewListingEmail(user: User) {
-		await this.send({
-			from: `Seek <noreply@${this.domain}>`,
-			to: ["admin@seekapp.uk"],
-			subject: "New Listing Request",
-			text: `${user.name} wants to upload a new listing.`,
-			html: `<p>${escapeHtml(user.name)} wants to upload a new listing.</p>`
-		});
-	}
-
 	async sendResetPasswordEmail(email: string, link: string) {
 		await this.send({
 			from: `Seek <noreply@${this.domain}>`,
@@ -176,6 +164,19 @@ export class MailService {
 		});
 	}
 
+	/** Sent to every tenant and the landlord once the last signature is in. */
+	async sendContractSignedEmail(email: string, name: string, contractTitle: string, path: string) {
+		const link = `${this.configService.getOrThrow<string>("FRONTEND_URL").split(",")[0].trim().replace(/\/$/, "")}${path}`;
+		const intro = `Hi ${name}, everyone has signed "${contractTitle}". A copy is filed in your Seek app.`;
+		await this.send({
+			from: `Seek <noreply@${this.domain}>`,
+			to: [email],
+			subject: "Your tenancy agreement is fully signed",
+			text: `${intro} View it here: ${link}`,
+			html: `<p>${escapeHtml(intro)}</p><p><a href="${escapeHtml(link)}">View it on Seek</a></p>`
+		});
+	}
+
 	/** A rent reminder (automatic or sent by the landlord) also reaches the tenant's inbox. */
 	async sendRentReminderEmail(email: string, name: string, title: string, body: string, path: string) {
 		const link = `${this.configService.getOrThrow<string>("FRONTEND_URL").split(",")[0].trim().replace(/\/$/, "")}${path}`;
@@ -220,20 +221,6 @@ export class MailService {
 				`<p><b>Report from</b> ${escapeHtml(reporterName)} | ${escapeHtml(reporterEmail)}` +
 				`${reported ? ` | <b>Reported account:</b> ${escapeHtml(reported)}` : ""}</p>` +
 				`<p>${escapeHtml(message)}</p>`
-		});
-	}
-
-	async sendFlagCreatedEmail(
-		createdByEmail: string,
-		reportedUserEmail: string,
-		message: { category: FlagCategory; text: string }
-	) {
-		await this.send({
-			from: `Seek <noreply@${this.domain}>`,
-			to: ["admin@seekapp.uk"],
-			subject: "New flag created",
-			text: `New flag created | Reported user: ${reportedUserEmail} | Reported by: ${createdByEmail} | for ${message.category}, ${message.text}`,
-			html: `<p>New flag created | Reported user: ${escapeHtml(reportedUserEmail)} | Reported by: ${escapeHtml(createdByEmail)} | for ${escapeHtml(message.category)}, ${escapeHtml(message.text)}</p>`
 		});
 	}
 }

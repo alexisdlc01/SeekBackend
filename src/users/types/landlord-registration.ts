@@ -7,3 +7,8 @@ export enum RegistrationKind {
 	LANDLORD_REGISTRATION_NI = "LANDLORD_REGISTRATION_NI",
 	OTHER = "OTHER"
 }
+
+export enum RegistrationStatus {
+	DECLARED = "DECLARED",
+	INVALID_FORMAT = "INVALID_FORMAT"
+}

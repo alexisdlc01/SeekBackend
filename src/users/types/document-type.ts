@@ -18,5 +18,15 @@ export enum DocumentStatus {
 	PENDING = "PENDING",
 	VERIFIED = "VERIFIED",
 	EXPIRED = "EXPIRED",
-	REJECTED = "REJECTED"
+	REJECTED = "REJECTED",
+	/** Identity documents: Seek does not check them; the landlord does through the document share. */
+	PROVIDED = "PROVIDED"
 }
+
+/** Never verified by Seek nor sent to an AI: PROVIDED on upload and enough for readiness. */
+export const IDENTITY_DOCUMENT_TYPES: readonly DocumentType[] = [
+	DocumentType.PASSPORT,
+	DocumentType.IDENTIFICATION,
+	DocumentType.VISA,
+	DocumentType.RIGHT_TO_RENT
+];

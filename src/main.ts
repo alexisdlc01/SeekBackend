@@ -8,7 +8,8 @@ import helmet from "helmet";
 import { json, urlencoded } from "express";
 import { SwaggerModule } from "@nestjs/swagger";
 import { buildSwaggerDocument } from "./swagger";
-import 'reflect-metadata';
+import "reflect-metadata";
+import { CastErrorFilter } from "./shared/cast-error.filter";
 
 /**
  * Allowed browser origins, as a parsed list. Read through ConfigService so a
@@ -27,6 +28,16 @@ async function bootstrap() {
 	const app = await NestFactory.create<NestExpressApplication>(AppModule);
 	const config = app.get(ConfigService);
 	const isProduction = config.get("NODE_ENV") === "production";
+	// Documents and listings are checked only by the AI chain (no staff queue): without a key nothing would ever be checked.
+	if (isProduction && !config.get<string>("GEMINI_API_KEY")?.trim() && !config.get<string>("ANTHROPIC_API_KEY")?.trim()) {
+		throw new Error("Set GEMINI_API_KEY or ANTHROPIC_API_KEY: automatic checks need an AI key in production.");
+	}
+	// With verification off every account counts as verified, so a squatter's team would survive the real owner's reset or Google sign-in.
+	// Same parsing as AuthService.booleanConfig: anything set other than "true" turns verification off.
+	const emailVerification = config.get<string | boolean>("AUTH_EMAIL_VERIFICATION_ENABLED");
+	if (isProduction && emailVerification !== undefined && emailVerification !== true && emailVerification !== "true") {
+		throw new Error("E-mail verification cannot be turned off in production: remove AUTH_EMAIL_VERIFICATION_ENABLED or set it to true.");
+	}
 
 	app.use(helmet());
 	// Express must know how many proxies sit in front of it, otherwise every
@@ -44,6 +55,7 @@ async function bootstrap() {
 		whitelist: true,
 		forbidNonWhitelisted: true
 	}));
+	app.useGlobalFilters(new CastErrorFilter());
 	app.use(cookieParser());
 	// Uploads go straight to S3 via presigned URLs, so no request body here
 	// needs to be large.

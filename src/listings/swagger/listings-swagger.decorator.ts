@@ -1,5 +1,5 @@
 import { applyDecorators } from "@nestjs/common";
-import { ApiBody, ApiResponse } from "@nestjs/swagger";
+import { ApiBody, ApiOperation, ApiResponse } from "@nestjs/swagger";
 import { ListingSearchResultDto } from "../dto/listing-search-result.dto";
 import { ErrorDto } from "../../dto/errorDto.dto";
 import {
@@ -104,6 +104,8 @@ export const ApiGetByIdDocs = () =>
 
 export const ApiVerifyListingDocs = () =>
 	applyDecorators(
+		ApiOperation({ summary: "Run the automatic check again on a listing (Seek staff). Never approves a listing by hand." }),
+		ApiResponse({ status: 200, type: Listing }),
 		ApiResponse({ status: 400, type: ErrorDto }),
 		ApiResponse({ status: 401, type: ErrorDto }),
 		ApiResponse({ status: 404, type: ErrorDto })

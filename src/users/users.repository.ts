@@ -19,7 +19,8 @@ export class UsersRepository {
 	async findTeamOwner(userId: Types.ObjectId): Promise<{ owner: User; scopes: TeamScope[] } | null> {
 		// shortcut: someone on several landlords' teams acts for the first one found; add an owner picker if that happens.
 		const owner = await this.userModel
-			.findOne({ "team.user": userId, deletedAt: null, role: Role.LANDLORD_AGENCY })
+			// A suspended owner's team can no longer act for them.
+			.findOne({ "team.user": userId, deletedAt: null, suspendedAt: null, role: Role.LANDLORD_AGENCY })
 			.exec();
 		const member = owner?.team.find(entry => entry.user?.equals(userId));
 		return owner && member ? { owner, scopes: member.scopes } : null;
@@ -166,7 +167,8 @@ export class UsersRepository {
 	async consumePasswordReset(
 		userId: string,
 		resetTokenHash: string,
-		passwordHash: string
+		passwordHash: string,
+		dropTeam = false
 	): Promise<boolean> {
 		const updated = await this.userModel.findOneAndUpdate(
 			{
@@ -177,7 +179,11 @@ export class UsersRepository {
 			{
 				$set: {
 					password: passwordHash,
-					refreshSessions: []
+					// A consumed reset link proves the mailbox, so this also frees an
+					// address squatted by an unverified signup.
+					isVerified: true,
+					refreshSessions: [],
+					...(dropTeam ? { team: [] } : {})
 				},
 				$unset: {
 					resetPasswordToken: 1,

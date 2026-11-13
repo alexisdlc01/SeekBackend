@@ -47,6 +47,7 @@ export class WsJwtGuard implements CanActivate {
 			if (verificationEnabled && !user.isVerified) {
 				throw new UnauthorizedException("Email verification is required.");
 			}
+			if (user.suspendedAt) throw new UnauthorizedException("Account suspended.");
 			server.data.user = user;
 		} catch (err) {
 			throw new UnauthorizedException("Session is not valid.");
@@ -66,6 +67,16 @@ export class WsJwtGuard implements CanActivate {
 		}
 		const cookieHeader = socket.handshake.headers.cookie;
 		if (!cookieHeader) return null;
+		// Browsers send cookies on cross-site WebSocket handshakes and socket.io's
+		// cors option rejects nothing, so only trust them from our own front ends.
+		if (process.env.NODE_ENV === "production") {
+			const origin = (socket.handshake.headers.origin ?? "").replace(/\/$/, "");
+			const allowed = (process.env.FRONTEND_URL ?? "")
+				.split(",")
+				.map(value => value.trim().replace(/\/$/, ""))
+				.filter(Boolean);
+			if (!allowed.includes(origin)) return null;
+		}
 
 		const cookies = this.parseCookies(cookieHeader);
 		return cookies["Authentication"] ?? null;

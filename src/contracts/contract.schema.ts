@@ -169,6 +169,14 @@ export class Contract {
 	@Prop({ type: Date, default: null })
 	signedAt: Date | null;
 
+	@ApiProperty({ type: String, format: "date-time", nullable: true, description: "Last signing reminder sent to the tenants." })
+	@Prop({ type: Date, default: null })
+	lastRemindedAt: Date | null;
+
+	/** Automatic (daily sweep) reminders sent so far; the sweep stops at MAX_AUTO_REMINDERS. */
+	@Prop({ type: Number, default: 0 })
+	autoReminderCount: number;
+
 	@ApiProperty({ enum: ContractTemplateKind, nullable: true, description: "Set when the contract is Seek's built-in agreement." })
 	@Prop({ type: String, enum: [...Object.values(ContractTemplateKind), null], default: null })
 	templateKind: ContractTemplateKind | null;

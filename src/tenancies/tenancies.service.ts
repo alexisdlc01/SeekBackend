@@ -8,7 +8,7 @@ import {
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { Tenancy, TenancyDocument } from "./tenancy.schema";
-import { DocumentSource, TenancyStatus } from "./tenancy.enums";
+import { DocumentSource, TenancyDocumentType, TenancyStatus } from "./tenancy.enums";
 import { Listing } from "../listings/listings.schema";
 import { User } from "../users/users.schema";
 import { Role } from "../auth/role.enum";
@@ -48,6 +48,9 @@ export function applicationTenancyPeriod(listing: Pick<Listing, "availableFrom" 
 }
 
 type Viewer = Pick<User, "_id" | "role">;
+
+/** Types only a tenant's own paperwork can carry; the rest are the landlord's word (agreement, certificates). */
+const TENANT_DOCUMENT_TYPES = new Set([TenancyDocumentType.COUNCIL_TAX_EXEMPTION, TenancyDocumentType.OTHER]);
 
 export type TenancyLean = Tenancy & { _id: Types.ObjectId };
 
@@ -379,8 +382,11 @@ export class TenanciesService {
 		if (dto.key && !isKeyOwnedBy(dto.key, viewer._id.toString())) {
 			throw new BadRequestException("Document key was not issued to this account.");
 		}
+		// A housemate's "tenancy agreement" must never show as the contract: only the landlord
+		// (or their team, who act as the landlord) and support file landlord documents.
+		const asLandlord = viewer.role === Role.SUPERUSER || idOf(tenancy.landlord) === viewer._id.toString();
 		await this.appendDocument(tenancy._id, {
-			type: dto.type,
+			type: asLandlord || TENANT_DOCUMENT_TYPES.has(dto.type) ? dto.type : TenancyDocumentType.OTHER,
 			title: dto.title.trim(),
 			url: dto.url,
 			key: dto.key,

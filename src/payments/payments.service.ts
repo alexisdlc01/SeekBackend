@@ -148,12 +148,13 @@ export class PaymentsService {
 	}
 
 	/**
-	 * stripe: STRIPE_SECRET_KEY is set. simulated: no key outside production,
-	 * so the flows can be exercised locally. unavailable: production, no key.
+	 * stripe: STRIPE_SECRET_KEY is set. simulated: no key under NODE_ENV
+	 * development or test, so the flows can be exercised locally. unavailable:
+	 * no key anywhere else, NODE_ENV unset included (fails closed: start:prod sets none).
 	 */
 	mode(): "stripe" | "simulated" | "unavailable" {
 		if (this.config.get<string>("STRIPE_SECRET_KEY")) return "stripe";
-		return this.config.get<string>("NODE_ENV") === "production" ? "unavailable" : "simulated";
+		return ["development", "test"].includes(this.config.get<string>("NODE_ENV") ?? "") ? "simulated" : "unavailable";
 	}
 
 	async getPlan(tenancyId: string, tenant: Viewer) {
@@ -327,7 +328,9 @@ export class PaymentsService {
 			return { received: true };
 		}
 		if (typeof intent.amount === "number" && intent.amount !== payment.amount) {
-			this.logger.error(`Stripe amount mismatch for payment ${payment._id.toString()}`);
+			this.logger.error(`Stripe amount mismatch for payment ${payment._id.toString()}: charged ${intent.amount}, expected ${payment.amount}`);
+			// A captured charge Seek can't match is never kept silently: it goes back to the payer.
+			if (event.type === "payment_intent.succeeded") await this.refundCharge(intent.id, "requested_by_customer");
 			return { received: true };
 		}
 
@@ -466,7 +469,8 @@ export class PaymentsService {
 	async releaseHeldPayouts(landlordId?: Types.ObjectId): Promise<number> {
 		if (this.mode() !== "stripe") return 0;
 		const held = (await this.paymentModel
-			.find({ status: PaymentStatus.PAID, payoutStatus: PayoutStatus.HELD, ...(landlordId ? { landlord: landlordId } : {}) })
+			// A deposit owed back to the student stays with Seek until it's refunded.
+			.find({ status: PaymentStatus.PAID, payoutStatus: PayoutStatus.HELD, refundDue: { $ne: true }, ...(landlordId ? { landlord: landlordId } : {}) })
 			.lean()
 			.exec()) as PaymentLean[];
 		if (held.length === 0) return 0;
@@ -497,8 +501,8 @@ export class PaymentsService {
 				);
 				released += 1;
 			} catch (error) {
-				if (!(error instanceof StripeApiError)) throw error;
-				this.logger.warn(`Held payment ${payment._id.toString()} not released yet (${error.status}): ${error.message}`);
+				// Network errors too: the next run retries under the same idempotency key.
+				this.logger.warn(`Held payment ${payment._id.toString()} not released yet (${error instanceof StripeApiError ? error.status : "network"}): ${(error as Error).message}`);
 			}
 		}
 		return released;
@@ -838,14 +842,15 @@ export class PaymentsService {
 			this.logger.warn(`Checkout session ${session.id} for unknown payment`);
 			return null;
 		}
+		const intent = typeof session.payment_intent === "object" ? session.payment_intent : null;
+		const intentId = typeof session.payment_intent === "string" ? session.payment_intent : intent?.id;
 		if (typeof session.amount_total === "number" && session.amount_total !== payment.amount) {
-			this.logger.error(`Stripe amount mismatch for payment ${payment._id.toString()}`);
+			this.logger.error(`Stripe amount mismatch for payment ${payment._id.toString()} (session ${session.id}): charged ${session.amount_total}, expected ${payment.amount}`);
+			if (session.payment_status === "paid" && intentId) await this.refundCharge(intentId, "requested_by_customer");
 			return null;
 		}
 		if (session.payment_status !== "paid") return payment as PaymentLean;
 
-		const intent = typeof session.payment_intent === "object" ? session.payment_intent : null;
-		const intentId = typeof session.payment_intent === "string" ? session.payment_intent : intent?.id;
 		const paid = await this.markPaid(payment as PaymentLean, PaymentProvider.STRIPE, intentId ?? session.id);
 		if (!paid && intentId) await this.refundIfDuplicate(payment._id, intentId, session.id);
 		if (session.customer) {
@@ -871,13 +876,18 @@ export class PaymentsService {
 		const current = await this.paymentModel.findById(paymentId, { status: 1, providerRef: 1 }).lean().exec();
 		if (current?.status !== PaymentStatus.PAID || current.providerRef === intentId || (sessionId && current.providerRef === sessionId)) return;
 		this.logger.error(`Duplicate charge ${intentId} on payment ${paymentId.toString()} already paid by ${current.providerRef}: refunding it`);
+		await this.refundCharge(intentId, "duplicate");
+	}
+
+	/** Refunds a whole charge, idempotently per intent. */
+	private async refundCharge(intentId: string, reason: "duplicate" | "requested_by_customer") {
 		try {
 			const stripe = new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!);
 			const intent = await stripe.retrievePaymentIntent(intentId);
 			await stripe.createRefund(
 				{
 					payment_intent: intentId,
-					reason: "duplicate",
+					reason,
 					// A destination charge already went to the landlord: take it back from them, with Seek's fee.
 					...(intent.transfer_data ? { reverse_transfer: true } : {}),
 					...(intent.application_fee_amount ? { refund_application_fee: true } : {})
@@ -886,7 +896,7 @@ export class PaymentsService {
 			);
 		} catch (error) {
 			if (!(error instanceof StripeApiError)) throw error;
-			this.logger.error(`Refund of duplicate charge ${intentId} failed (${error.status}): ${error.message}. Refund it in the Stripe dashboard.`);
+			this.logger.error(`Refund of charge ${intentId} failed (${error.status}): ${error.message}. Refund it in the Stripe dashboard.`);
 		}
 	}
 
@@ -1204,8 +1214,7 @@ export class PaymentsService {
 							continue;
 						}
 					} catch (error) {
-						if (!(error instanceof StripeApiError)) throw error;
-						this.logger.warn(`Autopay skipped for payment ${payment._id.toString()}: its Checkout session could not be closed (${error.status})`);
+						this.logger.warn(`Autopay skipped for payment ${payment._id.toString()}: its Checkout session could not be closed (${error instanceof StripeApiError ? error.status : (error as Error).message})`);
 						continue;
 					}
 				}
@@ -1237,7 +1246,16 @@ export class PaymentsService {
 					);
 					if (intent.status === "succeeded") await this.markPaid(payment, PaymentProvider.STRIPE, intent.id);
 				} catch (error) {
-					if (!(error instanceof StripeApiError)) throw error;
+					if (!(error instanceof StripeApiError)) {
+						// No answer from Stripe (timeout, network): back to SCHEDULED so the next sweep retries;
+						// the seek-autopay idempotency key returns the same intent if this one was created.
+						this.logger.error(`Autopay for payment ${payment._id.toString()} got no answer from Stripe, retrying next sweep: ${(error as Error).message}`);
+						await this.paymentModel.updateOne(
+							{ _id: payment._id, status: PaymentStatus.PENDING },
+							{ $set: { status: PaymentStatus.SCHEDULED } }
+						);
+						continue;
+					}
 					this.logger.warn(`Autopay failed for payment ${payment._id.toString()} (${error.status})`);
 					await this.paymentModel.updateOne(
 						{ _id: payment._id, status: PaymentStatus.PENDING },

@@ -3,7 +3,7 @@ import { Request } from "express";
 import { ExtractJwt, Strategy } from "passport-jwt";
 import { ConfigService } from "@nestjs/config";
 import { TokenPayload } from "../token-payload.interface";
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { ForbiddenException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { UsersRepository } from "../../users/users.repository";
 import { Role } from "../role.enum";
 import type { AuthenticatedUser } from "../auth.service";
@@ -56,6 +56,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 			(verificationEnabled && !user.isVerified)
 		) {
 			throw new UnauthorizedException("Session is not valid.");
+		}
+		if (user.suspendedAt) {
+			throw new ForbiddenException("Your Seek account is suspended after reports from other users. Contact Seek support if you think this is a mistake.");
 		}
 
 		const membership = user.role === Role.LANDLORD_AGENCY

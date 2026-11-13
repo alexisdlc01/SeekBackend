@@ -1,6 +1,9 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { ChatTurn } from "./anthropic.client";
+import type { LlmFile } from "./llm.client";
+
+type Part = { text: string } | { inlineData: LlmFile };
 
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 /** Override with GEMINI_MODEL in .env. */
@@ -46,20 +49,22 @@ export class GeminiClient {
 		maxTokens?: number;
 		responseSchema?: Record<string, unknown>;
 		signal?: AbortSignal;
+		file?: LlmFile;
 	}): Promise<{ text: string; model: string } | null> {
 		const apiKey = this.config.get<string>("GEMINI_API_KEY")?.trim();
 		if (!apiKey) return null;
 
 		// Gemini wants alternating user/model turns starting with the user.
-		const contents: { role: "user" | "model"; parts: { text: string }[] }[] = [];
+		const contents: { role: "user" | "model"; parts: Part[] }[] = [];
 		for (const message of params.messages) {
 			const role = message.role === "assistant" ? "model" : "user";
 			const last = contents[contents.length - 1];
-			if (last && last.role === role) last.parts[0].text = `${last.parts[0].text}\n\n${message.content}`;
+			if (last && last.role === role) last.parts[0] = { text: `${(last.parts[0] as { text: string }).text}\n\n${message.content}` };
 			else contents.push({ role, parts: [{ text: message.content }] });
 		}
 		while (contents.length && contents[0].role !== "user") contents.shift();
 		if (!contents.length) return null;
+		if (params.file) contents[0].parts.unshift({ inlineData: params.file });
 
 		for (const model of this.models()) {
 			if (params.signal?.aborted) break;
@@ -74,7 +79,7 @@ export class GeminiClient {
 		model: string,
 		apiKey: string,
 		params: { system: string; maxTokens?: number; responseSchema?: Record<string, unknown>; signal?: AbortSignal },
-		contents: { role: "user" | "model"; parts: { text: string }[] }[]
+		contents: { role: "user" | "model"; parts: Part[] }[]
 	): Promise<string | null> {
 		try {
 			const response = await fetch(`${GEMINI_URL}/${encodeURIComponent(model)}:generateContent`, {

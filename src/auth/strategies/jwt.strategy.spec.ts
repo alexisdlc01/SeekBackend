@@ -1,4 +1,4 @@
-import { UnauthorizedException } from "@nestjs/common";
+import { ForbiddenException, UnauthorizedException } from "@nestjs/common";
 import { Types } from "mongoose";
 import { Role } from "../role.enum";
 import { JwtStrategy } from "./jwt.strategy";
@@ -55,5 +55,16 @@ describe("JwtStrategy", () => {
 			userId: user._id.toString(),
 			sessionId: session.sessionId
 		})).rejects.toBeInstanceOf(UnauthorizedException);
+	});
+
+	it("answers 403 with a clear message for a suspended account", async () => {
+		const strategy = new JwtStrategy(
+			{ getOrThrow: jest.fn().mockReturnValue("secret"), get: jest.fn().mockReturnValue(false) } as never,
+			{ getUserById: jest.fn().mockResolvedValue({ ...user, suspendedAt: new Date() }) } as never
+		);
+
+		const attempt = strategy.validate({ userId: user._id.toString(), sessionId: session.sessionId });
+		await expect(attempt).rejects.toBeInstanceOf(ForbiddenException);
+		await expect(attempt).rejects.toThrow("suspended");
 	});
 });

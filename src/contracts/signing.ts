@@ -9,3 +9,9 @@ export function allTenantsSigned(
 	const signed = new Set(signatures.map(signature => signature.user.toString()));
 	return tenants.every(tenant => signed.has(tenant.toString()));
 }
+
+/** Tenants who still have to sign. */
+export function unsignedTenants<T extends Types.ObjectId | string>(tenants: T[], signatures: { user: Types.ObjectId | string }[]): T[] {
+	const signed = new Set(signatures.map(signature => signature.user.toString()));
+	return tenants.filter(tenant => !signed.has(tenant.toString()));
+}

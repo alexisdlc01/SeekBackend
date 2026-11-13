@@ -376,7 +376,26 @@ describe("AuthService", () => {
 		expect(usersRepo.consumePasswordReset).toHaveBeenCalledWith(
 			user._id.toString(),
 			user.resetPasswordToken,
-			expect.any(String)
+			expect.any(String),
+			false
+		);
+	});
+
+	it("drops the team on reset when the account never proved its address", async () => {
+		const rawToken = "raw-reset-token";
+		const user = makeUser({
+			isVerified: false,
+			resetPasswordToken: tokenHash(rawToken),
+			resetPasswordExpires: new Date(Date.now() + 60_000)
+		});
+		usersRepo.getUserById.mockResolvedValue(user);
+
+		await service.confirmResetPassword(user._id.toString(), rawToken, "An0ther!Password");
+		expect(usersRepo.consumePasswordReset).toHaveBeenCalledWith(
+			user._id.toString(),
+			user.resetPasswordToken,
+			expect.any(String),
+			true
 		);
 	});
 
@@ -538,6 +557,51 @@ describe("AuthService", () => {
 			await expect(
 				service.confirmEmailChange("user-1", rawToken)
 			).rejects.toBeInstanceOf(ConflictException);
+		});
+	});
+
+	describe("Google linking", () => {
+		it("drops a squatter's password and sessions when linking an unverified account", async () => {
+			const squatted = makeUser({ isVerified: false, refreshSessions: [{ sessionId: "s" } as never] });
+			usersRepo.getUserByEmail.mockResolvedValue(squatted);
+			usersRepo.getUserById.mockResolvedValue({ ...squatted, isGoogle: true, isVerified: true });
+
+			await service.createGoogleUser({ email: squatted.email, name: "Victim" } as never);
+
+			expect(usersService.updateUser).toHaveBeenCalledWith(
+				{ _id: squatted._id },
+				{
+					$set: { isGoogle: true, isVerified: true, refreshSessions: [], team: [] },
+					$unset: { password: 1 }
+				}
+			);
+		});
+
+		it("keeps a verified landlord's team when e-mail verification is off", async () => {
+			config.AUTH_EMAIL_VERIFICATION_ENABLED = false;
+			const owner = makeUser({ isVerified: true, team: [{ user: "member" }] as never });
+			usersRepo.getUserByEmail.mockResolvedValue(owner);
+			usersRepo.getUserById.mockResolvedValue(owner);
+
+			await service.createGoogleUser({ email: owner.email, name: "Owner" } as never);
+
+			expect(usersService.updateUser).toHaveBeenCalledWith(
+				{ _id: owner._id },
+				{ $set: { isGoogle: true, isVerified: true } }
+			);
+		});
+
+		it("keeps the password of an already verified account", async () => {
+			const owner = makeUser({ isVerified: true });
+			usersRepo.getUserByEmail.mockResolvedValue(owner);
+			usersRepo.getUserById.mockResolvedValue(owner);
+
+			await service.createGoogleUser({ email: owner.email, name: "Owner" } as never);
+
+			expect(usersService.updateUser).toHaveBeenCalledWith(
+				{ _id: owner._id },
+				{ $set: { isGoogle: true, isVerified: true } }
+			);
 		});
 	});
 });

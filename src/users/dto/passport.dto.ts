@@ -37,6 +37,9 @@ export class PassportItemDto {
 
 	@ApiPropertyOptional({ type: String, format: "date-time", nullable: true, description: "When Seek emailed the guarantor or referee (source \"request\" only)." })
 	requestedAt?: Date | null;
+
+	@ApiPropertyOptional({ type: String, nullable: true, description: "Status REJECTED only: what to fix, from the automatic review. Only for the owner or a viewer with an active share." })
+	reason?: string | null;
 }
 
 export class PassportSectionDto {

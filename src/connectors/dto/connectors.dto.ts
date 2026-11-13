@@ -31,6 +31,17 @@ export class MatchedContactDto {
 	emailCount: number;
 }
 
+export class ConnectionMatchDto {
+	@ApiProperty({ example: "James Holloway" })
+	name: string;
+
+	@ApiProperty({ example: "james@holloway-lets.co.uk" })
+	email: string;
+
+	@ApiProperty({ type: String, format: "date-time", nullable: true })
+	lastMessageAt: Date | null;
+}
+
 export class EmailConnectionViewDto {
 	@ApiProperty()
 	id: string;
@@ -46,6 +57,9 @@ export class EmailConnectionViewDto {
 
 	@ApiProperty({ enum: ConnectionStatus })
 	status: ConnectionStatus;
+
+	@ApiProperty({ description: "Replies can be sent from this mailbox. False for IMAP (read-only)." })
+	canSend: boolean;
 
 	@ApiProperty({ description: "Only housing emails are synced (your connector settings scope is housing)." })
 	housingOnly: boolean;

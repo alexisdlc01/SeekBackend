@@ -1,4 +1,4 @@
-import { TeamAccess } from "../auth/decorators/team-access.decorator";
+import { ANY_TEAM_SCOPE, TeamAccess } from "../auth/decorators/team-access.decorator";
 import { TeamScope } from "../users/types/team-scope";
 import { Controller, Get, Query } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
@@ -15,6 +15,8 @@ export class UploadController {
 	constructor(private readonly uploadService: UploadService) { }
 
 	@ApiPresignDocs()
+	// Team members mint under their owner, the id the contract/tenancy/listing endpoints check keys against.
+	@TeamAccess(...ANY_TEAM_SCOPE)
 	@Get("presign")
 	@Throttle({ default: { limit: 20, ttl: 60_000 } })
 	@StudentOrLandlord()

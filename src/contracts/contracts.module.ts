@@ -9,6 +9,7 @@ import { ContractTemplate, ContractTemplateSchema } from "./contract-template.sc
 import { Application, ApplicationSchema } from "../application/application.schema";
 import { ContractsController } from "./contracts.controller";
 import { ContractsService } from "./contracts.service";
+import { ContractsSweeper } from "./contracts.sweeper";
 
 @Module({
 	imports: [
@@ -23,7 +24,7 @@ import { ContractsService } from "./contracts.service";
 		AuthModule
 	],
 	controllers: [ContractsController],
-	providers: [ContractsService],
+	providers: [ContractsService, ContractsSweeper],
 	exports: [MongooseModule]
 })
 export class ContractsModule {}

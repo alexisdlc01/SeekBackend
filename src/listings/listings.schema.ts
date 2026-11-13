@@ -5,6 +5,7 @@ import { FurnishingStatus } from "./enums/furnishingStatus.enum";
 import { EpcRating } from "./enums/epcRating.enum";
 import { Nation } from "./enums/nation.enum";
 import { GuarantorCriterion } from "./enums/guarantor-criterion.enum";
+import { ModerationStatus } from "./enums/moderation-status.enum";
 import { DocumentType } from "../users/types/document-type";
 import { PlanFrequency } from "../payments/payment.enums";
 import { ApiProperty } from "@nestjs/swagger";
@@ -211,6 +212,23 @@ export class Listing {
 	@ApiProperty()
 	@Prop({ default: false })
 	isVerified: boolean;
+
+	@Expose()
+	@ApiProperty({ enum: ModerationStatus, required: false, nullable: true, description: "Automatic check result; null until the listing is first checked." })
+	@Prop({ type: String, enum: Object.values(ModerationStatus), default: null })
+	moderationStatus?: ModerationStatus | null;
+
+	@Expose()
+	@ApiProperty({ type: [String], required: false, description: "What the landlord must fix before the listing goes live." })
+	@Prop({ type: [String], default: [] })
+	moderationReasons?: string[];
+
+	@Prop({ type: Date, default: null })
+	moderatedAt?: Date | null;
+
+	/** AI checks that got no usable answer since the last edit; MAX_MODERATION_ATTEMPTS ends the wait. */
+	@Prop({ type: Number, default: 0 })
+	moderationAttempts?: number;
 
 	@Expose()
 	@ApiProperty()

@@ -5,6 +5,7 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
+	DeleteObjectCommand,
 	GetObjectCommand,
 	PutObjectCommand,
 	S3Client
@@ -24,7 +25,7 @@ import {
 	MAX_UPLOAD_BYTES
 } from "./dto/presign.dto";
 import { Role } from "../auth/role.enum";
-import { ownerIdFromKey } from "./object-key";
+import { isKeyOwnedBy, ownerIdFromKey } from "./object-key";
 
 @Injectable()
 export class UploadService {
@@ -134,7 +135,19 @@ export class UploadService {
 		return { key, url };
 	}
 
-	async getPresignedDownloadUrl(key: string, folder: "private" | "public") {
+	/** Removes a private file for good (account deletion). Deleting a missing key is a no-op in S3. */
+	async deletePrivateObject(key: string) {
+		if (!key.startsWith("private/")) throw new BadRequestException("Only private files can be deleted here.");
+		await this.s3Client.send(new DeleteObjectCommand({ Bucket: this.privateBucket, Key: key }));
+	}
+
+	/** Removes a public file for good (account deletion). Deleting a missing key is a no-op in S3. */
+	async deletePublicObject(key: string) {
+		if (!key.startsWith("public/")) throw new BadRequestException("Only public files can be deleted here.");
+		await this.s3Client.send(new DeleteObjectCommand({ Bucket: this.publicBucket, Key: key }));
+	}
+
+	async getPresignedDownloadUrl(key: string, folder: "private" | "public", expiresIn = 60) {
 		const bucket =
 			folder === "private" ? this.privateBucket : this.publicBucket;
 
@@ -143,7 +156,7 @@ export class UploadService {
 			Key: key
 		});
 
-		return await getSignedUrl(this.s3Client, command, { expiresIn: 60 });
+		return await getSignedUrl(this.s3Client, command, { expiresIn });
 	}
 
 	async getAuthorizedPrivateDownloadUrl(key: string, user: User) {
@@ -152,7 +165,11 @@ export class UploadService {
 		}
 
 		const userId = user._id.toString();
-		const ownsListingDocument = await this.listingModel.exists({
+		// The key must also be minted for this landlord: a stored applicant key must not skip the share checks.
+		// A key from before owner-scoped keys (private/<timestamp>-<name>) still opens, unless it is a user's own document.
+		const ownsListingDocument = (isKeyOwnedBy(key, userId)
+			|| (ownerIdFromKey(key) === null && !(await this.userModel.exists({ "documents.key": key }))))
+			&& await this.listingModel.exists({
 			landlord: userId,
 			registerOfTitleKey: key
 		});

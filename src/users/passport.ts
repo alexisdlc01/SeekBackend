@@ -109,6 +109,7 @@ export interface PassportDocumentInput {
 	uploadedAt?: Date | string | null;
 	key?: string;
 	url?: string;
+	rejectionReason?: string | null;
 }
 
 /** Someone Seek emailed for a guarantor agreement or a reference (POST /users/me/passport/references). */
@@ -141,6 +142,8 @@ export interface PassportItem {
 	detail?: string | null;
 	/** When Seek emailed the guarantor or referee. Only set while waiting on their reply. */
 	requestedAt?: Date | null;
+	/** What to fix, when the automatic review rejected the document. */
+	reason?: string | null;
 }
 
 export interface PassportSection {
@@ -178,7 +181,8 @@ export function effectiveStatus(
 }
 
 const STATUS_RANK: Record<DocumentStatus, number> = {
-	[DocumentStatus.VERIFIED]: 4,
+	[DocumentStatus.VERIFIED]: 5,
+	[DocumentStatus.PROVIDED]: 4,
 	[DocumentStatus.PENDING]: 3,
 	[DocumentStatus.EXPIRED]: 2,
 	[DocumentStatus.REJECTED]: 1
@@ -215,7 +219,8 @@ export function buildPassport(
 				&& best?.status !== DocumentStatus.VERIFIED;
 			const status: PassportItemStatus = byEmail ? DocumentStatus.VERIFIED : best?.status ?? MISSING;
 			total += 1;
-			if (status === DocumentStatus.VERIFIED) {
+			// PROVIDED identity documents count: the landlord checks them, not Seek.
+			if (status === DocumentStatus.VERIFIED || status === DocumentStatus.PROVIDED) {
 				completed += 1;
 			} else if (rule.required) {
 				missingRequired.push(rule.type);
@@ -269,7 +274,8 @@ export function buildPassport(
 				url: best?.document.url ?? null,
 				key: best?.document.key ?? null,
 				source: best ? "document" as const : null,
-				detail: null
+				detail: null,
+				reason: status === DocumentStatus.REJECTED ? best?.document.rejectionReason ?? null : null
 			};
 		})
 	}));
@@ -290,7 +296,7 @@ export function withoutFiles(passport: Passport): Passport {
 		...passport,
 		sections: passport.sections.map(section => ({
 			...section,
-			items: section.items.map(({ url: _url, key: _key, detail: _detail, ...item }) => item)
+			items: section.items.map(({ url: _url, key: _key, detail: _detail, reason: _reason, ...item }) => item)
 		}))
 	};
 }

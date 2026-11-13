@@ -144,3 +144,136 @@ describe("ContractsService send", () => {
 		expect(mail.sendContractSentEmail).toHaveBeenCalledWith("maya@example.com", "Maya", "Tenancy agreement", "/student/home");
 	});
 });
+
+describe("ContractsService signed email", () => {
+	const lean = <T>(value: T) => ({ lean: () => ({ exec: () => Promise.resolve(value) }) });
+	const maya = new Types.ObjectId();
+	const tom = new Types.ObjectId();
+	const landlord = new Types.ObjectId();
+	const tenancy = { _id: new Types.ObjectId(), landlord, tenants: [maya, tom] };
+
+	function setup(signedBefore: Types.ObjectId[], mailError?: Error) {
+		const contract = {
+			_id: new Types.ObjectId(),
+			tenancy: tenancy._id,
+			status: ContractStatus.SENT,
+			title: "Tenancy agreement",
+			signatures: signedBefore.map(user => ({ user, signedAt: new Date() }))
+		};
+		const contractModel = {
+			findById: () => lean(contract),
+			findOneAndUpdate: jest.fn((_filter: any, update: any) =>
+				lean(update.$push
+					? { ...contract, signatures: [...contract.signatures, update.$push.signatures] }
+					: { ...contract, status: ContractStatus.SIGNED })
+			)
+		};
+		const userModel = {
+			find: () => lean([
+				{ _id: maya, email: "maya@example.com", name: "Maya" },
+				{ _id: tom, email: "tom@example.com", name: "Tom" },
+				{ _id: landlord, email: "priya@example.com", name: "Priya" }
+			])
+		};
+		const mail = { sendContractSignedEmail: mailError ? jest.fn().mockRejectedValue(mailError) : jest.fn().mockResolvedValue(undefined) };
+		const service = new ContractsService(
+			contractModel as any, {} as any, {} as any, {} as any, {} as any,
+			{ findForTenant: jest.fn().mockResolvedValue(tenancy), appendDocument: jest.fn() } as any,
+			{ notify: jest.fn() } as any, { get: () => "secret" } as any, userModel as any, mail as any
+		);
+		return { service, contract, mail };
+	}
+
+	it("emails every tenant and the landlord once the last tenant signs, even if mail fails", async () => {
+		const { service, contract, mail } = setup([maya], new Error("Mailgun down"));
+		const signed = await service.sign(contract._id.toString(), { _id: tom } as any);
+		expect(signed.status).toBe(ContractStatus.SIGNED);
+		expect(mail.sendContractSignedEmail).toHaveBeenCalledTimes(3);
+		expect(mail.sendContractSignedEmail).toHaveBeenCalledWith("maya@example.com", "Maya", "Tenancy agreement", "/student/home");
+		expect(mail.sendContractSignedEmail).toHaveBeenCalledWith("priya@example.com", "Priya", "Tenancy agreement", "/contracts");
+	});
+
+	it("sends nothing on a partial signature", async () => {
+		const { service, contract, mail } = setup([]);
+		await service.sign(contract._id.toString(), { _id: maya } as any);
+		expect(mail.sendContractSignedEmail).not.toHaveBeenCalled();
+	});
+});
+
+describe("ContractsService reminders", () => {
+	const lean = <T>(value: T) => ({ lean: () => ({ exec: () => Promise.resolve(value) }) });
+	const maya = new Types.ObjectId();
+	const tom = new Types.ObjectId();
+	const landlord = new Types.ObjectId();
+	const tenancy = { _id: new Types.ObjectId(), landlord, tenants: [maya, tom] };
+	const now = new Date("2026-11-12T09:00:00Z");
+
+	function setup(contract: Record<string, unknown>) {
+		let stored: any = {
+			_id: new Types.ObjectId(),
+			tenancy: tenancy._id,
+			status: ContractStatus.SENT,
+			title: "Tenancy agreement",
+			signatures: [{ user: maya, signedAt: now }],
+			lastRemindedAt: null,
+			sentAt: new Date(now.getTime() - 4 * 86_400_000),
+			...contract
+		};
+		const matches = (filter: any) =>
+			filter.status === stored.status &&
+			(!filter.autoReminderCount || !((stored.autoReminderCount ?? 0) >= filter.autoReminderCount.$not.$gte)) &&
+			(!stored.lastRemindedAt || filter.$or[1].lastRemindedAt.$lte >= stored.lastRemindedAt);
+		const contractModel = {
+			findById: () => lean(stored),
+			find: jest.fn((filter: any) => lean(matches(filter) && stored.sentAt <= filter.sentAt.$lte ? [{ _id: stored._id }] : [])),
+			findOneAndUpdate: jest.fn((filter: any, update: any) =>
+				lean(
+					matches(filter)
+						? (stored = { ...stored, ...update.$set, ...(update.$inc ? { autoReminderCount: (stored.autoReminderCount ?? 0) + update.$inc.autoReminderCount } : {}) })
+						: null
+				)
+			)
+		};
+		const userModel = { find: jest.fn((query: any) => lean(query._id.$in.map((id: Types.ObjectId) => ({ _id: id, email: `${id}@example.com`, name: "T" })))) };
+		const mail = { sendContractSentEmail: jest.fn().mockResolvedValue(undefined) };
+		const tenancyModel = { findById: () => lean(tenancy) };
+		const service = new ContractsService(
+			contractModel as any, {} as any, {} as any, tenancyModel as any, {} as any,
+			{ findForLandlord: jest.fn().mockResolvedValue(tenancy) } as any,
+			{} as any, { get: () => "secret" } as any, userModel as any, mail as any
+		);
+		return { service, id: stored._id.toString(), mail, userModel };
+	}
+
+	it("emails only unsigned tenants, then refuses a second reminder within 24 hours", async () => {
+		const { service, id, mail, userModel } = setup({});
+		const reminded = await service.remind(id, { _id: landlord } as any);
+		expect(reminded!.lastRemindedAt).toBeInstanceOf(Date);
+		expect(userModel.find.mock.calls[0][0]._id.$in).toEqual([tom]);
+		expect(mail.sendContractSentEmail).toHaveBeenCalledTimes(1);
+		await expect(service.remind(id, { _id: landlord } as any)).rejects.toMatchObject({ status: 429 });
+	});
+
+	it("only reminds a SENT contract", async () => {
+		const { service, id } = setup({ status: ContractStatus.SIGNED });
+		await expect(service.remind(id, { _id: landlord } as any)).rejects.toThrow("waiting for signatures");
+	});
+
+	it("the daily sweep reminds stale contracts once, and skips recent ones", async () => {
+		const stale = setup({});
+		expect(await stale.service.remindStale(now)).toBe(1);
+		expect(await stale.service.remindStale(now)).toBe(0);
+		expect(stale.mail.sendContractSentEmail).toHaveBeenCalledTimes(1);
+
+		const fresh = setup({ sentAt: new Date(now.getTime() - 86_400_000) });
+		expect(await fresh.service.remindStale(now)).toBe(0);
+	});
+
+	it("the daily sweep stops after 3 automatic reminders", async () => {
+		const { service, mail } = setup({});
+		const sent: number[] = [];
+		for (let run = 0; run < 6; run += 1) sent.push(await service.remindStale(new Date(now.getTime() + run * 4 * 86_400_000)));
+		expect(sent).toEqual([1, 1, 1, 0, 0, 0]);
+		expect(mail.sendContractSentEmail).toHaveBeenCalledTimes(3);
+	});
+});

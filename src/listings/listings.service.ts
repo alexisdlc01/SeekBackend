@@ -20,7 +20,9 @@ import { ConfigService } from "@nestjs/config";
 import axios from "axios";
 import { ListingFilterDto } from "./dto/listing-filter.dto";
 import { Nation } from "./enums/nation.enum";
+import { ModerationStatus } from "./enums/moderation-status.enum";
 import { listingDepositCompliance } from "../tenancies/compliance";
+import { isKeyOwnedBy } from "../upload/object-key";
 import {
 	assertAvailableFromNotPast,
 	normaliseCriteria,
@@ -38,6 +40,9 @@ type DraftUpdateData = Partial<Omit<CreateListingDto, "viewingSlots">> & {
 	};
 	formatted_address?: string;
 };
+
+/** What moderation checks: a change on a live listing re-runs the automatic check (ListingModerationService). */
+const REVIEWED_FIELDS = ["propertyTitle", "propertyDesc", "amenities", "streetAddress", "cityTown", "postcodeZIP", "country", "photos", "monthlyRent", "numOfPeople", "registrationNumber", "registerOfTitleKey"] as const;
 
 export type ListingWithCoordinates = Listing & {
 	lat: number | null;
@@ -117,6 +122,27 @@ export class ListingsService {
 			// Drafts may hold any date until publish; a live listing may keep its date but not move it into the past.
 			const moved = current?.availableFrom?.getTime() !== new Date(data.availableFrom).getTime();
 			if (current && !current.isDraft && moved) assertAvailableFromNotPast(data.availableFrom);
+		}
+		// By value, not key: a DTO instance carries every declared field, unset ones as undefined.
+		const reviewed = REVIEWED_FIELDS.filter(key => data[key] !== undefined);
+		if (reviewed.length > 0) {
+			const current = await this.listingModel
+				.findOne({ _id: new Types.ObjectId(listingId), landlord: new Types.ObjectId(landlord._id) })
+				.select(["isDraft", ...reviewed].join(" "))
+				.lean()
+				.exec();
+			const changed = reviewed.filter(key => JSON.stringify(data[key]) !== JSON.stringify((current as Record<string, unknown> | null)?.[key]));
+			// Only a key minted for this landlord: an applicant's key stored here would skip the share checks on download.
+			if (changed.includes("registerOfTitleKey") && data.registerOfTitleKey && !isKeyOwnedBy(data.registerOfTitleKey, landlord._id.toString())) {
+				throw new BadRequestException("Document key was not issued to this account.");
+			}
+			// New content goes back through the automatic check (the controller runs it after this save).
+			if (current && !current.isDraft && changed.length > 0) {
+				update.isVerified = false;
+				// PENDING until checked, so the sweeper retries it if the check in this request fails.
+				update.moderationStatus = ModerationStatus.PENDING;
+				update.moderationAttempts = 0;
+			}
 		}
 		if (data.criteria) update.criteria = normaliseCriteria(data.criteria);
 		if (data.viewingSlots) update.viewingSlots = normaliseViewingSlots(data.viewingSlots as string[]);
@@ -238,21 +264,6 @@ export class ListingsService {
 
 	async findByLandlord(id: string): Promise<Listing[]> {
 		return (await this.listingModel.find({ landlord: id }).exec()) ?? [];
-	}
-
-	async verifyListing(id: string): Promise<Listing> {
-		if (!Types.ObjectId.isValid(id)) {
-			throw new BadRequestException("Invalid listing ID");
-		}
-
-		const listing = await this.listingModel
-			.findByIdAndUpdate(id, { isVerified: true }, { new: true })
-			.exec();
-		if (!listing) {
-			throw new NotFoundException("Listing not found");
-		}
-		this.listingsGateway.emitListingUpdated(listing);
-		return listing;
 	}
 
 	async findListingById(id: string): Promise<Listing> {

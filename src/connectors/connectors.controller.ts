@@ -18,7 +18,8 @@ import {
 	DisconnectResultDto,
 	ImapConnectResultDto,
 	UpdateConnectorSettingsDto,
-	SyncResultDto
+	SyncResultDto,
+	ConnectionMatchDto
 } from "./dto/connectors.dto";
 
 @Controller("connectors")
@@ -105,6 +106,16 @@ export class ConnectorsController {
 	@ApiResponse({ status: 502, type: ErrorDto })
 	async sync(@Param("id", ParseObjectIdPipe) id: string, @CurrentUser() user: User) {
 		return this.connectors.sync(user, id);
+	}
+
+	@Get(":id/matches")
+	@StudentOrLandlord()
+	@ApiOperation({ summary: "Housing contacts matched in this mailbox (up to 50, newest first). No message content." })
+	@ApiResponse({ status: 200, type: [ConnectionMatchDto] })
+	@ApiResponse({ status: 403, type: ErrorDto })
+	@ApiResponse({ status: 404, type: ErrorDto })
+	async matches(@Param("id", ParseObjectIdPipe) id: string, @CurrentUser() user: User) {
+		return this.connectors.matches(user, id);
 	}
 
 	@Delete(":id")

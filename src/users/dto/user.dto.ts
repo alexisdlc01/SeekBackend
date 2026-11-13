@@ -2,7 +2,7 @@ import { Expose, Transform, Type } from "class-transformer";
 import { IsOptional } from "class-validator";
 import { Role } from "../../auth/role.enum";
 import { ApiProperty } from "@nestjs/swagger";
-import { RegistrationKind } from "../types/landlord-registration";
+import { RegistrationKind, RegistrationStatus } from "../types/landlord-registration";
 import { TeamScope } from "../types/team-scope";
 
 export class TeamOfDto {
@@ -25,9 +25,13 @@ export class RegistrationDto {
 	@Expose()
 	number: string;
 
-	@ApiProperty()
+	@ApiProperty({ description: "Always false: Seek does not check numbers against the registers. Use status." })
 	@Expose()
 	verified: boolean;
+
+	@ApiProperty({ enum: RegistrationStatus, description: "Format check only: DECLARED or INVALID_FORMAT." })
+	@Expose()
+	status: RegistrationStatus;
 }
 
 export class NotificationPrefsDto {

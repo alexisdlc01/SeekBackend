@@ -10,6 +10,11 @@ import { AuthModule } from "../auth/auth.module";
 import { ListingsGateway } from "./listings.gateway";
 import UsersService from "../users/users.service";
 import { UsersModule } from "../users/users.module";
+import { NotificationsModule } from "../notifications/notifications.module";
+import { ListingModerationService } from "./listing-moderation.service";
+import { AnthropicClient } from "../ai/anthropic.client";
+import { GeminiClient } from "../ai/gemini.client";
+import { LlmClient } from "../ai/llm.client";
 
 @Module({
 	imports: [
@@ -23,10 +28,12 @@ import { UsersModule } from "../users/users.module";
 		]),
 		SharedModule,
 		AuthModule,
-		UsersModule
+		UsersModule,
+		NotificationsModule
 	],
 	controllers: [ListingsController],
-	providers: [ListingsService, ListingsGateway],
+	// The AI clients are provided here, not imported: AiModule imports ListingsModule.
+	providers: [ListingsService, ListingsGateway, ListingModerationService, GeminiClient, AnthropicClient, LlmClient],
 	exports: [ListingsService]
 })
 export class ListingsModule {}

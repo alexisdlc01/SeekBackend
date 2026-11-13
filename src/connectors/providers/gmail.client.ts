@@ -157,12 +157,14 @@ export class GmailClient implements MailProviderClient {
 	}
 
 	async send(accessToken: string, mail: OutgoingMail) {
+		// To and In-Reply-To come from the incoming email: a CR/LF there would inject headers (e.g. Bcc).
+		const clean = (value: string) => value.replace(/[\r\n]+/g, " ");
 		const lines = [
-			`From: ${mail.from}`,
-			`To: ${mail.to.join(", ")}`,
+			`From: ${clean(mail.from)}`,
+			`To: ${mail.to.map(clean).join(", ")}`,
 			`Subject: ${encodeHeader(replySubject(mail.subject))}`,
 			...(mail.replyToInternetMessageId
-				? [`In-Reply-To: ${mail.replyToInternetMessageId}`, `References: ${mail.replyToInternetMessageId}`]
+				? [`In-Reply-To: ${clean(mail.replyToInternetMessageId)}`, `References: ${clean(mail.replyToInternetMessageId)}`]
 				: []),
 			"MIME-Version: 1.0",
 			'Content-Type: text/plain; charset="UTF-8"',

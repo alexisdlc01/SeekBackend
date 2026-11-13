@@ -109,4 +109,18 @@ describe("AuthController", () => {
 
 		expect(authService.clearAuthCookies).toHaveBeenCalledWith(response);
 	});
+
+	it("logout still authenticates from the Refresh cookie once the access token lapsed", async () => {
+		const passport = require("passport");
+		passport.use("jwt", { authenticate() { (this as any).fail(401); } });
+		passport.use("jwt-refresh", { authenticate(req: any) {
+			return req.cookies?.Refresh ? (this as any).success({ _id: "u1", authSessionId: "s1" }) : (this as any).fail(401);
+		} });
+		const [Guard] = Reflect.getMetadata("__guards__", AuthController.prototype.logout);
+		const req: any = { headers: {}, cookies: { Refresh: "refresh-token" } };
+		const ctx = { switchToHttp: () => ({ getRequest: () => req, getResponse: () => ({}) }) };
+
+		await expect(new Guard().canActivate(ctx)).resolves.toBe(true);
+		expect(req.user).toEqual({ _id: "u1", authSessionId: "s1" });
+	});
 });

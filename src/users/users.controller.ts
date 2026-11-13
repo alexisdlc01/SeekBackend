@@ -244,12 +244,7 @@ export class UsersController {
 		@Param("type", new ParseEnumPipe(DocumentType)) type: DocumentType,
 		@Body() body: UpdateDocumentStatusDto
 	) {
-		return await this.usersService.setDocumentStatus(
-			id,
-			type,
-			body.status,
-			body.expiresAt
-		);
+		return await this.usersService.setDocumentStatus(id, type, body.status);
 	}
 
 	@Get()

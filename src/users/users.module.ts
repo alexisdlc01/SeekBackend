@@ -16,6 +16,11 @@ import { MailService } from "../auth/mail.service";
 import { Tenancy, TenancySchema } from "../tenancies/tenancy.schema";
 import { Payment, PaymentSchema } from "../payments/payment.schema";
 import { UploadModule } from "../upload/upload.module";
+import { ConnectorsModule } from "../connectors/connectors.module";
+import { DocumentReviewService } from "./document-review.service";
+import { AnthropicClient } from "../ai/anthropic.client";
+import { GeminiClient } from "../ai/gemini.client";
+import { LlmClient } from "../ai/llm.client";
 
 @Module({
 	imports: [
@@ -33,7 +38,9 @@ import { UploadModule } from "../upload/upload.module";
 		]),
 		SharedModule,
 		RedisModule,
-		UploadModule
+		UploadModule,
+		// Account deletion disconnects the user's mailboxes.
+		ConnectorsModule
 	],
 	controllers: [UsersController],
 	providers: [
@@ -45,7 +52,12 @@ import { UploadModule } from "../upload/upload.module";
 		AccountService,
 		StudentVerificationService,
 		// Own instance (stateless Mailgun client): AuthModule imports UsersModule, so importing it back would be circular.
-		MailService
+		MailService,
+		DocumentReviewService,
+		// Own instances of the AI chain (AiModule exports nothing and imports modules that import this one).
+		LlmClient,
+		GeminiClient,
+		AnthropicClient
 	],
 	exports: [UsersService, UsersRepository, DocumentSharesService]
 })

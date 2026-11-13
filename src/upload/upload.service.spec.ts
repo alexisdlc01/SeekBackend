@@ -15,7 +15,7 @@ describe("UploadService private-file authorization", () => {
 
 	function setup() {
 		const listingModel = { exists: jest.fn() };
-		const userModel = { distinct: jest.fn() };
+		const userModel = { distinct: jest.fn(), exists: jest.fn().mockResolvedValue(null) };
 		const shareModel = { exists: jest.fn() };
 		const tenancyModel = { exists: jest.fn().mockResolvedValue(null) };
 		const contractModel = {
@@ -43,15 +43,53 @@ describe("UploadService private-file authorization", () => {
 		return { service, listingModel, userModel, shareModel, tenancyModel, contractModel, accessModel };
 	}
 
+	it("deletes only private files, from the private bucket", async () => {
+		const { service } = setup();
+		const send = jest.spyOn((service as any).s3Client, "send").mockResolvedValue({} as never);
+		await expect(service.deletePrivateObject("public/abc/listing.jpg")).rejects.toThrow();
+		expect(send).not.toHaveBeenCalled();
+		await service.deletePrivateObject("private/abc/passport.pdf");
+		expect((send.mock.calls[0][0] as any).input).toEqual({ Bucket: "private-test", Key: "private/abc/passport.pdf" });
+	});
+
 	it("allows a landlord to download a title document for their listing", async () => {
 		const { service, listingModel, userModel } = setup();
 		listingModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+		const landlordId = new Types.ObjectId();
 
 		await expect(service.getAuthorizedPrivateDownloadUrl(
-			"private/title.pdf",
-			{ _id: new Types.ObjectId() } as any
+			`private/${landlordId.toHexString()}/123e4567-e89b-12d3-a456-426614174000.pdf`,
+			{ _id: landlordId } as any
 		)).resolves.toBe("https://signed.example/file");
 		expect(userModel.distinct).not.toHaveBeenCalled();
+	});
+
+	it("still opens a title document uploaded before keys named their owner", async () => {
+		const { service, listingModel, userModel } = setup();
+		const landlordId = new Types.ObjectId();
+		listingModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+		userModel.distinct.mockResolvedValue([]);
+		const legacy = "private/1696150000000-title.pdf";
+
+		await expect(service.getAuthorizedPrivateDownloadUrl(legacy, { _id: landlordId } as any)).resolves.toBe("https://signed.example/file");
+		expect(listingModel.exists).toHaveBeenCalledWith({ landlord: landlordId.toString(), registerOfTitleKey: legacy });
+
+		// The same old-format key filed as a student's document must still go through the share checks.
+		userModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+		await expect(service.getAuthorizedPrivateDownloadUrl(legacy, { _id: landlordId, role: Role.LANDLORD_AGENCY } as any)).rejects.toBeInstanceOf(ForbiddenException);
+	});
+
+	it("does not let a student's key stored on the landlord's listing skip the share checks", async () => {
+		const { service, listingModel, userModel, shareModel } = setup();
+		const studentId = new Types.ObjectId();
+		listingModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+		userModel.distinct.mockResolvedValue([studentId]);
+		shareModel.exists.mockResolvedValue(null);
+
+		await expect(service.getAuthorizedPrivateDownloadUrl(
+			`private/${studentId.toHexString()}/123e4567-e89b-12d3-a456-426614174000.pdf`,
+			{ _id: new Types.ObjectId(), role: Role.LANDLORD_AGENCY } as any
+		)).rejects.toBeInstanceOf(ForbiddenException);
 	});
 
 	it("allows a landlord to download a document while the applicant's share is active", async () => {

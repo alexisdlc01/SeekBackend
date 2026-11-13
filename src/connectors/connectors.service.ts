@@ -41,7 +41,7 @@ import {
 } from "./housing-filter";
 import { DEMO_FILE_BASE, DemoContext, UNIVERSITY_DOMAINS, demoMailbox } from "./demo-mailbox";
 import { decryptToken, deriveDevelopmentKey, encryptToken, parseEncryptionKey } from "./token-crypto";
-import { MailAttachment, MailFull, MailMeta, MailProviderClient, replySubject } from "./providers/mail-provider";
+import { MailAttachment, MailFull, MailMeta, MailProviderClient, ProviderError, replySubject } from "./providers/mail-provider";
 import { GmailClient } from "./providers/gmail.client";
 import { OutlookClient } from "./providers/outlook.client";
 import { ImapCredentials, listRecentImap, verifyImapLogin } from "./providers/imap.client";
@@ -113,6 +113,8 @@ const FILE_TYPES: Record<string, string> = {
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const FIRST_SYNC_DAYS = 60;
 const SYNC_LIMIT = 100;
+/** Background retry delay for a mailbox whose last sync failed for a transient reason. */
+const RETRY_AFTER_MS = 3_600_000;
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
 
 function documentTitle(fileName: string) {
@@ -163,8 +165,10 @@ export class ConnectorsService {
 
 	// ---------------------------------------------------------------- setup
 
+	/** Fails closed: an unset or unknown NODE_ENV (npm run start:prod) counts as production. */
 	private get isProduction() {
-		return this.config.get<string>("NODE_ENV") === "production";
+		const env = this.config.get<string>("NODE_ENV");
+		return env !== "development" && env !== "test";
 	}
 
 	/** AES key for stored tokens. Outside production a key is derived from the JWT secret. */
@@ -283,6 +287,8 @@ export class ConnectorsService {
 			label: PROVIDER_LABELS[connection.provider],
 			emailAddress: connection.emailAddress,
 			status: connection.status,
+			// IMAP is read-only for now: replies go out from Gmail, Outlook or the demo mailbox only.
+			canSend: connection.provider !== EmailProvider.IMAP,
 			housingOnly: true,
 			lastSyncAt: connection.lastSyncAt ?? null,
 			lastError: connection.lastError ?? null,
@@ -506,6 +512,41 @@ export class ConnectorsService {
 		return { ...result, connection: await this.connectionView(user, id) };
 	}
 
+	/** "Matched so far": the housing contacts this mailbox has emails with, newest first. Addresses and names only. */
+	async matches(user: Pick<User, "_id">, id: string) {
+		const connection = await this.ownedConnection(user, id);
+		const rows = await this.messageModel.aggregate<{ _id: string; name: string; lastMessageAt: Date }>([
+			{ $match: { connection: connection._id } },
+			{ $sort: { receivedAt: -1 } },
+			{ $group: { _id: "$counterpartEmail", name: { $first: "$counterpartName" }, lastMessageAt: { $first: "$receivedAt" } } },
+			{ $sort: { lastMessageAt: -1 } },
+			{ $limit: 50 }
+		]);
+		return rows.map(row => ({ name: row.name || row._id, email: row._id, lastMessageAt: row.lastMessageAt ?? null }));
+	}
+
+	/** Background sync: every connected mailbox, one at a time. One failure never stops the others. */
+	async syncAll() {
+		// Mailboxes in ERROR come back once their retryAt has passed (transient failures only).
+		const due = () => ({ $or: [{ status: ConnectionStatus.CONNECTED }, { status: ConnectionStatus.ERROR, retryAt: { $lte: new Date() } }] });
+		const connections = (await this.connectionModel.find(due()).lean().exec()) as ConnectionLean[];
+		let synced = 0;
+		for (const listed of connections) {
+			if (this.unavailableReason(listed.provider)) continue;
+			// Re-read: the user may have disconnected this mailbox since the list was loaded.
+			const connection = (await this.connectionModel.findOne({ _id: listed._id, ...due() }).lean().exec()) as ConnectionLean | null;
+			if (!connection) continue;
+			try {
+				await this.syncConnection(connection);
+				synced += 1;
+			} catch (error) {
+				// syncConnection already marks the connection ERROR with a user-facing message.
+				this.logger.warn(`Background sync failed for connection ${connection._id.toString()}: ${(error as Error).message}`);
+			}
+		}
+		return synced;
+	}
+
 	private async connectionView(user: Pick<User, "_id">, id: string) {
 		return this.view(await this.ownedConnection(user, id));
 	}
@@ -662,6 +703,8 @@ export class ConnectorsService {
 					"body" in meta
 						? meta
 						: await this.clients[connection.provider as OAuthProvider].getFull(accessToken!, meta);
+				// The user may disconnect mid-sync: never store or file anything after that.
+				if (!(await this.stillConnected(connection))) break;
 				const filed = await this.store(connection, user as UserLean, full, classification, outgoing, toggles);
 				if (filed !== null) {
 					result.imported += 1;
@@ -669,10 +712,12 @@ export class ConnectorsService {
 				}
 			}
 
-			await this.connectionModel.updateOne(
-				{ _id: connection._id },
+			const updated = await this.connectionModel.updateOne(
+				{ _id: connection._id, status: { $ne: ConnectionStatus.DISCONNECTED } },
 				{ $set: { lastSyncAt: new Date(), status: ConnectionStatus.CONNECTED, lastError: null } }
 			);
+			// Disconnected while a store() was running: delete what it wrote after disconnect() emptied the mailbox.
+			if (updated.matchedCount === 0) await this.messageModel.deleteMany({ connection: connection._id });
 			return result;
 		} catch (error) {
 			const message =
@@ -680,12 +725,20 @@ export class ConnectorsService {
 					? error.message
 					: `Could not sync ${PROVIDER_LABELS[connection.provider]}. Try again, or reconnect the mailbox.`;
 			this.logger.warn(`Sync failed for connection ${connection._id.toString()}: ${(error as Error).message}`);
+			// Missing setup, a revoked token or a refused login needs the user; anything else (429, 5xx, timeout) is retried.
+			const needsUser =
+				error instanceof ServiceUnavailableException ||
+				(error instanceof ProviderError && (error.status === 400 || error.status === 401 || /^IMAP LOGIN /.test(error.message)));
 			await this.connectionModel.updateOne(
-				{ _id: connection._id },
-				{ $set: { status: ConnectionStatus.ERROR, lastError: message } }
+				{ _id: connection._id, status: { $ne: ConnectionStatus.DISCONNECTED } },
+				{ $set: { status: ConnectionStatus.ERROR, lastError: message, retryAt: needsUser ? null : new Date(Date.now() + RETRY_AFTER_MS) } }
 			);
 			throw error instanceof ServiceUnavailableException ? error : new BadGatewayException(message);
 		}
+	}
+
+	private async stillConnected(connection: ConnectionLean) {
+		return !!(await this.connectionModel.exists({ _id: connection._id, status: { $ne: ConnectionStatus.DISCONNECTED } }));
 	}
 
 	/** A valid access token, refreshed when it is about to expire. */
@@ -706,7 +759,7 @@ export class ConnectorsService {
 			refreshToken: decryptToken(connection.refreshTokenEnc, key)
 		});
 		await this.connectionModel.updateOne(
-			{ _id: connection._id },
+			{ _id: connection._id, status: { $ne: ConnectionStatus.DISCONNECTED } },
 			{
 				$set: {
 					accessTokenEnc: encryptToken(tokens.accessToken, key),
@@ -919,20 +972,32 @@ export class ConnectorsService {
 			throw error;
 		}
 
+		// disconnect() marks DISCONNECTED before its deleteMany, so this check after the
+		// write always sees it or the deleteMany sees the email: nothing is orphaned.
+		if (!(await this.stillConnected(connection))) {
+			await this.messageModel.deleteOne({ _id: created._id });
+			return 0;
+		}
 		if (outgoing) return 0;
 		let filed = 0;
+		let trusted: boolean | undefined;
 		const attachments = created.toObject().attachments;
 		for (const [index, attachment] of mail.attachments.entries()) {
 			const found = documentTypeFor(attachment.name, mail.subject);
-			const type =
+			let type =
 				found && target && toggles.autoFileAttachments && (found !== TenancyDocumentType.TENANCY_AGREEMENT || toggles.copySignedContracts)
 					? found
 					: null;
+			// Anyone can email "tenancy-agreement.pdf": only the landlord, their team or a deposit scheme files it as the real thing.
+			if (type && target && !(trusted ??= await this.fromTenancyLandlord(target.tenancy, mail.from, classification))) {
+				type = TenancyDocumentType.OTHER;
+			}
 			const isBill =
 				// A landlord's mailbox holds the landlord's own bills, never the tenants' shares.
 				user.role !== Role.LANDLORD_AGENCY &&
 				!found && !!target && toggles.readUtilityBills && classification.category === EmailCategory.BILLS && looksLikeBill(attachment.name, mail.subject);
-			const reference = !found && toggles.addReferencesToProfile && user.role !== Role.LANDLORD_AGENCY ? referenceTypeFor(attachment.name, mail.subject) : null;
+			// Only a Seek landlord the student deals with can add a reference: a housemate or any *.ac.uk sender cannot.
+			const reference = !found && toggles.addReferencesToProfile && user.role !== Role.LANDLORD_AGENCY && classification.contact?.role === "LANDLORD" ? referenceTypeFor(attachment.name, mail.subject) : null;
 			if (!type && !isBill && !reference) continue;
 			const file = await this.storeFile(connection, user, attachment);
 			if (!file) continue;
@@ -995,6 +1060,14 @@ export class ConnectorsService {
 		);
 		const tenancy = match ? tenancies.find(t => t.listing.toString() === match._id.toString()) : null;
 		return withListing((tenancy ?? null) as (Tenancy & { _id: Types.ObjectId }) | null);
+	}
+
+	/** True when the sender is the tenancy's landlord, one of their team, or a deposit scheme. */
+	private async fromTenancyLandlord(tenancy: Tenancy, from: string, classification: Classification) {
+		if (classification.reason === "Deposit scheme") return true;
+		if (classification.contact?.role === "LANDLORD" && classification.contact.userId === tenancy.landlord.toString()) return true;
+		const sender = from.trim().toLowerCase();
+		return !!(await this.userModel.exists({ _id: tenancy.landlord, $or: [{ email: sender }, { "team.email": sender }] }));
 	}
 
 	private async storeFile(connection: ConnectionLean, user: UserLean, attachment: MailAttachment) {
@@ -1096,11 +1169,11 @@ export class ConnectorsService {
 	 */
 	async sendReply(user: Pick<User, "_id" | "name">, replyTo: EmailMessage & { _id: Types.ObjectId }, text: string) {
 		const connection = await this.ownedConnection(user, replyTo.connection.toString());
+		if (connection.provider === EmailProvider.IMAP) {
+			throw new BadRequestException("Replies can't be sent from an IMAP mailbox yet. Reply from your email app.");
+		}
 		if (connection.status !== ConnectionStatus.CONNECTED) {
 			throw new ServiceUnavailableException("Reconnect this mailbox to reply by email.");
-		}
-		if (connection.provider === EmailProvider.IMAP) {
-			throw new ServiceUnavailableException("Replies can't be sent from an IMAP mailbox yet. Reply from your email app.");
 		}
 		const to = replyTo.outgoing ? replyTo.to : [replyTo.from];
 		let sent = { providerMessageId: `demo-sent-${randomUUID()}`, providerThreadId: replyTo.providerThreadId };
@@ -1122,7 +1195,7 @@ export class ConnectorsService {
 				throw new BadGatewayException(`Could not send through ${PROVIDER_LABELS[connection.provider]}. Try again.`);
 			}
 		}
-		return this.messageModel.create({
+		const stored = await this.messageModel.create({
 			user: user._id,
 			connection: connection._id,
 			providerThreadId: replyTo.providerThreadId,
@@ -1145,5 +1218,8 @@ export class ConnectorsService {
 			outgoing: true,
 			read: true
 		});
+		// Same race as store(): a disconnect during the send already emptied the mailbox.
+		if (!(await this.stillConnected(connection))) await this.messageModel.deleteOne({ _id: stored._id });
+		return stored;
 	}
 }

@@ -9,6 +9,14 @@ export interface ChatTurn {
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const DEFAULT_MODEL = "claude-haiku-5-5";
 const TIMEOUT_MS = 15_000;
+/** File types the Messages API reads; anything else (e.g. HEIC) is left to Gemini. */
+const FILE_BLOCKS: Record<string, "document" | "image"> = {
+	"application/pdf": "document",
+	"image/jpeg": "image",
+	"image/png": "image",
+	"image/gif": "image",
+	"image/webp": "image"
+};
 
 /**
  * Thin wrapper over the Anthropic Messages API using fetch. Returns null on
@@ -25,9 +33,11 @@ export class AnthropicClient {
 		return Boolean(this.config.get<string>("ANTHROPIC_API_KEY")?.trim());
 	}
 
-	async complete(params: { system: string; messages: ChatTurn[]; maxTokens?: number; signal?: AbortSignal }): Promise<string | null> {
+	async complete(params: { system: string; messages: ChatTurn[]; maxTokens?: number; signal?: AbortSignal; file?: { mimeType: string; data: string } }): Promise<string | null> {
 		const apiKey = this.config.get<string>("ANTHROPIC_API_KEY")?.trim();
 		if (!apiKey) return null;
+		const fileBlock = params.file ? FILE_BLOCKS[params.file.mimeType] : undefined;
+		if (params.file && !fileBlock) return null;
 
 		// The API needs the conversation to start with a user turn and to
 		// alternate; merge consecutive turns from the same side.
@@ -56,7 +66,11 @@ export class AnthropicClient {
 					max_tokens: params.maxTokens ?? 600,
 					temperature: 0,
 					system: params.system,
-					messages: turns
+					messages: params.file
+						? turns.map((turn, index) => index === 0
+							? { role: turn.role, content: [{ type: fileBlock, source: { type: "base64", media_type: params.file!.mimeType, data: params.file!.data } }, { type: "text", text: turn.content }] }
+							: turn)
+						: turns
 				}),
 				signal: params.signal ?? AbortSignal.timeout(TIMEOUT_MS)
 			});

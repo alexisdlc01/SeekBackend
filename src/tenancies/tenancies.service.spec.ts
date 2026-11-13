@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { Types } from "mongoose";
 import { depositReceivedDate, TenanciesService } from "./tenancies.service";
-import { TenancyStatus } from "./tenancy.enums";
+import { TenancyDocumentType, TenancyStatus } from "./tenancy.enums";
 import { ApplicationStage } from "../application/enums/application-stage.enum";
 import { Role } from "../auth/role.enum";
 
@@ -249,6 +249,23 @@ describe("TenanciesService create / accept", () => {
 		expect(tenancyModel.updateOne.mock.calls.at(-1)![1]).toEqual({ $set: { energyAllowance: 15000 } });
 		await service.updateEnergyAllowance("t", null, landlord);
 		expect(tenancyModel.updateOne.mock.calls.at(-1)![1]).toEqual({ $set: { energyAllowance: null } });
+	});
+
+	it("files a housemate's agreement or certificate as OTHER, but keeps the landlord's type", async () => {
+		const { service, tenancyModel } = setup();
+		const student = { _id: new Types.ObjectId(), role: Role.STUDENT } as any;
+		jest.spyOn(service, "findForMember").mockResolvedValue({ _id: new Types.ObjectId(), landlord: landlordId, tenants: [student._id] } as any);
+		const doc = (type: TenancyDocumentType) => ({ type, title: "Signed tenancy agreement", url: "https://x.example/a" });
+		const filedType = () => tenancyModel.updateOne.mock.calls.at(-1)![1].$push.documents.type;
+
+		await service.addDocument("t", doc(TenancyDocumentType.TENANCY_AGREEMENT), student);
+		expect(filedType()).toBe(TenancyDocumentType.OTHER);
+		await service.addDocument("t", doc(TenancyDocumentType.GAS_SAFETY), student);
+		expect(filedType()).toBe(TenancyDocumentType.OTHER);
+		await service.addDocument("t", doc(TenancyDocumentType.COUNCIL_TAX_EXEMPTION), student);
+		expect(filedType()).toBe(TenancyDocumentType.COUNCIL_TAX_EXEMPTION);
+		await service.addDocument("t", doc(TenancyDocumentType.TENANCY_AGREEMENT), landlord);
+		expect(filedType()).toBe(TenancyDocumentType.TENANCY_AGREEMENT);
 	});
 });
 

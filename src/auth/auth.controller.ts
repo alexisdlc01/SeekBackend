@@ -26,6 +26,7 @@ import { GoogleUserDto } from "./dto/google-user.dto";
 import { ConfirmPasswordResetDto } from "./dto/confirm-password-reset.dto";
 import { ForgotPasswordDto } from "./dto/forgot-password.dto";
 import { ApiTags } from "@nestjs/swagger";
+import { AuthGuard } from "@nestjs/passport";
 import {
 	ApiConfirmPasswordDocs,
 	ApiCurrentUserDocs,
@@ -240,7 +241,9 @@ export class AuthController {
 	}
 
 	@Post("logout")
-	@UseGuards(JwtAuthGuard)
+	// The access cookie lapses after 15 min; the Refresh cookie (path /auth) still
+	// identifies the session, so logout must not depend on the access token alone.
+	@UseGuards(AuthGuard(["jwt", "jwt-refresh"]))
 	@ApiLogoutDocs()
 	async logout(
 		@CurrentUser() user: User,

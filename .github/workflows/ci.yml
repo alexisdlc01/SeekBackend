@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [master, redesign-v2]
+  pull_request:
+    branches: [master, redesign-v2]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Dummy, non-secret values so tests never need real credentials.
+      JWT_ACCESS_TOKEN_SECRET: ci-only-not-secret
+      STRIPE_SECRET_KEY: sk_test_ci_only_not_secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit -p tsconfig.json
+      - run: npm test

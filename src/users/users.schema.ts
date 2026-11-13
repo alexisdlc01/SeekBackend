@@ -3,7 +3,7 @@ import { SchemaTypes, Types } from "mongoose";
 import { Role } from "../auth/role.enum";
 import { Listing } from "../listings/listings.schema";
 import { DocumentStatus, DocumentType } from "./types/document-type";
-import { RegistrationKind } from "./types/landlord-registration";
+import { RegistrationKind, RegistrationStatus } from "./types/landlord-registration";
 import { TeamScope } from "./types/team-scope";
 
 @Schema({ _id: false })
@@ -23,11 +23,22 @@ export class UserDocument {
 	@Prop()
 	label?: string;
 
+	/** Why the automatic review rejected it, shown to the student. */
+	@Prop()
+	rejectionReason?: string;
+
 	@Prop({ type: Date, default: null })
 	expiresAt?: Date | null;
 
 	@Prop({ default: Date.now })
 	uploadedAt?: Date;
+
+	/** Automatic review tries on this upload; after MAX_REVIEW_ATTEMPTS it is rejected with a fixed reason. */
+	@Prop({ default: 0 })
+	reviewAttempts?: number;
+
+	@Prop({ type: Date, default: null })
+	lastReviewAt?: Date | null;
 }
 
 export const UserDocumentSchema = SchemaFactory.createForClass(UserDocument);
@@ -58,10 +69,36 @@ export class LandlordRegistration {
 	@Prop({ required: true, trim: true })
 	number: string;
 
-	// Set by Seek once the number has been checked against the register; a
-	// landlord cannot mark their own registration as verified.
+	// Legacy: Seek does not check numbers against the registers, so this stays false; see status.
 	@Prop({ default: false })
 	verified: boolean;
+
+	/** Format check only, set on every save: DECLARED (looks right) or INVALID_FORMAT. Never "verified". */
+	@Prop({ enum: RegistrationStatus, default: RegistrationStatus.DECLARED })
+	status: RegistrationStatus;
+}
+
+// shortcut: structural regexes, not register lookups; tighten a kind when its official format is confirmed.
+const REGISTRATION_FORMATS: Partial<Record<RegistrationKind, RegExp>> = {
+	// Landlord Registration Scotland, e.g. 123456/789/12345.
+	[RegistrationKind.LANDLORD_REGISTRATION_SCOTLAND]: /^\d{5,6}\/\d{3}\/\d{5}$/,
+	[RegistrationKind.OTHER]: /^.{2,60}$/
+};
+/** Council licences, Rent Smart Wales, NI, PRS database: letters/digits with separators and at least 3 digits. */
+const GENERIC_FORMAT = /^(?=(?:\D*\d){3})[A-Z0-9][A-Z0-9 /._-]{2,59}$/i;
+
+export function registrationStatus(kind: RegistrationKind, number: string): RegistrationStatus {
+	const format = REGISTRATION_FORMATS[kind] ?? GENERIC_FORMAT;
+	return format.test(number.trim()) ? RegistrationStatus.DECLARED : RegistrationStatus.INVALID_FORMAT;
+}
+
+/** Sets each registration's status in an update (users.service saves them with findByIdAndUpdate). */
+export function withRegistrationStatus(update: { $set?: Record<string, unknown> } | null | undefined): void {
+	const registrations = update?.$set?.registrations;
+	if (!Array.isArray(registrations)) return;
+	for (const registration of registrations as LandlordRegistration[]) {
+		registration.status = registrationStatus(registration.kind, registration.number ?? "");
+	}
 }
 
 export const LandlordRegistrationSchema =
@@ -330,6 +367,13 @@ export class User {
 	@Prop({ type: [TeamMemberSchema], default: [] })
 	team: TeamMember[];
 
+	/** Set when reports suspend the account (FlagsService.suspend); JwtStrategy then answers 403. */
+	@Prop({ type: Date, default: null })
+	suspendedAt?: Date | null;
+
+	@Prop()
+	suspensionReason?: string;
+
 	/** Set by DELETE /users/me. The email is replaced so the address can sign up again. */
 	@Prop({ type: Date, default: null })
 	deletedAt?: Date | null;
@@ -350,6 +394,10 @@ export class User {
 export const UserSchema = SchemaFactory.createForClass(User);
 
 UserSchema.index({ "team.user": 1 }, { sparse: true });
+
+UserSchema.pre(["findOneAndUpdate", "updateOne"], function () {
+	withRegistrationStatus(this.getUpdate() as { $set?: Record<string, unknown> });
+});
 
 UserSchema.virtual("listings", {
 	ref: Listing.name,

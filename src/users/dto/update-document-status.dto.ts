@@ -1,15 +1,9 @@
-import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { IsDateString, IsEnum, IsOptional, ValidateIf } from "class-validator";
+import { ApiProperty } from "@nestjs/swagger";
+import { IsEnum } from "class-validator";
 import { DocumentStatus } from "../types/document-type";
 
 export class UpdateDocumentStatusDto {
-	@ApiProperty({ enum: DocumentStatus })
+	@ApiProperty({ enum: DocumentStatus, description: "Only PENDING is accepted: it runs the automatic check again." })
 	@IsEnum(DocumentStatus)
 	status: DocumentStatus;
-
-	@ApiPropertyOptional({ type: String, format: "date-time", nullable: true })
-	@IsOptional()
-	@ValidateIf((_o, value) => value !== null)
-	@IsDateString()
-	expiresAt?: string | null;
 }

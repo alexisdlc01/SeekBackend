@@ -10,6 +10,7 @@ import { EmailMessage, EmailMessageSchema } from "../inbox/email-message.schema"
 import { EmailConnection, EmailConnectionSchema } from "./email-connection.schema";
 import { ConnectorsController } from "./connectors.controller";
 import { ConnectorsService } from "./connectors.service";
+import { ConnectorsSweeper } from "./connectors.sweeper";
 
 @Module({
 	imports: [
@@ -25,7 +26,7 @@ import { ConnectorsService } from "./connectors.service";
 		UploadModule
 	],
 	controllers: [ConnectorsController],
-	providers: [ConnectorsService],
+	providers: [ConnectorsService, ConnectorsSweeper],
 	exports: [ConnectorsService, MongooseModule]
 })
 export class ConnectorsModule {}

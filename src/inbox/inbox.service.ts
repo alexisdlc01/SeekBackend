@@ -13,7 +13,7 @@ import { Tenancy } from "../tenancies/tenancy.schema";
 import { TenancyStatus } from "../tenancies/tenancy.enums";
 import { Listing } from "../listings/listings.schema";
 import { ConnectorsService } from "../connectors/connectors.service";
-import { ConnectionStatus, EmailConnection } from "../connectors/email-connection.schema";
+import { ConnectionStatus, EmailConnection, EmailProvider } from "../connectors/email-connection.schema";
 import { EmailMessage } from "./email-message.schema";
 import { EmailCategory } from "./email-category.enum";
 import { InboxReplyDto } from "./dto/inbox.dto";
@@ -438,12 +438,12 @@ export class InboxService {
 		};
 	}
 
-	/** The connected mailbox a reply to these emails would go out from. */
+	/** The connected mailbox a reply to these emails would go out from. IMAP can't send, so it gives none (canReplyByEmail false). */
 	private async replyFrom(emails: EmailLean[]) {
 		const latest = [...emails].reverse().find(email => !email.outgoing) ?? emails[emails.length - 1];
 		if (!latest) return null;
-		const connection = await this.connectionModel.findById(latest.connection).select("emailAddress status").lean().exec();
-		return connection?.status === ConnectionStatus.CONNECTED ? connection.emailAddress : null;
+		const connection = await this.connectionModel.findById(latest.connection).select("emailAddress status provider").lean().exec();
+		return connection?.status === ConnectionStatus.CONNECTED && connection.provider !== EmailProvider.IMAP ? connection.emailAddress : null;
 	}
 
 	// ---------------------------------------------------------------- reply

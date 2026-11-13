@@ -8,16 +8,28 @@ const selectLean = <T>(value: T) => ({ select: () => lean(value) });
 
 function setup() {
 	const userModel = {
-		findById: jest.fn(),
+		findById: jest.fn((): unknown => selectLean(null)),
 		find: jest.fn((): unknown => lean([])),
 		findOne: jest.fn((): unknown => selectLean(null)),
 		updateOne: jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
 		updateMany: jest.fn().mockResolvedValue({})
 	};
-	const tenancyModel = { find: jest.fn((): unknown => selectLean([])) };
+	const tenancyModel = { find: jest.fn((): unknown => selectLean([])), distinct: jest.fn().mockResolvedValue([]) };
 	const paymentModel = { exists: jest.fn().mockResolvedValue(null) };
-	const service = new AccountService(userModel as any, tenancyModel as any, paymentModel as any);
-	return { service, userModel, tenancyModel, paymentModel };
+	const shareModel = { updateMany: jest.fn().mockResolvedValue({}) };
+	const connectionModel = { find: jest.fn((): unknown => selectLean([])) };
+	const connectors = { disconnect: jest.fn().mockResolvedValue({}) };
+	const uploads = { deletePrivateObject: jest.fn().mockResolvedValue(undefined), deletePublicObject: jest.fn().mockResolvedValue(undefined) };
+	const service = new AccountService(
+		userModel as any,
+		tenancyModel as any,
+		paymentModel as any,
+		shareModel as any,
+		connectionModel as any,
+		connectors as any,
+		uploads as any
+	);
+	return { service, userModel, tenancyModel, paymentModel, shareModel, connectionModel, connectors, uploads };
 }
 
 describe("AccountService team", () => {
@@ -103,5 +115,57 @@ describe("AccountService deleteAccount", () => {
 		expect(filter).toEqual({ _id: id, deletedAt: null });
 		expect(update.$set).toMatchObject({ refreshSessions: [], email: `deleted-${id.toString()}@deleted.invalid` });
 		expect(update.$unset.password).toBe(1);
+	});
+
+	it("disconnects every mailbox and revokes landlord shares before closing the account", async () => {
+		const { service, connectionModel, connectors, shareModel } = setup();
+		const id = new Types.ObjectId();
+		const gmail = new Types.ObjectId();
+		const imap = new Types.ObjectId();
+		connectionModel.find.mockReturnValue(selectLean([{ _id: gmail }, { _id: imap }]));
+		await service.deleteAccount(id);
+		expect(connectionModel.find).toHaveBeenCalledWith({ user: id, status: { $ne: "DISCONNECTED" } });
+		expect(connectors.disconnect).toHaveBeenCalledWith({ _id: id }, gmail.toString());
+		expect(connectors.disconnect).toHaveBeenCalledWith({ _id: id }, imap.toString());
+		expect(shareModel.updateMany).toHaveBeenCalledWith(
+			{ owner: id, revokedAt: null },
+			{ $set: { revokedAt: expect.any(Date) } }
+		);
+	});
+
+	it("erases passport files and identity fields but keeps a file filed on a tenancy", async () => {
+		const { service, userModel, tenancyModel, uploads } = setup();
+		const id = new Types.ObjectId();
+		const passport = `private/${id.toString()}/a.pdf`;
+		const agreement = `private/${id.toString()}/b.pdf`;
+		userModel.findById.mockReturnValue(selectLean({ documents: [{ key: passport }, { key: agreement }, { key: undefined }] }));
+		tenancyModel.distinct.mockResolvedValue([agreement]);
+		await service.deleteAccount(id);
+		expect(uploads.deletePrivateObject).toHaveBeenCalledTimes(1);
+		expect(uploads.deletePrivateObject).toHaveBeenCalledWith(passport);
+		const update = userModel.updateOne.mock.calls[0][1];
+		expect(update.$set).toMatchObject({ name: "Deleted user", documents: [], referenceRequests: [] });
+		expect(update.$unset).toMatchObject({ dateOfBirth: 1, profilePicUrl: 1, universityDetails: 1, university: 1 });
+	});
+
+	it("erases the uploaded avatar from S3 but not a foreign avatar URL", async () => {
+		const { service, userModel, uploads } = setup();
+		const id = new Types.ObjectId();
+		const key = `public/${id.toString()}/11111111-1111-1111-1111-111111111111.png`;
+		userModel.findById.mockReturnValue(selectLean({ profilePicUrl: `https://b.s3.eu-west-2.amazonaws.com/${key}` }));
+		await service.deleteAccount(id);
+		expect(uploads.deletePublicObject).toHaveBeenCalledWith(key);
+		userModel.findById.mockReturnValue(selectLean({ profilePicUrl: "https://lh3.googleusercontent.com/a/abc" }));
+		await service.deleteAccount(id);
+		expect(uploads.deletePublicObject).toHaveBeenCalledTimes(1);
+	});
+
+	it("leaves the account untouched when erasing a file fails, so it can be retried", async () => {
+		const { service, userModel, uploads } = setup();
+		const id = new Types.ObjectId();
+		userModel.findById.mockReturnValue(selectLean({ documents: [{ key: `private/${id.toString()}/a.pdf` }] }));
+		uploads.deletePrivateObject.mockRejectedValue(new Error("S3 down"));
+		await expect(service.deleteAccount(id)).rejects.toThrow("S3 down");
+		expect(userModel.updateOne).not.toHaveBeenCalled();
 	});
 });
