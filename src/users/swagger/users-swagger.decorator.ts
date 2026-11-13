@@ -2,7 +2,6 @@ import { applyDecorators } from "@nestjs/common";
 import { ApiBody, ApiOperation, ApiResponse } from "@nestjs/swagger";
 import { PassportDto } from "../dto/passport.dto";
 import { DocumentShareDto } from "../dto/document-share.dto";
-import { UpdateDocumentStatusDto } from "../dto/update-document-status.dto";
 import { UserDto } from "../dto/user.dto";
 import { ErrorDto } from "../../dto/errorDto.dto";
 import { CreateUserDto } from "../dto/create-user.dto";
@@ -152,18 +151,9 @@ export const ApiRevokeShareDocs = () =>
 		ApiResponse({ status: 404, type: ErrorDto })
 	);
 
-export const ApiSetDocumentStatusDocs = () =>
-	applyDecorators(
-		ApiOperation({ summary: "Run the automatic check again on a document (Seek staff). Only status PENDING is accepted; identity documents are refused." }),
-		ApiBody({ type: UpdateDocumentStatusDto }),
-		ApiResponse({ status: 200, type: PassportDto }),
-		ApiResponse({ status: 400, type: ErrorDto }),
-		ApiResponse({ status: 404, type: ErrorDto })
-	);
-
 export const ApiListPendingDocumentsDocs = () =>
 	applyDecorators(
-		ApiOperation({ summary: "Seek Passport uploads waiting for the automatic check, oldest first (Seek staff, monitoring only)." }),
+		ApiOperation({ summary: "Seek Passport uploads not yet marked as provided, oldest first (Seek staff, monitoring only)." }),
 		ApiResponse({ status: 200, type: [PendingDocumentDto] }),
 		ApiResponse({ status: 403, type: ErrorDto })
 	);

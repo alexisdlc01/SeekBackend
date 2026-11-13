@@ -141,7 +141,6 @@ export class ListingsService {
 				update.isVerified = false;
 				// PENDING until checked, so the sweeper retries it if the check in this request fails.
 				update.moderationStatus = ModerationStatus.PENDING;
-				update.moderationAttempts = 0;
 			}
 		}
 		if (data.criteria) update.criteria = normaliseCriteria(data.criteria);

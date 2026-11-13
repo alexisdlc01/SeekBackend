@@ -32,13 +32,6 @@ export class UserDocument {
 
 	@Prop({ default: Date.now })
 	uploadedAt?: Date;
-
-	/** Automatic review tries on this upload; after MAX_REVIEW_ATTEMPTS it is rejected with a fixed reason. */
-	@Prop({ default: 0 })
-	reviewAttempts?: number;
-
-	@Prop({ type: Date, default: null })
-	lastReviewAt?: Date | null;
 }
 
 export const UserDocumentSchema = SchemaFactory.createForClass(UserDocument);

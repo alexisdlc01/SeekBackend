@@ -28,7 +28,6 @@ import {
 	ApiGetPassportDocs,
 	ApiListSharesDocs,
 	ApiRevokeShareDocs,
-	ApiSetDocumentStatusDocs,
 	ApiCreateUserDocs,
 	ApiGetAllUsersDocs,
 	ApiGetDocumentTypes,
@@ -42,7 +41,6 @@ import { AddDocumentDto } from "./dto/add-document.dto";
 import { UpdateUserProfileDto } from "./dto/update-user-profile.dto";
 import { DocumentSharesService } from "./shares/document-shares.service";
 import { ParseObjectIdPipe } from "../shared/parse-object-id.pipe";
-import { UpdateDocumentStatusDto } from "./dto/update-document-status.dto";
 import { DocumentType } from "./types/document-type";
 import { Throttle } from "@nestjs/throttler";
 import { StudentVerificationService } from "./student-verification.service";
@@ -234,17 +232,6 @@ export class UsersController {
 	@ApiListPendingDocumentsDocs()
 	async listPendingDocuments() {
 		return this.usersService.listPendingDocuments();
-	}
-
-	@Patch(":id/documents/:type/status")
-	@Superuser()
-	@ApiSetDocumentStatusDocs()
-	async setDocumentStatus(
-		@Param("id", ParseObjectIdPipe) id: string,
-		@Param("type", new ParseEnumPipe(DocumentType)) type: DocumentType,
-		@Body() body: UpdateDocumentStatusDto
-	) {
-		return await this.usersService.setDocumentStatus(id, type, body.status);
 	}
 
 	@Get()

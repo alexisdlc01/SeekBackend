@@ -60,7 +60,7 @@ export class ListingsController {
 	/** A live listing that is not verified (new content, or waiting on fixes) is re-checked on every save. */
 	private async checked(listing: Listing, user: User): Promise<Listing> {
 		if (listing.isDraft || listing.isVerified || !this.moderation) return listing;
-		return (await this.moderation.moderate(listing._id, user._id.toString())) ?? listing;
+		return (await this.moderation.moderate(listing._id)) ?? listing;
 	}
 
 	@TeamAccess(TeamScope.LISTINGS)

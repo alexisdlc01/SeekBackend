@@ -995,84 +995,7 @@
             }
           }
         },
-        "summary": "Seek Passport uploads waiting for the automatic check, oldest first (Seek staff, monitoring only).",
-        "tags": [
-          "Users"
-        ],
-        "security": [
-          {
-            "access_token": []
-          },
-          {
-            "mobile-token": []
-          }
-        ]
-      }
-    },
-    "/users/{id}/documents/{type}/status": {
-      "patch": {
-        "operationId": "UsersController_setDocumentStatus",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "type",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateDocumentStatusDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PassportDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Run the automatic check again on a document (Seek staff). Only status PENDING is accepted; identity documents are refused.",
+        "summary": "Seek Passport uploads not yet marked as provided, oldest first (Seek staff, monitoring only).",
         "tags": [
           "Users"
         ],
@@ -8736,25 +8659,6 @@
           "type",
           "uploadedAt",
           "url"
-        ]
-      },
-      "UpdateDocumentStatusDto": {
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string",
-            "enum": [
-              "PENDING",
-              "VERIFIED",
-              "EXPIRED",
-              "REJECTED",
-              "PROVIDED"
-            ],
-            "description": "Only PENDING is accepted: it runs the automatic check again."
-          }
-        },
-        "required": [
-          "status"
         ]
       },
       "AddDocumentDto": {

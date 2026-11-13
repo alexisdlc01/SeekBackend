@@ -226,10 +226,6 @@ export class Listing {
 	@Prop({ type: Date, default: null })
 	moderatedAt?: Date | null;
 
-	/** AI checks that got no usable answer since the last edit; MAX_MODERATION_ATTEMPTS ends the wait. */
-	@Prop({ type: Number, default: 0 })
-	moderationAttempts?: number;
-
 	@Expose()
 	@ApiProperty()
 	@Prop({ default: true })

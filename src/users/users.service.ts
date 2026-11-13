@@ -12,7 +12,7 @@ import { User } from "./users.schema";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { hash } from "bcryptjs";
 import { GoogleUserDto } from "../auth/dto/google-user.dto";
-import { DocumentStatus, DocumentType, IDENTITY_DOCUMENT_TYPES } from "./types/document-type";
+import { DocumentStatus, DocumentType } from "./types/document-type";
 import { buildPassport, Passport } from "./passport";
 import { plainToInstance } from "class-transformer";
 import { UserDto } from "./dto/user.dto";
@@ -25,7 +25,6 @@ import { MailService } from "../auth/mail.service";
 import { RequestReferenceDto } from "./dto/passport.dto";
 import { PendingDocumentDto } from "./dto/pending-document.dto";
 import { UploadService } from "../upload/upload.service";
-import { DocumentReviewService } from "./document-review.service";
 
 const REFERENCE_ASK = "Could you write a short reference about them as a tenant (dates, whether rent was paid on time, how they looked after the property)? Please attach it to your reply as a PDF.";
 
@@ -49,8 +48,7 @@ class UsersService {
 		@InjectModel(User.name) private readonly userModel: Model<User>,
 		private readonly userRepo: UsersRepository,
 		private readonly mailService: MailService,
-		private readonly uploads?: UploadService,
-		private readonly review?: DocumentReviewService
+		private readonly uploads?: UploadService
 	) { }
 
 	private readonly logger = new Logger(UsersService.name);
@@ -138,22 +136,7 @@ class UsersService {
 		});
 	}
 
-	/**
-	 * Documents checked against the old name are checked again against the new one: VERIFIED ones,
-	 * so a student cannot borrow a name to verify someone else's document, and REJECTED ones, since
-	 * a name mismatch tells the student to correct the name (the 20-a-day review limit bounds the cost).
-	 */
-	private async recheckDocumentsIfRenamed(userId: User["_id"] | string, name: string): Promise<void> {
-		const checked = { type: { $nin: IDENTITY_DOCUMENT_TYPES }, status: { $in: [DocumentStatus.VERIFIED, DocumentStatus.REJECTED] } };
-		await this.userModel.updateOne(
-			{ _id: userId, name: { $ne: name }, documents: { $elemMatch: checked } },
-			{ $set: { "documents.$[doc].status": DocumentStatus.PENDING, "documents.$[doc].rejectionReason": null, "documents.$[doc].reviewAttempts": 0, "documents.$[doc].lastReviewAt": null } },
-			{ arrayFilters: [{ "doc.type": checked.type, "doc.status": checked.status }] }
-		);
-	}
-
 	async setUsername(newName: string, user: User) {
-		await this.recheckDocumentsIfRenamed(user._id, newName);
 		const updated = await this.userModel.findByIdAndUpdate(
 			user._id,
 			{ $set: { name: newName } },
@@ -226,7 +209,6 @@ class UsersService {
 
 		if (data.name !== undefined) {
 			set.name = data.name.trim();
-			await this.recheckDocumentsIfRenamed(userId, data.name.trim());
 		}
 
 		const optionalTextFields = [
@@ -320,7 +302,7 @@ class UsersService {
 				"Document key was not issued to this account."
 			);
 		}
-		// The AI review only opens private/ keys; a public/ key would be rejected later as unreadable.
+		// Personal documents are never public.
 		if (!key.startsWith("private/")) {
 			throw new BadRequestException("Documents must be uploaded privately.");
 		}
@@ -341,8 +323,8 @@ class UsersService {
 								type: documentType,
 								url,
 								key,
-								// Identity: the landlord checks it through the share. Anything else: the automatic review below.
-								status: IDENTITY_DOCUMENT_TYPES.includes(documentType) ? DocumentStatus.PROVIDED : DocumentStatus.PENDING,
+								// Every document is provided as-is: the landlord checks it through the share.
+								status: DocumentStatus.PROVIDED,
 								label: extras.label?.trim() || undefined,
 								expiresAt: extras.expiresAt ? new Date(extras.expiresAt) : null,
 								uploadedAt: new Date()
@@ -358,8 +340,6 @@ class UsersService {
 				`Document ${documentType} already exists`
 			);
 		}
-		// Not awaited: the upload answers now, the passport row updates when the review ends.
-		if (!IDENTITY_DOCUMENT_TYPES.includes(documentType)) void this.review?.review(userId, documentType);
 
 		return {
 			message: "Document added successfully",
@@ -400,28 +380,6 @@ class UsersService {
 			$push: { referenceRequests: { type: body.type, ...referee, requestedAt: new Date() } }
 		});
 		return this.getPassport(user._id.toString());
-	}
-
-	/**
-	 * Staff can only re-run the automatic check (status PENDING): no person verifies or rejects a
-	 * document, and identity documents are never checked by Seek (the landlord checks them).
-	 */
-	async setDocumentStatus(userId: string, documentType: DocumentType, status: DocumentStatus) {
-		if (IDENTITY_DOCUMENT_TYPES.includes(documentType)) {
-			throw new BadRequestException("Seek does not check identity documents: they are provided, and the landlord checks them.");
-		}
-		if (status !== DocumentStatus.PENDING) {
-			throw new BadRequestException("Documents are checked automatically. Send PENDING to run the check again.");
-		}
-		const result = await this.userModel.updateOne(
-			{ _id: userId, "documents.type": documentType },
-			{ $set: { "documents.$.status": DocumentStatus.PENDING, "documents.$.rejectionReason": null, "documents.$.reviewAttempts": 0, "documents.$.lastReviewAt": null } }
-		);
-		if (result.matchedCount === 0) {
-			throw new NotFoundException("Document not found for this user.");
-		}
-		await this.review?.review(userId, documentType);
-		return this.getPassport(userId);
 	}
 
 	/** Monitoring only (no one acts on it): every PENDING upload, oldest first, with a short-lived signed link. */

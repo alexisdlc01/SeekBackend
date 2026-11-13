@@ -12,9 +12,6 @@ import UsersService from "../users/users.service";
 import { UsersModule } from "../users/users.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { ListingModerationService } from "./listing-moderation.service";
-import { AnthropicClient } from "../ai/anthropic.client";
-import { GeminiClient } from "../ai/gemini.client";
-import { LlmClient } from "../ai/llm.client";
 
 @Module({
 	imports: [
@@ -33,7 +30,7 @@ import { LlmClient } from "../ai/llm.client";
 	],
 	controllers: [ListingsController],
 	// The AI clients are provided here, not imported: AiModule imports ListingsModule.
-	providers: [ListingsService, ListingsGateway, ListingModerationService, GeminiClient, AnthropicClient, LlmClient],
+	providers: [ListingsService, ListingsGateway, ListingModerationService],
 	exports: [ListingsService]
 })
 export class ListingsModule {}

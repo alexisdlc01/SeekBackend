@@ -28,10 +28,6 @@ async function bootstrap() {
 	const app = await NestFactory.create<NestExpressApplication>(AppModule);
 	const config = app.get(ConfigService);
 	const isProduction = config.get("NODE_ENV") === "production";
-	// Documents and listings are checked only by the AI chain (no staff queue): without a key nothing would ever be checked.
-	if (isProduction && !config.get<string>("GEMINI_API_KEY")?.trim() && !config.get<string>("ANTHROPIC_API_KEY")?.trim()) {
-		throw new Error("Set GEMINI_API_KEY or ANTHROPIC_API_KEY: automatic checks need an AI key in production.");
-	}
 	// With verification off every account counts as verified, so a squatter's team would survive the real owner's reset or Google sign-in.
 	// Same parsing as AuthService.booleanConfig: anything set other than "true" turns verification off.
 	const emailVerification = config.get<string | boolean>("AUTH_EMAIL_VERIFICATION_ENABLED");

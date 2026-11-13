@@ -22,7 +22,7 @@ describe("ListingsController", () => {
 		const controller = new ListingsController(listingsService, moderation as never);
 
 		await expect(controller.publish({ _id: "u1" } as never, "l1", {} as never)).resolves.toEqual({ _id: "l1", isDraft: false, isVerified: true });
-		expect(moderation.moderate).toHaveBeenCalledWith("l1", "u1");
+		expect(moderation.moderate).toHaveBeenCalledWith("l1");
 	});
 
 	it("republishing an approved listing the update left verified skips the AI check", async () => {

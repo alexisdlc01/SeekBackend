@@ -18,9 +18,6 @@ import { Payment, PaymentSchema } from "../payments/payment.schema";
 import { UploadModule } from "../upload/upload.module";
 import { ConnectorsModule } from "../connectors/connectors.module";
 import { DocumentReviewService } from "./document-review.service";
-import { AnthropicClient } from "../ai/anthropic.client";
-import { GeminiClient } from "../ai/gemini.client";
-import { LlmClient } from "../ai/llm.client";
 
 @Module({
 	imports: [
@@ -53,11 +50,7 @@ import { LlmClient } from "../ai/llm.client";
 		StudentVerificationService,
 		// Own instance (stateless Mailgun client): AuthModule imports UsersModule, so importing it back would be circular.
 		MailService,
-		DocumentReviewService,
-		// Own instances of the AI chain (AiModule exports nothing and imports modules that import this one).
-		LlmClient,
-		GeminiClient,
-		AnthropicClient
+		DocumentReviewService
 	],
 	exports: [UsersService, UsersRepository, DocumentSharesService]
 })
