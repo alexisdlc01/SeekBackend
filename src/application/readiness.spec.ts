@@ -43,10 +43,18 @@ describe("household readiness", () => {
 			});
 			const byKey = Object.fromEntries(result.criteria.map(c => [c.key, c]));
 			expect(byKey.PASSPORTS.passed).toBe(true);
-			expect(byKey.GUARANTOR).toMatchObject({ passed: false, detail: "1 of 2 members have a verified guarantor agreement" });
+			expect(byKey.GUARANTOR).toMatchObject({ passed: false, detail: "1 of 2 members have provided a guarantor agreement" });
 			expect(byKey.REFERENCES.passed).toBe(false);
 			expect(byKey.MAX_HOUSEHOLD.passed).toBe(true);
 			expect(result.qualified).toBe(false);
+		});
+
+		it("counts provided (unchecked) documents", () => {
+			const provided = {
+				documents: [...ready.documents, { type: DocumentType.LANDLORD_REFERENCE, status: DocumentStatus.PROVIDED }]
+			};
+			const result = householdReadiness([provided], 1, new Date(), { referencesRequired: true });
+			expect(result.criteria.find(c => c.key === "REFERENCES")).toMatchObject({ passed: true, detail: "1 of 1 member has provided a reference" });
 		});
 
 		it("qualifies a household that meets every criterion", () => {

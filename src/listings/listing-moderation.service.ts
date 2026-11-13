@@ -65,6 +65,12 @@ const OFF_PLATFORM_PAYMENT = new RegExp([
 	"\\btransfer\\b[^.\\n]{0,40}\\b(?:before\\s+(?:the\\s+|any\\s+)?(?:viewing|visit)|to\\s+(?:hold|reserve|secure)|outside\\s+(?:of\\s+)?seek)"
 ].join("|"), "i");
 
+// Zero-width chars are dropped; ._- become spaces ("western-union") and are also removed ("b.i.t.c.o.i.n"), testing both.
+function offPlatformPayment(text: string): boolean {
+	const t = text.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "");
+	return OFF_PLATFORM_PAYMENT.test(t.replace(/(?<=\p{L})[._-]+(?=\p{L})/gu, " ")) || OFF_PLATFORM_PAYMENT.test(t.replace(/(?<=\p{L})[._-]+(?=\p{L})/gu, ""));
+}
+
 /** Deterministic checks; each failure is a sentence telling the landlord what to fix. */
 export function listingRuleFailures(listing: Partial<Listing>, now: Date, geocodingEnabled: boolean): string[] {
 	const reasons: string[] = [];
@@ -90,7 +96,7 @@ export function listingRuleFailures(listing: Partial<Listing>, now: Date, geocod
 	if (unsafe) {
 		reasons.push(`Remove phone numbers, e-mail addresses, links and bank details from the title, description and amenities (we found "${unsafe.slice(0, 60)}"): students contact you and pay through Seek.`);
 	}
-	if (OFF_PLATFORM_PAYMENT.test([listing.propertyTitle, listing.propertyDesc].filter(Boolean).join("\n"))) {
+	if (offPlatformPayment([listing.propertyTitle, listing.propertyDesc, ...(listing.amenities ?? [])].filter(Boolean).join("\n"))) {
 		reasons.push("Remove any request to pay rent, deposits or fees outside Seek, or before a viewing (wire transfers, gift cards, crypto): students pay through Seek.");
 	}
 	return reasons;

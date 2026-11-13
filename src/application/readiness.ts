@@ -15,7 +15,7 @@ export interface CriterionResult {
 	key: CriterionKey;
 	label: string;
 	passed: boolean;
-	/** Plain-English explanation, e.g. "2 of 3 members have a verified guarantor". */
+	/** Plain-English explanation, e.g. "2 of 3 members have provided a guarantor". */
 	detail: string;
 }
 
@@ -34,11 +34,12 @@ const REFERENCE_TYPES = [DocumentType.LANDLORD_REFERENCE, DocumentType.AGENT_REF
 
 type Member = { documents?: PassportDocumentInput[] } & StudentEmailProof;
 
-function hasVerified(member: Member, types: DocumentType[], now: Date) {
+/** Provided or verified: Seek does not check documents, the landlord does. */
+function hasProvided(member: Member, types: DocumentType[], now: Date) {
 	const passport = buildPassport(member.documents, now, member);
 	return passport.sections
 		.flatMap(section => section.items)
-		.some(item => types.includes(item.type) && item.status === DocumentStatus.VERIFIED);
+		.some(item => types.includes(item.type) && (item.status === DocumentStatus.VERIFIED || item.status === DocumentStatus.PROVIDED));
 }
 
 function countLine(count: number, total: number, what: string) {
@@ -81,21 +82,21 @@ export function householdReadiness(
 		});
 	}
 	if (criteria?.guarantor && criteria.guarantor !== GuarantorCriterion.NONE) {
-		const withGuarantor = members.filter(member => hasVerified(member, [DocumentType.GUARANTOR_AGREEMENT], now)).length;
+		const withGuarantor = members.filter(member => hasProvided(member, [DocumentType.GUARANTOR_AGREEMENT], now)).length;
 		results.push({
 			key: "GUARANTOR",
 			label: criteria.guarantor === GuarantorCriterion.UK_ONLY ? "UK guarantor" : "UK guarantor or guarantor service",
 			passed: count > 0 && withGuarantor === count,
-			detail: countLine(withGuarantor, count, "a verified guarantor agreement")
+			detail: countLine(withGuarantor, count, "provided a guarantor agreement")
 		});
 	}
 	if (criteria?.referencesRequired) {
-		const withReference = members.filter(member => hasVerified(member, REFERENCE_TYPES, now)).length;
+		const withReference = members.filter(member => hasProvided(member, REFERENCE_TYPES, now)).length;
 		results.push({
 			key: "REFERENCES",
 			label: "References provided",
 			passed: count > 0 && withReference === count,
-			detail: countLine(withReference, count, "a verified reference")
+			detail: countLine(withReference, count, "provided a reference")
 		});
 	}
 	return {

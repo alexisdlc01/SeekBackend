@@ -111,6 +111,8 @@ describe("scam rule", () => {
 	it("flags off-platform payment asks, not an ordinary bank transfer", () => {
 		const flagged = listingRuleFailures(goodListing({ propertyDesc: "Pay the deposit before the viewing by Western Union." }) as never, NOW, true);
 		expect(flagged).toEqual([expect.stringContaining("outside Seek")]);
+		expect(listingRuleFailures(goodListing({ amenities: ["western union"] }) as never, NOW, true)).toEqual([expect.stringContaining("outside Seek")]);
+		expect(listingRuleFailures(goodListing({ propertyDesc: "Pay in bit\u200bcoin or b.i.t.c.o.i.n or western-union" }) as never, NOW, true)).toEqual([expect.stringContaining("outside Seek")]);
 		expect(listingRuleFailures(goodListing({ propertyDesc: "Bank transfer accepted for rent, paid monthly through Seek." }) as never, NOW, true)).toEqual([]);
 	});
 });
