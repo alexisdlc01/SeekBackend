@@ -26,6 +26,7 @@ function setup() {
 	const uploads = { deletePrivateObject: jest.fn().mockResolvedValue(undefined), deletePublicObject: jest.fn().mockResolvedValue(undefined) };
 	const listingModel = { updateMany: jest.fn().mockResolvedValue({}) };
 	const contracts = { settleForDeletedTenant: jest.fn().mockResolvedValue(undefined) };
+	const applications = { releaseDeletedMember: jest.fn().mockResolvedValue(undefined) };
 	const service = new AccountService(
 		userModel as any,
 		tenancyModel as any,
@@ -35,9 +36,9 @@ function setup() {
 		connectors as any,
 		uploads as any,
 		listingModel as any,
-		{ get: () => contracts } as any
+		{ get: (token: { name: string }) => (token.name === "ApplicationService" ? applications : contracts) } as any
 	);
-	return { service, userModel, tenancyModel, paymentModel, shareModel, connectionModel, connectors, uploads, listingModel, contracts };
+	return { service, userModel, tenancyModel, paymentModel, shareModel, connectionModel, connectors, uploads, listingModel, contracts, applications };
 }
 
 describe("AccountService team", () => {
@@ -151,6 +152,14 @@ describe("AccountService deleteAccount", () => {
 		expect(contracts.settleForDeletedTenant).toHaveBeenCalledWith(id);
 		// After the soft delete, so the deleted tenant is no longer counted nor emailed.
 		expect(contracts.settleForDeletedTenant.mock.invocationCallOrder[0]).toBeGreaterThan(userModel.updateOne.mock.invocationCallOrder[0]);
+	});
+
+	it("removes the deleted account from its open households, after the soft delete", async () => {
+		const { service, userModel, applications } = setup();
+		const id = new Types.ObjectId();
+		await service.deleteAccount(id);
+		expect(applications.releaseDeletedMember).toHaveBeenCalledWith(id);
+		expect(applications.releaseDeletedMember.mock.invocationCallOrder[0]).toBeGreaterThan(userModel.updateOne.mock.invocationCallOrder[0]);
 	});
 
 	it("disconnects every mailbox and revokes landlord shares before closing the account", async () => {

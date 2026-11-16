@@ -108,6 +108,16 @@ function toLandlord(destination: string | null | undefined, seekFee: number) {
 	return { ...(seekFee > 0 ? { application_fee_amount: seekFee } : {}), transfer_data: { destination } };
 }
 
+function assertRentOpen(status: TenancyStatus | string) {
+	if (status !== TenancyStatus.ACTIVE) {
+		throw new BadRequestException(
+			status === TenancyStatus.PENDING_ACCEPTANCE
+				? "Rent starts once every housemate has accepted the tenancy."
+				: "This tenancy has ended."
+		);
+	}
+}
+
 /** Students never see Seek's fee or the landlord's payout. */
 function forTenant<T extends { seekFee?: number; payout?: number }>({ seekFee, payout, ...rest }: T) {
 	return rest;
@@ -169,16 +179,7 @@ export class PaymentsService {
 			.findOne({ tenancy: tenancy._id, tenant: tenant._id })
 			.lean()
 			.exec();
-		const upcoming = await this.paymentModel
-			.find({
-				tenancy: tenancy._id,
-				tenant: tenant._id,
-				status: { $in: [PaymentStatus.SCHEDULED, PaymentStatus.LATE, PaymentStatus.FAILED, PaymentStatus.PENDING] }
-			})
-			.sort({ dueDate: 1 })
-			.limit(3)
-			.lean()
-			.exec();
+		const upcoming = await this.upcoming(tenancy._id, tenant._id);
 		return {
 			exists: Boolean(plan),
 			plan: plan ?? {
@@ -200,15 +201,52 @@ export class PaymentsService {
 		};
 	}
 
+	/** Next payments due (up to 3), as the plan screen lists them. */
+	private upcoming(tenancy: Types.ObjectId, tenant: Types.ObjectId | string, extra: Record<string, unknown> = {}) {
+		return this.paymentModel
+			.find({
+				tenancy,
+				tenant,
+				status: { $in: [PaymentStatus.SCHEDULED, PaymentStatus.LATE, PaymentStatus.FAILED, PaymentStatus.PENDING] },
+				...extra
+			})
+			.sort({ dueDate: 1 })
+			.limit(3)
+			.lean()
+			.exec();
+	}
+
+	private hasFutureRent(tenancy: Types.ObjectId, tenant: Types.ObjectId) {
+		return this.paymentModel.exists({ tenancy, tenant, status: PaymentStatus.SCHEDULED, dueDate: { $gte: startOfUtcDay(new Date()) } });
+	}
+
+	/**
+	 * The next payments (up to 3) as they would stand after updatePlan with this
+	 * frequency. Read-only: same checks as updatePlan, same schedule code as regenerate.
+	 */
+	async previewPlan(tenancyId: string, frequency: PlanFrequency, tenant: Viewer) {
+		const tenancy = await this.tenancies.findForTenant(tenancyId, tenant);
+		assertRentOpen(tenancy.status);
+		const before = await this.planModel.findOne({ tenancy: tenancy._id, tenant: tenant._id }).lean().exec();
+		if (before?.frequency !== frequency) {
+			const listing = await this.listingModel.findById(tenancy.listing, { nation: 1, paymentPlans: 1 }).lean().exec();
+			assertPlanAllowed(listing?.nation, frequency, listing?.paymentPlans ?? null);
+		}
+		const tenantId = new Types.ObjectId(tenant._id.toString());
+		const show = (rows: { dueDate: Date; amount: number; coversMonths?: number; holdingDepositCredit?: number; status: PaymentStatus }[]) =>
+			rows.map(({ dueDate, amount, coversMonths, holdingDepositCredit, status }) => ({ dueDate, amount, coversMonths: coversMonths ?? 1, holdingDepositCredit: holdingDepositCredit ?? 0, status }));
+		// Same condition as updatePlan: an unchanged plan keeps its schedule.
+		if (before?.frequency === frequency && (await this.hasFutureRent(tenancy._id, tenantId))) {
+			return show(await this.upcoming(tenancy._id, tenantId));
+		}
+		const { replaced, added } = await this.rentSchedule.preview(tenancy, tenantId, frequency);
+		const kept = await this.upcoming(tenancy._id, tenantId, { $nor: [replaced] });
+		return show([...kept, ...added].sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()).slice(0, 3));
+	}
+
 	async updatePlan(tenancyId: string, dto: UpdateRentPlanDto, tenant: Viewer) {
 		const tenancy = await this.tenancies.findForTenant(tenancyId, tenant);
-		if (tenancy.status !== TenancyStatus.ACTIVE) {
-			throw new BadRequestException(
-				tenancy.status === TenancyStatus.PENDING_ACCEPTANCE
-					? "Rent starts once every housemate has accepted the tenancy."
-					: "This tenancy has ended."
-			);
-		}
+		assertRentOpen(tenancy.status);
 		const before = await this.planModel
 			.findOne({ tenancy: tenancy._id, tenant: tenant._id })
 			.lean()
@@ -235,12 +273,7 @@ export class PaymentsService {
 			{ upsert: true }
 		);
 		const tenantId = new Types.ObjectId(tenant._id.toString());
-		const hasFuture = await this.paymentModel.exists({
-			tenancy: tenancy._id,
-			tenant: tenantId,
-			status: PaymentStatus.SCHEDULED,
-			dueDate: { $gte: startOfUtcDay(new Date()) }
-		});
+		const hasFuture = await this.hasFutureRent(tenancy._id, tenantId);
 		if (!before || before.frequency !== dto.frequency || !hasFuture) {
 			await this.rentSchedule.regenerate(tenancy, tenantId, dto.frequency);
 		}

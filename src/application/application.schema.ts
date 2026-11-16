@@ -66,6 +66,10 @@ export class Application {
 	@Prop({ type: Number, default: null })
 	holdingDeposit?: number | null;
 
+	/** Set when the sweep lapses the offer, cleared once its clean-up (refund flag, shares, deposits, notifications) all ran; the sweep retries until then. */
+	@Prop({ type: Boolean, default: false })
+	lapseCleanupPending?: boolean;
+
 	@Prop({ type: String, default: null })
 	rejectReason?: string | null;
 }
@@ -74,3 +78,5 @@ export const ApplicationSchema = SchemaFactory.createForClass(Application);
 
 ApplicationSchema.index({ applicants: 1 });
 ApplicationSchema.index({ applicationKey: 1 }, { unique: true, sparse: true });
+// One application per listing per student: backs the check-then-write guards in create() and join() against races.
+ApplicationSchema.index({ listing: 1, applicants: 1 }, { unique: true });

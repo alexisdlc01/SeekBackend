@@ -370,6 +370,51 @@ describe("AuthService", () => {
 			.toBeInstanceOf(UnauthorizedException);
 	});
 
+	it("revokes the session when an already-rotated refresh token is replayed", async () => {
+		const session = {
+			sessionId: "session-a",
+			tokenHash: tokenHash("r3"),
+			previousTokenHash: tokenHash("r2"),
+			expiresAt: new Date(Date.now() + 60_000),
+			createdAt: new Date(),
+			lastUsedAt: new Date()
+		};
+		const user = makeUser({ refreshSessions: [session] });
+		usersRepo.getUserById.mockResolvedValue(user);
+		const userId = user._id.toString();
+
+		// The token rotated out a moment ago: a concurrent tab, not a replay.
+		await expect(service.verifyUserRefreshToken("r2", userId, "session-a"))
+			.rejects.toBeInstanceOf(UnauthorizedException);
+		expect(usersRepo.removeRefreshSession).not.toHaveBeenCalled();
+
+		// An older token of the chain is a replay: the session (and the stolen chain) ends.
+		await expect(service.verifyUserRefreshToken("r1", userId, "session-a"))
+			.rejects.toBeInstanceOf(UnauthorizedException);
+		expect(usersRepo.removeRefreshSession).toHaveBeenCalledWith(userId, "session-a");
+
+		// Past the grace window even the previous token counts as a replay.
+		usersRepo.removeRefreshSession.mockClear();
+		session.lastUsedAt = new Date(Date.now() - 60_000);
+		await expect(service.verifyUserRefreshToken("r2", userId, "session-a"))
+			.rejects.toBeInstanceOf(UnauthorizedException);
+		expect(usersRepo.removeRefreshSession).toHaveBeenCalledWith(userId, "session-a");
+	});
+
+	it("returns the userId on the unverified-login 401 so the app can resend the OTP", async () => {
+		config.AUTH_EMAIL_VERIFICATION_ENABLED = true;
+		const user = makeUser({ isVerified: false }) as AuthenticatedUser;
+
+		await expect(service.login(user, {} as never, true)).rejects
+			.toMatchObject({
+				status: 401,
+				response: {
+					message: "Email verification is required.",
+					userId: user._id.toString()
+				}
+			});
+	});
+
 	it("returns the same forgot-password response for an unknown account", async () => {
 		usersRepo.getUserByEmail.mockResolvedValue(null);
 

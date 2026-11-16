@@ -31,6 +31,10 @@ export class Conversation {
 	@Prop({ type: SchemaTypes.ObjectId, ref: "Message" })
 	lastMessage?: Types.ObjectId;
 
+	/** Set when the application behind it is deleted: members keep the history, nobody can post. */
+	@Prop()
+	closedAt?: Date;
+
 	messages: Message[]
 }
 

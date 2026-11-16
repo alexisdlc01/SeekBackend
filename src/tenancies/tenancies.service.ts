@@ -58,7 +58,7 @@ export function applicationTenancyPeriod(listing: Pick<Listing, "availableFrom" 
 type Viewer = Pick<User, "_id" | "role">;
 
 /** Types only a tenant's own paperwork can carry; the rest are the landlord's word (agreement, certificates). */
-const TENANT_DOCUMENT_TYPES = new Set([TenancyDocumentType.COUNCIL_TAX_EXEMPTION, TenancyDocumentType.OTHER]);
+export const TENANT_DOCUMENT_TYPES = new Set([TenancyDocumentType.COUNCIL_TAX_EXEMPTION, TenancyDocumentType.OTHER]);
 
 export type TenancyLean = Tenancy & { _id: Types.ObjectId };
 
@@ -268,8 +268,17 @@ export class TenanciesService {
 		const listing = await this.listingModel.findById(application.listing).lean().exec();
 		if (!listing) throw new NotFoundException("Listing not found.");
 		const { startDate, endDate } = applicationTenancyPeriod(listing);
-		await this.assertNoCurrentTenancy(application.applicants, { startDate, endDate });
-		const people = Math.max(1, application.applicants.length);
+		try {
+			await this.assertNoCurrentTenancy(application.applicants, { startDate, endDate });
+		} catch (error) {
+			// A concurrent call (double tap, two housemates) created this application's tenancy since the lookup above: that is the clash.
+			const winner = error instanceof ConflictException
+				? await this.tenancyModel.findOne({ application: application._id }).lean().exec()
+				: null;
+			if (winner) return winner as TenancyLean;
+			throw error;
+		}
+		const people =Math.max(1, application.applicants.length);
 
 		try {
 			const tenancy = await this.tenancyModel.create({

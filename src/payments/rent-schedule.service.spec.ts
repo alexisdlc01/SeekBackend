@@ -163,6 +163,107 @@ describe("RentScheduleService.regenerate", () => {
 	});
 });
 
+describe("RentScheduleService.preview", () => {
+	const application = new Types.ObjectId();
+	const tenancy = {
+		_id: new Types.ObjectId(),
+		landlord: new Types.ObjectId(),
+		tenants: [new Types.ObjectId()],
+		startDate: new Date("2026-09-01T00:00:00Z"),
+		endDate: new Date("2027-08-31T00:00:00Z"),
+		monthlyRent: 60000,
+		application
+	};
+	const tenant = tenancy.tenants[0];
+	type Row = { tenancy: Types.ObjectId; tenant: Types.ObjectId; dueDate: Date; coversMonths: number; amount: number; status: PaymentStatus; providerRef?: string; holdingDepositCredit?: number };
+
+	function matches(row: Row, filter: Record<string, any>): boolean {
+		return Object.entries(filter).every(([key, cond]) => {
+			if (key === "$or") return cond.some((sub: Record<string, any>) => matches(row, sub));
+			if (key === "$nor") return !cond.some((sub: Record<string, any>) => matches(row, sub));
+			const value = (row as any)[key];
+			if (cond instanceof Types.ObjectId) return cond.equals(value);
+			if (cond instanceof RegExp) return typeof value === "string" && cond.test(value);
+			if (cond && typeof cond === "object" && !(cond instanceof Date)) {
+				return Object.entries(cond).every(([op, arg]: [string, any]) => {
+					if (op === "$ne") return value !== arg;
+					if (op === "$not") return !(typeof value === "string" && arg.test(value));
+					if (op === "$gt") return value > arg;
+					if (op === "$lt") return value < arg;
+					throw new Error(`unsupported ${op}`);
+				});
+			}
+			return value === cond;
+		});
+	}
+
+	function setup(rows: Row[]) {
+		const query = (found: unknown) => ({ sort: () => query(found), lean: () => ({ exec: () => Promise.resolve(found) }) });
+		const sorted = (filter: Record<string, any>) =>
+			rows.filter(row => matches(row, filter)).sort((a, b) => b.dueDate.getTime() - a.dueDate.getTime());
+		const paymentModel = {
+			findOne: (filter: Record<string, any>) => query(sorted(filter)[0] ?? null),
+			find: (filter: Record<string, any>) =>
+				query(filter.kind === PaymentKind.HOLDING_DEPOSIT ? [{ amount: 15000 }] : sorted(filter)),
+			deleteMany: (filter: Record<string, any>) => {
+				rows.splice(0, rows.length, ...rows.filter(row => !matches(row, filter)));
+				return Promise.resolve();
+			},
+			insertMany: (inserted: Row[]) => {
+				rows.push(...inserted);
+				return Promise.resolve(inserted);
+			}
+		};
+		return new RentScheduleService({} as any, paymentModel as any);
+	}
+
+	const shape = (rows: Pick<Row, "dueDate" | "amount" | "coversMonths" | "holdingDepositCredit" | "status">[]) => rows
+		.map(row => `${row.dueDate.toISOString().slice(0, 10)} ${row.amount}x${row.coversMonths} credit ${row.holdingDepositCredit ?? 0} ${row.status}`)
+		.sort();
+
+	it.each([PlanFrequency.MONTHLY, PlanFrequency.SIX_MONTHS, PlanFrequency.YEARLY])(
+		"shows exactly the schedule regenerate then writes for %s, holding deposit credit included",
+		async frequency => {
+			// Sept-Oct paid, November late, December onward scheduled; the holding deposit sits on December.
+			const rows: Row[] = Array.from({ length: 12 }, (_, i) => ({
+				tenancy: tenancy._id,
+				tenant,
+				dueDate: new Date(Date.UTC(2026, 8 + i, 1)),
+				coversMonths: 1,
+				amount: 60000,
+				status: i < 2 ? PaymentStatus.PAID : i === 2 ? PaymentStatus.LATE : PaymentStatus.SCHEDULED
+			}));
+			Object.assign(rows[3], { amount: 45000, holdingDepositCredit: 15000 });
+			const service = setup(rows);
+			const now = new Date("2026-11-16T09:00:00Z");
+
+			const before = rows.map(row => ({ ...row }));
+			const { replaced, added } = await service.preview(tenancy, tenant, frequency, now);
+			expect(rows).toEqual(before); // read-only
+
+			const previewed = [...rows.filter(row => !matches(row, replaced)), ...added];
+			await service.regenerate(tenancy, tenant, frequency, now);
+			expect(shape(previewed)).toEqual(shape(rows));
+		}
+	);
+
+	it("previews the full-year plan as one payment for the rest of the tenancy", async () => {
+		const rows: Row[] = Array.from({ length: 12 }, (_, i) => ({
+			tenancy: tenancy._id,
+			tenant,
+			dueDate: new Date(Date.UTC(2026, 8 + i, 1)),
+			coversMonths: 1,
+			amount: 60000,
+			status: i < 3 ? PaymentStatus.PAID : PaymentStatus.SCHEDULED
+		}));
+		const service = setup(rows);
+		const { added } = await service.preview(tenancy, tenant, PlanFrequency.YEARLY, new Date("2026-11-16T09:00:00Z"));
+		// December to August: 9 months left, holding deposit of £150 off the first payment.
+		expect(added.map(row => [row.dueDate.toISOString().slice(0, 10), row.amount, row.coversMonths, row.holdingDepositCredit ?? 0]))
+			.toEqual([["2026-12-01", 9 * 60000 - 15000, 9, 15000]]);
+	});
+});
+
 describe("RentScheduleService.applyHoldingCredit", () => {
 	const application = new Types.ObjectId();
 	const tenancy = {

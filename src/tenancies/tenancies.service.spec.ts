@@ -178,6 +178,18 @@ describe("TenanciesService create / accept", () => {
 		expect(rentSchedule.ensureDefaultPlans).not.toHaveBeenCalled();
 	});
 
+	it("returns the application's tenancy a concurrent accept created after the lookup, instead of a 409", async () => {
+		const { service, tenancyModel } = setup();
+		const application = { _id: new Types.ObjectId(), listing: listingId, landlord: landlordId, applicants: [new Types.ObjectId()] };
+		const winner = { _id: new Types.ObjectId(), application: application._id, status: TenancyStatus.ACTIVE };
+		// Lookup sees nothing; the other request then creates it, so the overlap check clashes with it.
+		(tenancyModel as any).findOne = jest.fn().mockReturnValueOnce(lean(null)).mockReturnValue(lean(winner));
+		tenancyModel.exists.mockResolvedValue(winner);
+
+		await expect(service.createFromApplication(application)).resolves.toBe(winner);
+		expect(tenancyModel.create).not.toHaveBeenCalled();
+	});
+
 	it("refuses a student who was not invited", async () => {
 		const { service, tenancyModel } = setup();
 		tenancyModel.findById.mockReturnValue(

@@ -1,5 +1,5 @@
 import { ThrottlerStorageService } from "@nestjs/throttler";
-import { AiService, STUDENT_PROTECTS_DEPOSIT, addsUnsafeDetails } from "./ai.service";
+import { AiService, depositAnswer, STUDENT_PROTECTS_DEPOSIT, addsUnsafeDetails } from "./ai.service";
 import { AiController } from "./ai.controller";
 import { Role } from "../auth/role.enum";
 
@@ -19,6 +19,25 @@ describe("deposit advice wording", () => {
 
 	it("keeps telling the landlord to protect it", () => {
 		expect(draftFor(Role.LANDLORD_AGENCY).title).toMatch(/^Protect the deposit/);
+	});
+
+	it("never gives a landlord the tenant-voiced keyword answer", () => {
+		const ask = (role: Role, question: string, t: any = tenancy) => (make({ isConfigured: () => false }) as any).depositAdvice({ role, _id: "u1" }, t, null, now, question);
+		const draft = ask(Role.LANDLORD_AGENCY, "Do I need to protect the deposit?");
+		expect(draft.advice).not.toMatch(/not yours|Ask your landlord/);
+		expect(draft.advice).toMatch(/^The deposit for .* must be protected/);
+		expect(ask(Role.LANDLORD_AGENCY, "hello").advice).not.toMatch(/Seek can't answer/);
+		// No tenancy: the student's question is still answered; the landlord keeps the general rules.
+		expect(ask(Role.STUDENT, "Can they deduct for damage?", null).advice).toMatch(/fair wear and tear/);
+		expect(ask(Role.STUDENT, "hello", null).advice).toMatch(/^A deposit can be at most five weeks' rent/);
+		expect(ask(Role.LANDLORD_AGENCY, "Can they deduct for damage?", null).advice).toMatch(/^A deposit can be at most five weeks' rent/);
+	});
+
+	it("passes the routed deductions answer to the model as facts", () => {
+		const service = make({ isConfigured: () => true });
+		const ask = (t: any) => (service as any).depositAdvice({ role: Role.STUDENT, _id: "u1" }, t, null, now, "What can my landlord deduct?");
+		expect(ask(tenancy).llm.facts.facts).toMatch(/fair wear and tear/);
+		expect(ask(null).llm.facts.facts).toMatch(/fair wear and tear/);
 	});
 
 	it("falls back to the rules text when the model tells the student to protect it", async () => {
@@ -139,5 +158,80 @@ describe("AI advice privacy and abuse limits", () => {
 		} finally {
 			storage.onApplicationShutdown();
 		}
+	});
+});
+
+describe("deposit question keyword routing", () => {
+	it("routes common questions to the matching answer", () => {
+		expect(depositAnswer("Can my landlord keep part of it?")).toMatch(/fair wear and tear/);
+		expect(depositAnswer("Which scheme is it in?")).toMatch(/DPS, TDS or mydeposits/);
+		expect(depositAnswer("We disagree about cleaning")).toMatch(/dispute service/);
+		expect(depositAnswer("Where is my certificate?")).toMatch(/prescribed information/);
+	});
+
+	it("returns null when nothing matches, so the generic card stays", () => {
+		expect(depositAnswer("hello")).toBeNull();
+		expect(depositAnswer("mistake")).toBeNull();
+	});
+
+	it("matches whole words only and sends rent-late deductions to deductions", () => {
+		expect(depositAnswer("How do I calculate the deposit cap?")).toMatch(/most a landlord can ask for/);
+		expect(depositAnswer("I was late with rent, can they take it from my deposit?")).toMatch(/fair wear and tear/);
+	});
+
+	it("routes late and negated protection phrasings to the penalty answer", () => {
+		for (const q of [
+			"My landlord protected my deposit late, what can I do?",
+			"My landlord hasn't protected my deposit",
+			"What happens if my landlord didn't protect it?",
+			"Is there a penalty for late protection?",
+			"My landlord refused to protect my deposit",
+			"My deposit isn't protected, what do I do?",
+			"My deposit isn’t protected, what do I do?",
+			"They haven't protected my deposit yet",
+			"My landlord protected my deposit 3 weeks late",
+			"landlord never put my deposit in a scheme",
+			"It's been 45 days and my deposit still isn't in a scheme"
+		]) {
+			expect(depositAnswer(q)).toMatch(/up to three times/);
+		}
+		expect(depositAnswer("I was late with rent, can they take it from my deposit?")).toMatch(/fair wear and tear/);
+	});
+
+	it("leads protection answers with the tenancy's status line, and says so plainly when it cannot answer", async () => {
+		const none = {} as any;
+		const service = new AiService({ isConfigured: () => false } as any, none, none, none, none, none, none, none, none, none, { get: () => undefined } as any);
+		const t = { monthlyRent: 80000, depositAmount: 80000, depositScheme: "TDS", depositReference: "X123", documents: [], tenants: [] };
+		jest.spyOn(service as any, "findTenancy").mockResolvedValue(t);
+		(service as any).listingModel = { findById: () => ({ select: () => ({ lean: () => ({ exec: () => Promise.resolve(null) }) }) }) };
+		const ask = (question: string) => service.advice({ role: Role.STUDENT, _id: "u1" } as any, { topic: "deposit", question } as any);
+		const protect = await ask("Is my deposit protected?");
+		expect(protect.advice).toMatch(/^Your deposit of .* is protected with .*\(reference X123\)\. Your landlord must protect/);
+		expect((await ask("Can they deduct for damage?")).advice).toMatch(/^A landlord can only deduct/);
+		const none2 = await ask("hello");
+		expect(none2.advice).toBe("Seek can't answer that from the deposit rules. Ask your landlord or your deposit scheme.");
+	});
+
+	it("keeps the keyword answer as fallback when the model is configured but returns nothing", async () => {
+		const none = {} as any;
+		const llm = { isConfigured: () => true, complete: async () => null };
+		const service = new AiService(llm as any, none, none, none, none, none, none, none, none, none, { get: () => undefined } as any);
+		const t = { monthlyRent: 80000, depositAmount: 80000, documents: [], tenants: [] };
+		jest.spyOn(service as any, "findTenancy").mockResolvedValue(t);
+		(service as any).listingModel = { findById: () => ({ select: () => ({ lean: () => ({ exec: () => Promise.resolve(null) }) }) }) };
+		const r = await service.advice({ role: Role.STUDENT, _id: "u1" } as any, { topic: "deposit", question: "Can they deduct for damage?" } as any);
+		expect(r.source).toBe("rules");
+		expect(r.advice).toMatch(/fair wear and tear/);
+	});
+
+	it("answers on the rules path and keeps source rules", async () => {
+		const none = {} as any;
+		const service = new AiService({ isConfigured: () => false } as any, none, none, none, none, none, none, none, none, none, { get: () => undefined } as any);
+		const t = { monthlyRent: 80000, depositAmount: 80000, documents: [], tenants: [] };
+		jest.spyOn(service as any, "findTenancy").mockResolvedValue(t);
+		(service as any).listingModel = { findById: () => ({ select: () => ({ lean: () => ({ exec: () => Promise.resolve(null) }) }) }) };
+		const r = await service.advice({ role: Role.STUDENT, _id: "u1" } as any, { topic: "deposit", question: "Can they deduct for damage?" } as any);
+		expect(r.source).toBe("rules");
+		expect(r.advice).toMatch(/fair wear and tear/);
 	});
 });

@@ -126,6 +126,7 @@ async function createIndexes(db) {
 			}
 		),
 		db.collection("applications").createIndex({ applicants: 1 }),
+		createApplicationListingIndex(db),
 		db.collection("conversations").createIndex({ users: 1 }),
 		db.collection("conversations").createIndex({ createdAt: -1 }),
 		db.collection("messages").createIndex({ conversation: 1, createdAt: -1 }),
@@ -154,6 +155,28 @@ async function createIndexes(db) {
 		),
 		db.collection("documentshares").createIndex({ viewer: 1, owner: 1, expiresAt: 1 })
 	]);
+}
+
+// Mirrors application.schema.ts. Mongoose autoIndex swallows a failed build, so a
+// duplicate (listing, student) pair must stop this script with the pairs named.
+async function createApplicationListingIndex(db) {
+	const applications = db.collection("applications");
+	try {
+		await applications.createIndex({ listing: 1, applicants: 1 }, { unique: true });
+	} catch (error) {
+		if (error?.code !== 11000) throw error;
+		const duplicates = await applications.aggregate([
+			{ $unwind: "$applicants" },
+			{ $group: { _id: { listing: "$listing", student: "$applicants" }, applications: { $addToSet: "$_id" } } },
+			{ $match: { "applications.1": { $exists: true } } }
+		]).toArray();
+		const lines = duplicates.map(({ _id, applications: ids }) =>
+			`  listing ${_id.listing} student ${_id.student}: applications ${ids.join(", ")}`);
+		throw new Error(
+			`Index applications {listing:1, applicants:1} not built: ${duplicates.length} (listing, student) pair(s) appear in more than one application. ` +
+			`Resolve these by hand (nothing was changed), then rerun:\n${lines.join("\n")}`
+		);
+	}
 }
 
 function listing({

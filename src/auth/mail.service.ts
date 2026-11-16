@@ -189,6 +189,17 @@ export class MailService {
 		});
 	}
 
+	/** The landlord's opt-in weekly digest; the caller skips it when `lines` would be empty. */
+	async sendWeeklySummaryEmail(email: string, name: string, lines: string[]) {
+		await this.send({
+			from: `Seek <noreply@${this.domain}>`,
+			to: [email],
+			subject: "Your Seek week",
+			text: `Hi ${name}, your week on Seek:\n${lines.map(line => `- ${line}`).join("\n")}`,
+			html: `<p>Hi ${escapeHtml(name)}, your week on Seek:</p><ul>${lines.map(line => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`
+		});
+	}
+
 	async sendContactEmail(name: string, email: string, message: string) {
 		await this.send({
 			from: `Seek <noreply@${this.domain}>`,

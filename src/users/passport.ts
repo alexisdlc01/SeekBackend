@@ -171,7 +171,8 @@ export function effectiveStatus(
 	now: Date = new Date()
 ): DocumentStatus {
 	const expiresAt = document.expiresAt ? new Date(document.expiresAt) : null;
-	if (expiresAt && expiresAt.getTime() <= now.getTime()) {
+	// The expiry date is the last valid day: expired only from the day after.
+	if (expiresAt && expiresAt.getTime() + 24 * 60 * 60 * 1000 <= now.getTime()) {
 		return DocumentStatus.EXPIRED;
 	}
 	const status = document.status as DocumentStatus | undefined;
@@ -262,7 +263,7 @@ export function buildPassport(
 			}
 			return {
 				type: rule.type,
-				label: best?.document.label || rule.label,
+				label: rule.label,
 				status,
 				required: rule.required,
 				expiresAt: best?.document.expiresAt
@@ -274,7 +275,8 @@ export function buildPassport(
 				url: best?.document.url ?? null,
 				key: best?.document.key ?? null,
 				source: best ? "document" as const : null,
-				detail: null,
+				// The stored label can be a Right to Rent share code: keep it in detail, which withoutFiles drops.
+				detail: best?.document.label ?? null,
 				reason: status === DocumentStatus.REJECTED ? best?.document.rejectionReason ?? null : null
 			};
 		})

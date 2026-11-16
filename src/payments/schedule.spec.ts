@@ -97,6 +97,14 @@ describe("rent schedule", () => {
 		expect(firstTrackedDate(new Date("2027-01-10T00:00:00Z"), now).toISOString()).toBe("2027-01-10T00:00:00.000Z");
 	});
 
+	it("bills the first month of a tenancy that starts now, with seconds", () => {
+		const startDate = new Date("2026-11-16T14:37:12.345Z");
+		const from = firstTrackedDate(startDate, startDate);
+		const schedule = buildSchedule({ startDate, endDate: new Date("2027-06-30T00:00:00Z"), monthlyRent: 69500, frequency: PlanFrequency.MONTHLY, from });
+		expect(schedule[0].dueDate.toISOString()).toBe("2026-11-16T14:37:00.000Z");
+		expect(schedule).toHaveLength(8);
+	});
+
 	it("estimates the next payout two working days after the earliest paid or due rent", () => {
 		expect(addBusinessDays(new Date("2026-11-06T00:00:00Z"), 2).toISOString()).toBe("2026-11-10T00:00:00.000Z");
 		const now = new Date("2026-11-06T12:00:00Z");

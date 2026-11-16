@@ -70,12 +70,25 @@ describe("Seek Passport", () => {
 		expect(effectiveStatus({ type: DocumentType.VISA }, now)).toBe(DocumentStatus.PENDING);
 	});
 
+	it("keeps a document valid for the whole of its Valid-to day", () => {
+		const visa = verified(DocumentType.VISA, { expiresAt: "2027-03-01" });
+		expect(effectiveStatus(visa, new Date("2027-03-01T09:00:00Z"))).toBe(DocumentStatus.VERIFIED);
+		expect(effectiveStatus(visa, new Date("2027-03-01T23:59:59Z"))).toBe(DocumentStatus.VERIFIED);
+		expect(effectiveStatus(visa, new Date("2027-03-02T00:00:00Z"))).toBe(DocumentStatus.EXPIRED);
+	});
+
 	it("drops file locations for viewers without a share", () => {
 		const passport = withoutFiles(buildPassport([verified(DocumentType.PASSPORT)], now));
 		const item = passport.sections[0].items[0];
 		expect(item.status).toBe(DocumentStatus.VERIFIED);
 		expect(item.url).toBeUndefined();
 		expect(item.key).toBeUndefined();
+	});
+
+	it("shows a share code to the owner only, never as the item label", () => {
+		const passport = buildPassport([verified(DocumentType.RIGHT_TO_RENT, { status: DocumentStatus.PROVIDED, label: "R7K4P29QX" })], now);
+		expect(passport.sections[0].items[1]).toMatchObject({ label: "Right to Rent share code", detail: "R7K4P29QX" });
+		expect(withoutFiles(passport).sections[0].items[1].detail).toBeUndefined();
 	});
 });
 

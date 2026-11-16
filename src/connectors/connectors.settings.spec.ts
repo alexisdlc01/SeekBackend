@@ -205,6 +205,105 @@ describe("ConnectorsService settings", () => {
 		}
 	});
 
+	it("imports a window bigger than one page, and keeps lastSyncAt when the per-sync cap is hit", async () => {
+		const run = async (count: number) => {
+			const many = Array.from({ length: count }, (_, i) => mail(String(i + 1), "lettings@holloway-lets.co.uk", "Your tenancy agreement"));
+			const list = jest.spyOn(imap, "listRecentImap").mockResolvedValue(many);
+			const { service, userId, connectionModel } = setup();
+			jest.spyOn(service, "contactBook").mockResolvedValue({ byEmail: new Map(), byUser: new Map() });
+			jest.spyOn(service as any, "imapCredentials").mockReturnValue({ host: "imap.example.com", port: 993, username: "u", password: "p" });
+			const store = jest.spyOn(service as any, "store").mockResolvedValue(0);
+			const connection = { _id: new Types.ObjectId(), user: userId, provider: EmailProvider.IMAP, emailAddress: "maya@example.com" };
+			await service.syncConnection(connection as any);
+			return { store, list, set: connectionModel.updateOne.mock.calls[0][1].$set };
+		};
+		const small = await run(900);
+		expect(small.store).toHaveBeenCalledTimes(900);
+		expect(small.set.lastSyncAt).toBeInstanceOf(Date);
+		const big = await run(1001); // one more than the cap: the provider found more than a sync can take
+		expect(big.store).toHaveBeenCalledTimes(1000);
+		expect(big.set.lastSyncAt).toBeInstanceOf(Date);
+		expect(big.set.backfillBefore).toBeInstanceOf(Date);
+		expect(big.set.status).toBe("CONNECTED");
+	});
+
+	describe("backfill cursor", () => {
+		const HOUR = 3_600_000;
+		// A mailbox of mails (newest first), served the way the IMAP client does: range-filtered, capped.
+		function mailbox(items: ReturnType<typeof mail>[]) {
+			return jest.spyOn(imap, "listRecentImap").mockImplementation(async (_c, since, limit, _p, _k, before) =>
+				items
+					.filter(m => m.receivedAt >= since && (!before || m.receivedAt <= before))
+					.sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime())
+					.slice(0, limit)
+			);
+		}
+		const at = (id: string, hoursAgo: number, from = "news@shop.example", subject = "50% off trainers") => ({
+			...mail(id, from, subject),
+			receivedAt: new Date(Date.now() - hoursAgo * HOUR)
+		});
+		function syncer() {
+			const { service, userId, connectionModel } = setup();
+			jest.spyOn(service, "contactBook").mockResolvedValue({ byEmail: new Map(), byUser: new Map() });
+			jest.spyOn(service as any, "imapCredentials").mockReturnValue({ host: "imap.example.com", port: 993, username: "u", password: "p" });
+			const store = jest.spyOn(service as any, "store").mockResolvedValue(0);
+			const connection: any = { _id: new Types.ObjectId(), user: userId, provider: EmailProvider.IMAP, emailAddress: "maya@example.com" };
+			// What Mongo would persist, so the next sync sees it.
+			connectionModel.updateOne.mockImplementation(async (_q: unknown, update: any) => {
+				Object.assign(connection, update.$set);
+				return { matchedCount: 1 };
+			});
+			return { sync: () => service.syncConnection(connection), store, connection };
+		}
+
+		it("cap hit: stores backfillBefore (oldest examined) and advances lastSyncAt", async () => {
+			// 1100 non-housing mails, one per 10 minutes; the oldest 100 are beyond the cap.
+			const items = Array.from({ length: 1100 }, (_, i) => at(String(i), 1 + i / 6));
+			mailbox(items);
+			const { sync, connection } = syncer();
+			const before = Date.now();
+			await sync();
+			expect(connection.lastSyncAt.getTime()).toBeGreaterThanOrEqual(before);
+			expect(connection.backfillBefore.getTime()).toBe(items[999].receivedAt.getTime());
+			expect(connection.backfillSince).toBeInstanceOf(Date);
+		});
+
+		it("next sync resumes the older mails (housing ones included) and clears the cursor when done", async () => {
+			const items = [
+				...Array.from({ length: 1100 }, (_, i) => at(String(i), 1 + i / 6)),
+				at("old-housing", 300, "lettings@holloway-lets.co.uk", "Your tenancy agreement")
+			];
+			const list = mailbox(items);
+			const { sync, store, connection } = syncer();
+			await sync();
+			expect(store).not.toHaveBeenCalled(); // the newest 1000 held nothing housing
+			list.mockClear();
+			await sync();
+			// Second call is the backfill window, bounded by the stored cursor.
+			expect(list.mock.calls.some(call => call[5] instanceof Date)).toBe(true);
+			expect(store).toHaveBeenCalledTimes(1);
+			expect((store.mock.calls[0][2] as any).providerMessageId).toBe("old-housing");
+			expect(connection.backfillBefore).toBeNull();
+			expect(connection.backfillSince).toBeNull();
+		});
+
+		it("still imports new mail while a backfill is pending", async () => {
+			const items = [
+				...Array.from({ length: 1100 }, (_, i) => at(String(i), 2 + i / 6)),
+				at("old-housing", 300, "lettings@holloway-lets.co.uk", "Your tenancy agreement")
+			];
+			const list = mailbox(items);
+			const { sync, store, connection } = syncer();
+			await sync();
+			items.push(at("fresh", 0, "lettings@holloway-lets.co.uk", "Rent reminder")); // arrives after the first sync
+			await sync();
+			const ids = store.mock.calls.map(call => (call[2] as any).providerMessageId);
+			expect(ids).toEqual(expect.arrayContaining(["fresh", "old-housing"]));
+			expect(connection.backfillBefore).toBeNull();
+			expect(list).toHaveBeenCalled();
+		});
+	});
+
 	it("stops storing once the mailbox is disconnected mid-sync, then deletes what slipped in", async () => {
 		jest.spyOn(imap, "listRecentImap").mockResolvedValue([mail("1", "lettings@holloway-lets.co.uk", "Your tenancy agreement"), mail("2", "lettings@holloway-lets.co.uk", "Rent reminder")]);
 		const { service, userId, connectionModel, messageModel } = setup();

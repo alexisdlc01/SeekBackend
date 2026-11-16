@@ -19,7 +19,7 @@ import { Role } from "../auth/role.enum";
 import { DocumentStatus, DocumentType } from "../users/types/document-type";
 import { Tenancy } from "../tenancies/tenancy.schema";
 import { DocumentSource, TenancyDocumentType, TenancyStatus } from "../tenancies/tenancy.enums";
-import { TenanciesService } from "../tenancies/tenancies.service";
+import { TENANT_DOCUMENT_TYPES, TenanciesService } from "../tenancies/tenancies.service";
 import { Application } from "../application/application.schema";
 import { ApplicationStage, LANDLORD_OPEN_STAGES } from "../application/enums/application-stage.enum";
 import { Listing } from "../listings/listings.schema";
@@ -112,10 +112,21 @@ const FILE_TYPES: Record<string, string> = {
 };
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const FIRST_SYNC_DAYS = 60;
-const SYNC_LIMIT = 100;
+// shortcut: one sync fetches headers for at most this many not-yet-stored messages. Past it, a per-connection cursor (backfillBefore/backfillSince) resumes the older part on later syncs. Non-housing mail is never stored, so the already-read part of a window is re-listed (ids only, no header calls) and a backfill range re-reads its non-housing mail once per sync that touches it; a second cap hit while a backfill is pending merges both ranges into one, re-reading some mail. Upgrade to a stored seen-id set if mailboxes with 10k+ mails per window show up.
+const SYNC_LIMIT = 1000;
 /** Background retry delay for a mailbox whose last sync failed for a transient reason. */
 const RETRY_AFTER_MS = 3_600_000;
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+
+/**
+ * ACTIVE tenancies in "current" order, same rule as the app's useActiveTenancy: the one running now
+ * (or starting next) first, later ones (next year's renewal) after, then ended ones newest first.
+ */
+function currentFirst<T extends Pick<Tenancy, "startDate" | "endDate">>(tenancies: T[], now = Date.now()): T[] {
+	const ended = (t: T) => !!t.endDate && new Date(t.endDate).getTime() < now;
+	const start = (t: T) => new Date(t.startDate).getTime();
+	return [...tenancies].sort((a, b) => Number(ended(a)) - Number(ended(b)) || (ended(a) ? start(b) - start(a) : start(a) - start(b)));
+}
 
 function documentTitle(fileName: string) {
 	const base = fileName.replace(/\.[a-z0-9]{2,4}$/i, "").replace(/[-_]+/g, " ").trim();
@@ -671,17 +682,45 @@ export class ConnectorsService {
 		try {
 			let accessToken: string | null = null;
 			let messages: (MailMeta | MailFull)[];
+			const startedAt = new Date();
+			// Cursor to store when the cap was hit; stays null (cleared) when everything in reach was read.
+			let cursor = null as { before: Date; since: Date } | null;
 			if (connection.provider === EmailProvider.DEMO) {
 				messages = demoMailbox(await this.demoContext(user as UserLean, connection, contacts));
 			} else {
 				const since = connection.lastSyncAt
 					? new Date(connection.lastSyncAt.getTime() - 24 * 3_600_000)
 					: new Date(Date.now() - FIRST_SYNC_DAYS * 24 * 3_600_000);
-				if (connection.provider === EmailProvider.IMAP) {
-					messages = await listRecentImap(this.imapCredentials(connection), since, SYNC_LIMIT, !this.isProduction);
-				} else {
-					accessToken = await this.accessToken(connection);
-					messages = await this.clients[connection.provider as OAuthProvider].listRecent(accessToken, since, SYNC_LIMIT);
+				// Ask for one more than the cap: getting it back means the range holds more than one sync can take.
+				const isKnown = async (providerMessageId: string) =>
+					!!(await this.messageModel.exists({ connection: connection._id, providerMessageId }));
+				const list = (from: Date, limit: number, before?: Date): Promise<MailMeta[]> =>
+					connection.provider === EmailProvider.IMAP
+						? listRecentImap(this.imapCredentials(connection), from, limit, !this.isProduction, isKnown, before)
+						: this.clients[connection.provider as OAuthProvider].listRecent(accessToken!, from, limit, isKnown, before);
+				if (connection.provider !== EmailProvider.IMAP) accessToken = await this.accessToken(connection);
+				// Newest first, so the cut keeps the newest and `cursor` can resume from the oldest one kept.
+				const take = (found: MailMeta[], limit: number, from: Date) => {
+					found.sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
+					if (found.length <= limit) return found;
+					this.logger.warn(`Mailbox ${connection._id.toString()} has more than ${limit} new messages in range; will continue next sync.`);
+					const kept = found.slice(0, limit);
+					cursor = { before: kept[kept.length - 1].receivedAt, since: from };
+					return kept;
+				};
+				messages = take(await list(since, SYNC_LIMIT + 1), SYNC_LIMIT, since);
+				// A pending backfill is only touched when the normal window finished with room to spare; one cap covers both.
+				if (!cursor && connection.backfillBefore && connection.backfillSince) {
+					const room = SYNC_LIMIT - messages.length;
+					if (room > 0) {
+						const older = take(await list(connection.backfillSince, room + 1, connection.backfillBefore), room, connection.backfillSince);
+						messages = messages.concat(older);
+					} else {
+						cursor = { before: connection.backfillBefore, since: connection.backfillSince };
+					}
+				} else if (cursor && connection.backfillBefore && connection.backfillSince) {
+					// Merge both ranges into one: re-reads the already-covered stretch between them, loses nothing.
+					cursor = { before: cursor.before, since: new Date(Math.min(cursor.since.getTime(), connection.backfillSince.getTime())) };
 				}
 			}
 
@@ -716,7 +755,15 @@ export class ConnectorsService {
 
 			const updated = await this.connectionModel.updateOne(
 				{ _id: connection._id, status: { $ne: ConnectionStatus.DISCONNECTED } },
-				{ $set: { lastSyncAt: new Date(), status: ConnectionStatus.CONNECTED, lastError: null } }
+				{
+					$set: {
+						lastSyncAt: startedAt,
+						backfillBefore: cursor?.before ?? null,
+						backfillSince: cursor?.since ?? null,
+						status: ConnectionStatus.CONNECTED,
+						lastError: null
+					}
+				}
 			);
 			// Disconnected while a store() was running: delete what it wrote after disconnect() emptied the mailbox.
 			if (updated.matchedCount === 0) await this.messageModel.deleteMany({ connection: connection._id });
@@ -791,11 +838,14 @@ export class ConnectorsService {
 		};
 
 		const isLandlord = user.role === Role.LANDLORD_AGENCY;
-		const tenancies = await this.tenancyModel
+		const found = await this.tenancyModel
 			.find(isLandlord ? { landlord: uid } : { tenants: uid })
 			.sort({ status: 1, startDate: -1 })
 			.lean()
 			.exec();
+		// add() keeps the first tenancy seen per person: a landlord or housemate on a renewal belongs to the current one.
+		const isActive = (t: Tenancy) => t.status === TenancyStatus.ACTIVE;
+		const tenancies = [...currentFirst(found.filter(isActive)), ...found.filter(t => !isActive(t))];
 		const applications = await this.applicationModel
 			.find(
 				isLandlord
@@ -898,12 +948,14 @@ export class ConnectorsService {
 			return ctx;
 		}
 
-		const tenancy = await this.tenancyModel
-			.findOne({ tenants: userId, status: TenancyStatus.ACTIVE })
-			.sort({ startDate: -1 })
-			.populate<{ listing: Listing }>({ path: "listing", select: "propertyTitle streetAddress cityTown billsIncluded" })
-			.lean()
-			.exec();
+		// Same home as contactBook binds housemates to, so householdEmails match.
+		const [tenancy] = currentFirst(
+			await this.tenancyModel
+				.find({ tenants: userId, status: TenancyStatus.ACTIVE })
+				.populate<{ listing: Listing }>({ path: "listing", select: "propertyTitle streetAddress cityTown billsIncluded" })
+				.lean()
+				.exec()
+		);
 		if (tenancy) {
 			const landlord = contacts.byUser.get(tenancy.landlord.toString());
 			if (landlord) ctx.landlord = { name: landlord.name, email: landlord.email };
@@ -1047,11 +1099,9 @@ export class ConnectorsService {
 		if (classification.contact && !isLandlord) return null;
 		const uid = new Types.ObjectId(user._id.toString());
 		if (!isLandlord) {
-			const tenancy = await this.tenancyModel
-				.findOne({ tenants: uid, status: TenancyStatus.ACTIVE })
-				.sort({ startDate: -1 })
-				.lean()
-				.exec();
+			// The home running now or starting next, not next year's.
+			const active = await this.tenancyModel.find({ tenants: uid, status: TenancyStatus.ACTIVE }).lean().exec();
+			const tenancy = currentFirst(active)[0] ?? null;
 			return withListing(tenancy as (Tenancy & { _id: Types.ObjectId }) | null);
 		}
 		// Landlords: only file when the email names one of their properties.
@@ -1110,6 +1160,55 @@ export class ConnectorsService {
 			...(file.key ? { key: file.key } : {}),
 			source: DocumentSource.EMAIL
 		});
+	}
+
+	/**
+	 * Files one attachment of the user's own synced email by hand, through the same
+	 * storeFile + fileDocument path as auto-filing. Only a member of the email's tenancy can.
+	 */
+	async fileAttachment(user: Pick<User, "_id" | "role">, emailId: string, index: number) {
+		if (!Types.ObjectId.isValid(emailId)) throw new BadRequestException("Invalid message id.");
+		const email = await this.messageModel.findOne({ _id: emailId, user: user._id }).lean().exec();
+		const attachment = email?.attachments?.[index];
+		if (!email || !attachment) throw new NotFoundException("Attachment not found.");
+		if (attachment.filedAs) return attachment;
+		if (!email.tenancy) throw new BadRequestException("Seek can't tell which home this email is about.");
+		const tenancy = (await this.tenancies.findForMember(email.tenancy.toString(), user)) as Tenancy & { _id: Types.ObjectId };
+		const connection = await this.ownedConnection(user, email.connection.toString());
+		if (connection.status !== ConnectionStatus.CONNECTED) throw new ServiceUnavailableException("Reconnect this mailbox to file this file.");
+
+		let source: MailAttachment | undefined = { name: attachment.name, mimeType: attachment.mimeType ?? "", size: attachment.size ?? 0, load: async () => null };
+		if (connection.provider !== EmailProvider.DEMO) {
+			source = undefined;
+			try {
+				const meta = { providerMessageId: email.providerMessageId, providerThreadId: email.providerThreadId } as MailMeta;
+				const full = await this.clients[connection.provider as OAuthProvider].getFull(await this.accessToken(connection), meta);
+				source = full.attachments.find(a => a.name === attachment.name && a.size === (attachment.size ?? a.size));
+			} catch (error) {
+				if (error instanceof ServiceUnavailableException) throw error;
+				this.logger.warn(`Re-reading attachment via ${connection.provider} failed: ${(error as Error).message}`);
+				throw new BadGatewayException(`Could not reach ${PROVIDER_LABELS[connection.provider]}. Try again.`);
+			}
+		}
+		const file = source && (await this.storeFile(connection, user as UserLean, source));
+		if (!file) throw new BadRequestException("Seek can't store this file. Open it from your mailbox instead.");
+
+		const found = documentTypeFor(attachment.name, email.subject) ?? TenancyDocumentType.OTHER;
+		// Same rule as store(): anyone can email "Re: tenancy agreement", so only mail from the landlord, their team or a deposit scheme files as the real thing.
+		const trusted =
+			TENANT_DOCUMENT_TYPES.has(found) ||
+			// Judge the sender only: a sent email's recipients (e.g. a deposit scheme) say nothing about who wrote the file.
+			(await this.fromTenancyLandlord(tenancy, email.from, classifyEmail({ ...email, outgoing: false }, new Map())));
+		const type = trusted ? found : TenancyDocumentType.OTHER;
+		await this.fileDocument(tenancy, type, attachment.name, file);
+		let home = "My home";
+		if (user.role === Role.LANDLORD_AGENCY) {
+			const listing = await this.listingModel.findById(tenancy.listing).select("propertyTitle streetAddress").lean().exec();
+			home = listing?.propertyTitle || listing?.streetAddress || "Tenancy";
+		}
+		const filed = { ...attachment, url: file.url, key: file.key, filedAs: `${home} › ${folderFor(type)}` };
+		await this.messageModel.updateOne({ _id: email._id }, { $set: { [`attachments.${index}`]: filed } });
+		return filed;
 	}
 
 	/** Adds a reference to the student's documents, waiting for Seek to verify it; never replaces one they already have. */

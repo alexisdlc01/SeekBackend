@@ -141,6 +141,11 @@ export class StripeClient {
 		return this.request("GET", `/payment_intents/${encodeURIComponent(id)}`);
 	}
 
+	/** Stops an unconfirmed intent from being paid; Stripe refuses once it succeeded or is processing. */
+	cancelPaymentIntent(id: string): Promise<StripePaymentIntent> {
+		return this.request("POST", `/payment_intents/${encodeURIComponent(id)}/cancel`, {});
+	}
+
 	/**
 	 * A GB connected account (Accounts v2, Express dashboard) that receives a
 	 * landlord's rent as the recipient of destination charges and transfers.

@@ -8,6 +8,7 @@ describe("ConversationService authorization", () => {
 	let conversationModel: {
 		findById: jest.Mock;
 		updateOne: jest.Mock;
+		exists: jest.Mock;
 	};
 	let messageModel: { create: jest.Mock };
 	let gateway: { emitNewMessage: jest.Mock };
@@ -18,6 +19,7 @@ describe("ConversationService authorization", () => {
 		conversationModel = {
 			findById: jest.fn(),
 			updateOne: jest.fn().mockResolvedValue(undefined),
+			exists: jest.fn().mockResolvedValue(null),
 		};
 		messageModel = { create: jest.fn() };
 		gateway = { emitNewMessage: jest.fn() };
@@ -42,6 +44,19 @@ describe("ConversationService authorization", () => {
 		)).rejects.toBeInstanceOf(ForbiddenException);
 		expect(messageModel.create).not.toHaveBeenCalled();
 		expect(conversationModel.updateOne).not.toHaveBeenCalled();
+		expect(gateway.emitNewMessage).not.toHaveBeenCalled();
+	});
+
+	it("refuses new messages in a closed conversation (application deleted)", async () => {
+		conversationModel.exists.mockResolvedValue({ _id: conversationId });
+
+		await expect(service.sendMessage(
+			{ message: "Still there?" },
+			conversationId.toString(),
+			userId.toString(),
+		)).rejects.toThrow("This conversation is closed.");
+		expect(conversationModel.exists).toHaveBeenCalledWith({ _id: conversationId.toString(), closedAt: { $ne: null } });
+		expect(messageModel.create).not.toHaveBeenCalled();
 		expect(gateway.emitNewMessage).not.toHaveBeenCalled();
 	});
 

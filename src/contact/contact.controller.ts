@@ -18,7 +18,7 @@ export class ContactController {
 	@Post()
 	// Unauthenticated and sends mail, so it needs a tighter bucket than the
 	// global default to stay off the abuse path.
-	@Throttle({ default: { limit: 3, ttl: 60 * 60_000, blockDuration: 60_000 } })
+	@Throttle({ default: { limit: 3, ttl: 60 * 60_000, blockDuration: 60 * 60_000 } })
 	async contact(@Body() body: ContactDto) {
 		await this.contactService.contact(body);
 	}

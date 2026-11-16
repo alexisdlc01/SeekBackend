@@ -100,7 +100,7 @@ describe("ConnectorsService.tenancyFor for students", () => {
 		none,
 		none,
 		none,
-		{ findOne: () => query(current), findById: () => query(null) } as any,
+		{ find: () => query([current]), findById: () => query(null) } as any,
 		none,
 		none,
 		{ findById: () => query({ propertyTitle: "Elm Road" }) } as any,
@@ -120,5 +120,42 @@ describe("ConnectorsService.tenancyFor for students", () => {
 	it("still files mail with no Seek contact (bills, deposit schemes) into the current tenancy", async () => {
 		const target = await (service as any).tenancyFor(student, { contact: null }, mail);
 		expect(target.tenancy).toBe(current);
+	});
+});
+
+describe("ConnectorsService.contactBook for students", () => {
+	it("binds a landlord on both this year's tenancy and next year's renewal to the current one", async () => {
+		const day = 86_400_000;
+		const studentId = new Types.ObjectId();
+		const landlord = { _id: new Types.ObjectId(), name: "Landlord", email: "landlord@example.test" };
+		const tenancy = (startIn: number, endIn: number | null) => ({
+			_id: new Types.ObjectId(),
+			status: "ACTIVE",
+			landlord: landlord._id,
+			tenants: [studentId],
+			startDate: new Date(Date.now() + startIn * day),
+			endDate: endIn === null ? null : new Date(Date.now() + endIn * day)
+		});
+		const current = tenancy(-30, 200);
+		const nextYear = tenancy(300, null);
+		const none = {} as any;
+		const service = new ConnectorsService(
+			none,
+			{ find: () => query([]) } as any,
+			none,
+			// Mongo's { status: 1, startDate: -1 } order puts next year's first.
+			{ find: () => query([nextYear, current]) } as any,
+			{ find: () => query([]) } as any,
+			{ find: () => query([landlord]) } as any,
+			none,
+			none,
+			none,
+			none,
+			none
+		);
+
+		const book = await service.contactBook({ _id: studentId, role: Role.STUDENT } as any);
+
+		expect(book.byEmail.get("landlord@example.test")?.tenancyId).toBe(current._id.toString());
 	});
 });

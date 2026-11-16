@@ -119,6 +119,14 @@ describe("rule-based search parser", () => {
 			expect(parseMoveIn("moving in December", NOW)).toBe("2026-12-01");
 		});
 
+		it("reads the current month as from today", () => {
+			expect(parseMoveIn("room from november", NOW)).toBe("2026-11-06");
+			expect(parseMoveIn("room in November", NOW)).toBe("2026-11-06");
+			expect(parseMoveIn("from 3 November", NOW)).toBe("2027-11-03");
+			expect(parseMoveIn("room from November 2026", NOW)).toBe("2026-11-06");
+			expect(parseMoveIn("room from November 2027", NOW)).toBe("2027-11-01");
+		});
+
 		it("reads explicit days and years", () => {
 			expect(parseMoveIn("1st of October 2027", NOW)).toBe("2027-10-01");
 			expect(parseMoveIn("start 2027-08-15", NOW)).toBe("2027-08-15");

@@ -5,6 +5,7 @@ import { BadRequestException, ConflictException, ForbiddenException, NotFoundExc
 import { ApplicationStage } from "./enums/application-stage.enum";
 import { hashToken } from "../shared/tokens";
 import { StripeApiError, StripeClient } from "../payments/stripe";
+import { ApplicationSchema } from "./application.schema";
 
 function documentFrom(value: Record<string, unknown>) {
 	return {
@@ -94,6 +95,27 @@ describe("ApplicationService", () => {
 
 		expect(applicationModel.findOne.mock.calls[0][0].$or).toContainEqual({ listing: listingId, applicants: userId });
 		expect(applicationModel.create).not.toHaveBeenCalled();
+	});
+
+	it("enforces one application per listing per student with a unique index", () => {
+		expect(ApplicationSchema.indexes()).toContainEqual([{ listing: 1, applicants: 1 }, expect.objectContaining({ unique: true })]);
+	});
+
+	it("create returns the household the user joined concurrently when the unique index rejects the insert", async () => {
+		const household = documentFrom({ _id: applicationId, listing: listingId, owner: new Types.ObjectId(), applicants: [new Types.ObjectId(), userId] });
+		applicationModel.findOne
+			.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(null) })
+			.mockImplementation((filter: any) => ({
+				exec: jest.fn().mockResolvedValue(filter.applicants?.equals(userId) ? household : null),
+			}));
+		applicationModel.exists.mockResolvedValue(null);
+		conversationModel.create.mockResolvedValue({ _id: conversationId });
+		applicationModel.create.mockRejectedValue({ code: 11000 });
+
+		const result = await service.create(listingId.toString(), user);
+
+		expect(result._id).toBe(applicationId.toString());
+		expect(conversationModel.deleteOne).toHaveBeenCalledWith({ _id: conversationId });
 	});
 
 	it("rejects a new application when a required document is missing", async () => {
@@ -358,6 +380,16 @@ describe("ApplicationService", () => {
 			expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
 		});
 
+		it("refuses to join when a concurrent create or join wins the unique (listing, applicant) index", async () => {
+			mockApplication({ listing: listingId });
+			applicationModel.findOneAndUpdate.mockRejectedValue({ code: 11000 });
+
+			await expect(
+				service.join(applicationId.toString(), new Types.ObjectId().toString(), VALID_INVITE),
+			).rejects.toThrow(new BadRequestException("You already have an application for this listing."));
+			expect(conversationModel.updateOne).not.toHaveBeenCalled();
+		});
+
 		it("refuses to join on the application id alone", async () => {
 			mockApplication();
 
@@ -491,6 +523,50 @@ describe("ApplicationService", () => {
 			).rejects.toBeInstanceOf(BadRequestException);
 			expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
 			expect(conversationModel.updateOne).not.toHaveBeenCalled();
+		});
+
+		it("hands a deleted owner's household to the next member and drops the deleted user", async () => {
+			const find = jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([{ _id: applicationId, conversation: conversationId, owner: userId, applicants: [userId, memberId] }]) });
+			Object.assign(applicationModel, { find, updateOne: jest.fn().mockResolvedValue({}) });
+			conversationModel.updateOne.mockReturnValue({ exec: jest.fn().mockResolvedValue({}) });
+			Object.assign(service, { userSevice: { getUserById: jest.fn().mockResolvedValue({ deletedAt: null }) } });
+
+			await service.releaseDeletedMember(userId);
+
+			expect(find.mock.calls[0][0]).toMatchObject({ applicants: userId, stage: { $in: ["NOT_SENT", "SENT", "VIEWED"] } });
+			expect((applicationModel as any).updateOne).toHaveBeenCalledWith(
+				{ _id: applicationId },
+				{ $pull: { applicants: { $in: [userId] } }, $set: { owner: memberId } },
+			);
+			expect(conversationModel.updateOne).toHaveBeenCalledWith({ _id: conversationId }, { $pull: { users: { $in: [userId] } } });
+		});
+
+		it("skips members deleted earlier when handing over a deleted owner's household, and drops them too", async () => {
+			const deletedEarlier = new Types.ObjectId();
+			const find = jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([{ _id: applicationId, conversation: conversationId, owner: userId, applicants: [userId, deletedEarlier, memberId] }]) });
+			Object.assign(applicationModel, { find, updateOne: jest.fn().mockResolvedValue({}) });
+			conversationModel.updateOne.mockReturnValue({ exec: jest.fn().mockResolvedValue({}) });
+			const getUserById = jest.fn(async (id: string) => ({ deletedAt: id === memberId.toString() ? null : new Date() }));
+			Object.assign(service, { userSevice: { getUserById } });
+
+			await service.releaseDeletedMember(userId);
+
+			expect((applicationModel as any).updateOne).toHaveBeenCalledWith(
+				{ _id: applicationId },
+				{ $pull: { applicants: { $in: [userId, deletedEarlier] } }, $set: { owner: memberId } },
+			);
+			expect(sharesService.revokeForApplication).toHaveBeenCalledWith(applicationId.toString(), [userId, deletedEarlier]);
+		});
+
+		it("deletes a household left with only deleted accounts", async () => {
+			const find = jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([{ _id: applicationId, conversation: conversationId, owner: userId, applicants: [userId, memberId] }]) });
+			Object.assign(applicationModel, { find, updateOne: jest.fn(), findOneAndDelete: jest.fn().mockResolvedValue(null) });
+			Object.assign(service, { userSevice: { getUserById: jest.fn().mockResolvedValue({ deletedAt: new Date() }) } });
+
+			await service.releaseDeletedMember(userId);
+
+			expect((applicationModel as any).findOneAndDelete).toHaveBeenCalledWith({ _id: applicationId.toString() });
+			expect((applicationModel as any).updateOne).not.toHaveBeenCalled();
 		});
 
 		it("does not let the creator leave their own application", async () => {
@@ -667,21 +743,26 @@ describe("ApplicationService pipeline", () => {
 	describe("delete", () => {
 		it.each([ApplicationStage.OFFERED, ApplicationStage.ACCEPTED, ApplicationStage.SIGNED])("refuses to delete a %s application", async stage => {
 			applicationModel.exists.mockResolvedValue({ _id: applicationId });
-			applicationModel.deleteOne = jest.fn();
+			applicationModel.findOneAndDelete = jest.fn();
 
 			await expect(service.delete(applicationId.toString())).rejects.toThrow(ConflictException);
 
 			expect(applicationModel.exists).toHaveBeenCalledWith(expect.objectContaining({ stage: { $in: expect.arrayContaining([stage]) } }));
-			expect(applicationModel.deleteOne).not.toHaveBeenCalled();
+			expect(applicationModel.findOneAndDelete).not.toHaveBeenCalled();
 			expect(sharesService.revokeForApplication).not.toHaveBeenCalled();
 		});
 
 		it("deletes an application that is still open", async () => {
-			applicationModel.deleteOne = jest.fn().mockResolvedValue({});
+			const conversationId = new Types.ObjectId();
+			const conversationModel = { updateOne: jest.fn().mockReturnValue({ exec: jest.fn() }) };
+			(service as any).converstaionModel = conversationModel;
+			applicationModel.findOneAndDelete = jest.fn().mockResolvedValue({ conversation: conversationId });
 
 			await service.delete(applicationId.toString());
 
-			expect(applicationModel.deleteOne).toHaveBeenCalledWith({ _id: applicationId.toString() });
+			expect(applicationModel.findOneAndDelete).toHaveBeenCalledWith({ _id: applicationId.toString() });
+			// Closed to new messages, members kept (history + reporting).
+			expect(conversationModel.updateOne).toHaveBeenCalledWith({ _id: conversationId }, { $set: { closedAt: expect.any(Date) } });
 		});
 	});
 
@@ -864,7 +945,8 @@ describe("ApplicationService pipeline", () => {
 		await expect(service.expireOffers()).resolves.toBe(1);
 
 		const [, update] = applicationModel.findOneAndUpdate.mock.calls[0];
-		expect(update.$set).toMatchObject({ stage: ApplicationStage.VIEWED, offerExpiresAt: null, offerExpiredAt: lapsed.offerExpiresAt });
+		expect(update.$set).toMatchObject({ stage: ApplicationStage.VIEWED, offerExpiresAt: null, offerExpiredAt: lapsed.offerExpiresAt, lapseCleanupPending: true });
+		expect(applicationModel.updateOne).toHaveBeenCalledWith({ _id: applicationId, lapseCleanupPending: true }, { $set: { lapseCleanupPending: false } });
 		expect(paymentModel.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ kind: "HOLDING_DEPOSIT", status: { $ne: "PAID" } }));
 		expect(notifications.notifyMany.mock.calls[0][0][0].kind).toBe("OFFER_EXPIRED");
 	});
@@ -891,6 +973,80 @@ describe("ApplicationService pipeline", () => {
 		const [refund] = notifications.notify.mock.calls[0];
 		expect(refund.user).toBe(landlordId);
 		expect(refund.body).toContain("within 7 days");
+	});
+
+	it("claims a lapsed offer first, and a later sweep finishes the clean-up and flags the refund when closing a Checkout session timed out", async () => {
+		const previousKey = process.env.STRIPE_SECRET_KEY;
+		process.env.STRIPE_SECRET_KEY = "sk_test_x";
+		const expire = jest.spyOn(StripeClient.prototype, "expireCheckoutSession")
+			.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"))
+			.mockResolvedValue({} as never);
+		try {
+			queue({ id: applicationId, qualified: true });
+			const expiresAt = new Date(Date.now() - 1000);
+			const lapsed = stored(ApplicationStage.OFFERED, { offerExpiresAt: expiresAt });
+			const claimed = stored(ApplicationStage.SENT, { offerExpiresAt: null, offerExpiredAt: expiresAt, lapseCleanupPending: true });
+			applicationModel.find = jest.fn()
+				.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue([lapsed]) })
+				.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue([claimed]) });
+			applicationModel.findOneAndUpdate.mockReturnValue(exec(claimed));
+			paymentModel.find.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue([{ _id: new Types.ObjectId(), providerRef: "cs_test_open" }]) }) });
+			paymentModel.updateMany.mockResolvedValue({ matchedCount: 1 });
+
+			await expect(service.expireOffers()).rejects.toThrow("timed out");
+
+			// Claimed (so a landlord can no longer accept or renew it) but the marker stays for the retry.
+			expect(applicationModel.findOneAndUpdate.mock.calls[0][1].$set.lapseCleanupPending).toBe(true);
+			expect(paymentModel.updateMany).not.toHaveBeenCalled();
+			expect(applicationModel.updateOne).not.toHaveBeenCalled();
+
+			await expect(service.expireOffers()).resolves.toBe(0);
+
+			expect(applicationModel.findOneAndUpdate).toHaveBeenCalledTimes(1);
+			expect(paymentModel.updateMany).toHaveBeenCalledWith({ application: applicationId, kind: "HOLDING_DEPOSIT" }, { $set: { refundDue: true } });
+			expect(notifications.notify.mock.calls[0][0].dedupeKey).toBe(`holding-refund:${applicationId.toString()}:${expiresAt.toISOString()}`);
+			expect(applicationModel.updateOne).toHaveBeenCalledWith({ _id: applicationId, lapseCleanupPending: true }, { $set: { lapseCleanupPending: false } });
+		} finally {
+			expire.mockRestore();
+			if (previousKey === undefined) delete process.env.STRIPE_SECRET_KEY; else process.env.STRIPE_SECRET_KEY = previousKey;
+		}
+	});
+
+	it("finishes a pending lapse clean-up without telling a household the landlord has since declined it is back in the queue", async () => {
+		queue({ id: applicationId, qualified: true });
+		const rejected = stored(ApplicationStage.REJECTED, { offerExpiresAt: null, offerExpiredAt: new Date(Date.now() - 1000), lapseCleanupPending: true });
+		applicationModel.find = jest.fn().mockReturnValueOnce({ exec: jest.fn().mockResolvedValue([rejected]) });
+		paymentModel.updateMany.mockResolvedValue({ matchedCount: 1 });
+
+		await expect(service.expireOffers()).resolves.toBe(0);
+
+		// Money and shares still cleaned up (idempotent), marker cleared, no student notification.
+		expect(sharesService.revokeForApplication).toHaveBeenCalledWith(applicationId);
+		expect(paymentModel.updateMany).toHaveBeenCalledWith({ application: applicationId, kind: "HOLDING_DEPOSIT" }, { $set: { refundDue: true } });
+		expect(applicationModel.updateOne).toHaveBeenCalledWith({ _id: applicationId, lapseCleanupPending: true }, { $set: { lapseCleanupPending: false } });
+		expect(notifications.notifyMany).not.toHaveBeenCalled();
+	});
+
+	it("leaves an offer the landlord accepted or renewed mid-sweep untouched", async () => {
+		const lapsed = stored(ApplicationStage.OFFERED, { offerExpiresAt: new Date(Date.now() - 1000) });
+		applicationModel.find = jest.fn().mockReturnValueOnce({ exec: jest.fn().mockResolvedValue([lapsed]) });
+		// The conditional claim matches nothing: approve() or offer() moved the application first.
+		applicationModel.findOneAndUpdate.mockReturnValue(exec(null));
+
+		await expect(service.expireOffers()).resolves.toBe(0);
+
+		expect(paymentModel.updateMany).not.toHaveBeenCalled();
+		expect(paymentModel.deleteMany).not.toHaveBeenCalled();
+		expect(sharesService.revokeForApplication).not.toHaveBeenCalled();
+		expect(notifications.notify).not.toHaveBeenCalled();
+		expect(notifications.notifyMany).not.toHaveBeenCalled();
+	});
+
+	it("refuses to renew or accept while the last offer's lapse clean-up is pending", async () => {
+		applicationModel.findById.mockReturnValue(exec(stored(ApplicationStage.VIEWED, { lapseCleanupPending: true })));
+		await expect(service.offer(applicationId.toString())).rejects.toThrow(ConflictException);
+		await expect(service.approve(applicationId.toString())).rejects.toThrow(ConflictException);
+		expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
 	});
 
 	it("does not offer twice while the first offer is still open", async () => {
@@ -929,6 +1085,28 @@ describe("ApplicationService pipeline", () => {
 			{ _id: applicationId, stage: ApplicationStage.ACCEPTED },
 			{ $set: { stage: ApplicationStage.OFFERED } },
 		);
+		expect(paymentModel.deleteMany).not.toHaveBeenCalled();
+	});
+
+	it("reopens the offer when a member's other tenancy lands while the accept waits on Stripe", async () => {
+		applicationModel.findById.mockReturnValue({ lean: () => exec(stored(ApplicationStage.OFFERED, { offerExpiresAt: future })) });
+		applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.ACCEPTED)));
+		const updateOne = jest.fn().mockResolvedValue({});
+		(applicationModel as unknown as { updateOne: jest.Mock }).updateOne = updateOne;
+		(service as any).tenanciesService.createFromApplication.mockRejectedValue(new ConflictException("already has a tenancy"));
+		await expect(service.acceptOffer(applicationId.toString())).rejects.toThrow(ConflictException);
+		expect(updateOne).toHaveBeenCalledWith(
+			{ _id: applicationId, stage: ApplicationStage.ACCEPTED },
+			{ $set: { stage: ApplicationStage.OFFERED } },
+		);
+	});
+
+	it("keeps the unpaid holding deposits payable when the accept is reopened by a 409", async () => {
+		applicationModel.findById.mockReturnValue({ lean: () => exec(stored(ApplicationStage.OFFERED, { offerExpiresAt: future })) });
+		applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.ACCEPTED)));
+		(applicationModel as unknown as { updateOne: jest.Mock }).updateOne = jest.fn().mockResolvedValue({});
+		(service as any).tenanciesService.createFromApplication.mockRejectedValue(new ConflictException("already has a tenancy"));
+		await expect(service.acceptOffer(applicationId.toString())).rejects.toThrow(ConflictException);
 		expect(paymentModel.deleteMany).not.toHaveBeenCalled();
 	});
 
@@ -985,6 +1163,33 @@ describe("ApplicationService pipeline", () => {
 			expect(notifications.notify.mock.calls[0][0].user).toBe(landlordId);
 		} finally {
 			expire.mockRestore();
+			retrieve.mockRestore();
+			if (previousKey === undefined) delete process.env.STRIPE_SECRET_KEY; else process.env.STRIPE_SECRET_KEY = previousKey;
+		}
+	});
+
+	it("cancels an unpaid holding deposit's PaymentIntent (POST /pay) and keeps the row only if Stripe is already taking the money", async () => {
+		const previousKey = process.env.STRIPE_SECRET_KEY;
+		process.env.STRIPE_SECRET_KEY = "sk_test_x";
+		const open = { _id: new Types.ObjectId(), providerRef: "pi_test_open" };
+		const processing = { _id: new Types.ObjectId(), providerRef: "pi_test_processing" };
+		const cancel = jest.spyOn(StripeClient.prototype, "cancelPaymentIntent").mockImplementation(async (id: string) => {
+			if (id === processing.providerRef) throw new StripeApiError("cannot cancel", 400);
+			return {} as never;
+		});
+		const retrieve = jest.spyOn(StripeClient.prototype, "retrievePaymentIntent").mockResolvedValue({ status: "processing" } as never);
+		try {
+			paymentModel.find.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue([open, processing]) }) });
+			applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.REJECTED)));
+			paymentModel.updateMany.mockResolvedValue({ matchedCount: 1 });
+
+			await service.reject(applicationId.toString());
+
+			expect(paymentModel.find.mock.calls[0][0].providerRef.test("pi_test_open")).toBe(true);
+			expect(cancel.mock.calls.map(([id]) => id)).toEqual([open.providerRef, processing.providerRef]);
+			expect(paymentModel.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ _id: { $nin: [processing._id] } }));
+		} finally {
+			cancel.mockRestore();
 			retrieve.mockRestore();
 			if (previousKey === undefined) delete process.env.STRIPE_SECRET_KEY; else process.env.STRIPE_SECRET_KEY = previousKey;
 		}

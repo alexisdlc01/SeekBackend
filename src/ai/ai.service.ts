@@ -133,6 +133,23 @@ function depositRules(nation?: unknown) {
 	};
 }
 
+/** Free keyword routing for a deposit question when no LLM is configured; first match wins. */
+export function depositAnswer(question: string, nation?: unknown): string | null {
+	const rules = depositRules(nation);
+	const scotland = nation === Nation.SCOTLAND;
+	const topics: [RegExp, string][] = [
+		[/\b(overdue|not protected|unprotected|never protected|too long|penalt\w*|protected(?: \w+){0,4} late|late protection|(?:hasn['’]?t|haven['’]?t|didn['’]?t|wasn['’]?t|isn['’]?t|aren['’]?t|has not|have not|did not|was not|is not|are not) (?:been |yet )?protect\w*|(?:refus|fail)\w* to protect\w*|never (?:put|placed)(?: \w+){0,4} (?:in a )?scheme|(?:isn['’]?t|not) in a scheme)\b/, `Your landlord must protect the deposit in an approved scheme within ${rules.window}. If they did not, ask for the certificate in writing; a court can award up to three times the deposit.`],
+		[/\b(dispute|disagree\w*|complain\w*|adjudicat\w*|arbitrat\w*|unfair|refus\w*)\b/, `If you and your landlord disagree about the deposit, the scheme that holds it offers a free dispute service (${rules.schemes}). Keep your check-in inventory, photos and messages as evidence.`],
+		[/\b(deduct\w*|keep|withhold\w*|take|clean\w*|damage\w*|repair\w*|wear|tear|stain\w*|broken)\b/, "A landlord can only deduct for things the tenancy agreement covers, such as damage beyond fair wear and tear, unpaid rent or cleaning back to the check-in standard, and they need evidence. Normal wear and tear cannot be deducted."],
+		[/\b(certificate|prescribed|proof|reference|paperwork)\b/, "Your landlord must give you the scheme's certificate and the prescribed information. Check the reference on the scheme's website and keep both until you move out."],
+		[/\b(protect\w*|scheme|dps|tds|mydeposits|where)\b/, `Your landlord must protect the deposit in an approved scheme (${rules.schemes}) within ${rules.window}. Protecting it is their legal duty, not yours.`],
+		[/\b(return\w*|back|refund\w*|get my|when|how long|end of|move out|leave)\b/, `At the end of the tenancy the deposit is normally returned once you and your landlord agree any deductions${scotland ? "" : "; the scheme usually asks for it within 10 days of agreement"}. If you cannot agree, use the scheme's free dispute service.`],
+		[/\b(cap|much|maximum|limit|weeks|months)\b/, `The most a landlord can ask for is ${rules.cap}.`]
+	];
+	const q = question.toLowerCase();
+	return topics.find(([re]) => re.test(q))?.[1] ?? null;
+}
+
 const GUARANTOR_LINKS: AdviceAction[] = [
 	{ label: "Housing Hand", link: "https://www.housinghand.co.uk" },
 	{ label: "Your Guarantor", link: "https://www.yourguarantor.co.uk" },
@@ -419,7 +436,7 @@ export class AiService {
 					.exec()) as ListingLean | null)
 			: null;
 		const handlers: Record<Exclude<AdviceTopic, "inbox" | "guarantor" | "application">, () => Promise<AdviceDraft> | AdviceDraft> = {
-			deposit: () => this.depositAdvice(user, tenancy, listing, now),
+			deposit: () => this.depositAdvice(user, tenancy, listing, now, body.question),
 			bills: () => this.billsAdvice(user, tenancy, listing),
 			contract: () => this.contractAdvice(user, tenancy, listing),
 			rent: () => this.rentAdvice(user, tenancy, listing, now)
@@ -454,21 +471,23 @@ export class AiService {
 		return (tenancy.documents ?? []).some(doc => doc.type === type);
 	}
 
-	private depositAdvice(user: Viewer, tenancy: TenancyLean | null, listing: ListingLean | null, now: Date): AdviceDraft {
+	private depositAdvice(user: Viewer, tenancy: TenancyLean | null, listing: ListingLean | null, now: Date, question?: string): AdviceDraft {
 		const nation = listing?.nation;
 		const rules = depositRules(nation);
 		const general =
 			nation === Nation.SCOTLAND
 				? `In Scotland a deposit can be at most two months' rent. It must be protected in an approved scheme (${rules.schemes}) within ${rules.window}, and the tenant must get the prescribed information.`
 				: "A deposit can be at most five weeks' rent, and a holding deposit at most one week's. It must be protected in a government-approved scheme (DPS, TDS or mydeposits) within 30 days of being paid, and the tenant must get the certificate and prescribed information.";
+		const landlord = this.isLandlord(user);
 		if (!tenancy) {
 			return {
 				title: "Deposits: the rules",
-				advice: general,
-				actions: rules.sites.map(site => ({ label: `Check a deposit with ${site.name}`, link: site.url }))
+				advice: (!landlord && question?.trim() && depositAnswer(question, nation)) || general,
+				actions: rules.sites.map(site => ({ label: `Check a deposit with ${site.name}`, link: site.url })),
+				// The model gets the general facts plus the routed keyword answer (student-only).
+				...(question?.trim() ? { llm: { facts: { facts: [general, !landlord && depositAnswer(question, nation)].filter(Boolean).join(" ") } } } : {})
 			};
 		}
-		const landlord = this.isLandlord(user);
 		const home = this.homeName(listing);
 		const cap = depositCapPence(tenancy.monthlyRent, nation);
 		const deposit = tenancy.depositAmount ?? 0;
@@ -508,13 +527,20 @@ export class AiService {
 			}
 		}
 
+		const asked = Boolean(question?.trim());
+		// Keyword answers speak to the tenant ("Ask your landlord"): landlords keep their own status lines.
+		let answer = asked && !landlord ? depositAnswer(question!, nation) : null;
+		// Protection answers are generic law: lead with this tenancy's own status line (lines[0], before the cap line).
+		if (answer?.startsWith("Your landlord must protect the deposit") && deposit > 0) answer = `${lines[0]} ${answer}`;
 		const actions: AdviceAction[] = [];
 		if (scheme) actions.push({ label: `Check it with ${scheme.name}`, link: scheme.url });
 		actions.push({ label: certificate ? "Open your documents" : "Go to your tenancy", link: this.homeLink(user) });
 		return {
 			title: deposit <= 0 ? "Deposit" : protectedNow ? `${subject} is protected` : !deadline ? (landlord ? "Protect the deposit within 30 days" : "Your landlord must protect your deposit within 30 days") : deadline < now ? `${subject} is not protected` : landlord ? `Protect the deposit by ${formatDate(deadline)}` : `Your landlord must protect your deposit by ${formatDate(deadline)}`,
-			advice: lines.join(" "),
-			actions
+			advice: answer ?? (asked && !landlord ? "Seek can't answer that from the deposit rules. Ask your landlord or your deposit scheme." : lines.join(" ")),
+			actions,
+			// The model sees the full tenancy facts plus the routed keyword answer.
+			...(asked ? { llm: { facts: { facts: [lines.join(" "), answer].filter(Boolean).join(" ") } } } : {})
 		};
 	}
 

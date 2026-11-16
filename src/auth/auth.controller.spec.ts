@@ -1,6 +1,8 @@
 import { firstValueFrom, of } from "rxjs";
 import { ThrottlerStorageService } from "@nestjs/throttler";
 import { AuthController } from "./auth.controller";
+import { UsersController } from "../users/users.controller";
+import { ContactController } from "../contact/contact.controller";
 import { SerializeInterceptor } from "../interceptors/serialize.interceptor";
 import { UserDto } from "../users/dto/user.dto";
 
@@ -85,6 +87,20 @@ describe("AuthController", () => {
 		expect(authService.login).toHaveBeenCalledTimes(2);
 	});
 
+	it("verify-email refuses a mobile session to a landlord, but not to a student or the web", async () => {
+		const mobile = { headers: { platform: "mobile" } } as never;
+		authService.verifyEmail.mockResolvedValueOnce({ _id: "l1", role: "LANDLORD_AGENCY" });
+		await expect(controller.verifyEmail({ userId: "l1", token: "123456" }, mobile, response as never))
+			.rejects.toThrow("Landlords use Seek on the web");
+		expect(authService.login).not.toHaveBeenCalled();
+
+		authService.verifyEmail.mockResolvedValueOnce({ _id: "s1", role: "STUDENT" });
+		await controller.verifyEmail({ userId: "s1", token: "123456" }, mobile, response as never);
+		authService.verifyEmail.mockResolvedValueOnce({ _id: "l1", role: "LANDLORD_AGENCY" });
+		await controller.verifyEmail({ userId: "l1", token: "tok" }, { headers: {} } as never, response as never);
+		expect(authService.login).toHaveBeenCalledTimes(2);
+	});
+
 	it("selects the mobile reset-link flow from the platform header", async () => {
 		authService.resetPassword.mockResolvedValue({ message: "generic" });
 
@@ -147,4 +163,18 @@ describe("AuthController", () => {
 			jest.useRealTimers();
 		}
 	);
+	it("keeps every rate-limited route blocked for its whole window", () => {
+		// The storage resets the count when a block ends, so a block shorter than ttl reopens the window early.
+		for (const cls of [AuthController, UsersController, ContactController]) {
+			for (const key of Object.getOwnPropertyNames(cls.prototype)) {
+				const handler = cls.prototype[key];
+				for (const name of ["default", "auth"]) {
+					const ttl = Reflect.getMetadata("THROTTLER:TTL" + name, handler);
+					if (ttl === undefined) continue;
+					const block = Reflect.getMetadata("THROTTLER:BLOCK_DURATION" + name, handler) ?? ttl;
+					expect({ route: `${cls.name}.${key}`, block: block >= ttl }).toEqual({ route: `${cls.name}.${key}`, block: true });
+				}
+			}
+		}
+	});
 });

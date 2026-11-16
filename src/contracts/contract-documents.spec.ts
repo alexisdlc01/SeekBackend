@@ -92,6 +92,14 @@ describe("ContractsService deductions", () => {
 		).rejects.toThrow("more than the £1600.00 deposit");
 	});
 
+	it("proposes returning the whole deposit when the list is empty", async () => {
+		const { service, current, notifications } = setup({});
+		await service.proposeDeductions(id, { items: [] }, { _id: tenancy.landlord } as any);
+		expect(current().deductions.total).toBe(0);
+		expect(current().deductions.status).toBe(DeductionStatus.PROPOSED);
+		expect(notifications.notifyMany).toHaveBeenCalledWith([expect.objectContaining({ title: "Your landlord will return the whole deposit" }), expect.anything()]);
+	});
+
 	it("does not wait for a co-tenant who deleted their account", async () => {
 		const { service } = setup({}, [tom]);
 		await service.proposeDeductions(id, { items: [{ description: "Carpet", amount: 12000 }] }, { _id: tenancy.landlord } as any);

@@ -65,7 +65,9 @@ describe("FlagsService", () => {
 		const exec = <T>(value: T) => ({ exec: jest.fn().mockResolvedValue(value) });
 		const reporter = { _id: new Types.ObjectId(), email: "r@st-andrews.ac.uk", isVerified: true };
 
-		const setup = (opts: { verifiedReporters?: number; linked?: boolean; severeFromReporter?: number; reportedSpoke?: boolean } = {}) => {
+		const setup = (
+			opts: { verifiedReporters?: number; linked?: boolean; severeFromReporter?: number; reportedSpoke?: boolean; severeReporters?: (verified: Types.ObjectId[]) => Types.ObjectId[] } = {}
+		) => {
 			// Verified reporters; the first one is the caller of create().
 			const verified = [reporter._id, ...Array.from({ length: Math.max(0, (opts.verifiedReporters ?? 1) - 1) }, () => new Types.ObjectId())];
 			const stored = { _id: new Types.ObjectId(), toObject: () => ({}) };
@@ -73,7 +75,10 @@ describe("FlagsService", () => {
 				create: jest.fn().mockResolvedValue(stored),
 				updateOne: jest.fn().mockReturnValue(exec({})),
 				updateMany: jest.fn().mockReturnValue(exec({})),
-				distinct: jest.fn().mockReturnValue(exec([new Types.ObjectId()])),
+				// Open severe reports come from the caller only, unless severeReporters says otherwise.
+				distinct: jest.fn((_field: string, filter: Record<string, unknown>) =>
+					exec("triage.severity" in filter ? (opts.severeReporters?.(verified) ?? [reporter._id]) : [new Types.ObjectId()])
+				),
 				countDocuments: jest.fn().mockReturnValue(exec(opts.severeFromReporter ?? 1)),
 				findByIdAndUpdate: jest.fn().mockReturnValue(exec({ reportedUser: new Types.ObjectId(reported) }))
 			};
@@ -99,18 +104,30 @@ describe("FlagsService", () => {
 				messageModel as never
 			);
 			jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
-			return { service, flagModel, userModel, listingModel, notifications, conversationModel, messageModel };
+			return { service, flagModel, userModel, listingModel, notifications, conversationModel, messageModel, verified };
 		};
 		const report = (text = "He asked me to wire the deposit before any viewing") =>
 			({ reportedUser: reported, text, category: "SCAM" }) as never;
 
-		it("without any AI, one scam report from a linked verified reporter is triaged severe and hides the listings without suspending", async () => {
+		it("without any AI, one scam report from a linked verified reporter is triaged severe but hides nothing (keywords cannot read intent)", async () => {
 			const { service, flagModel, userModel, listingModel } = setup();
 			await service.create(report("Total scam: he took my deposit and the flat does not exist"), reporter as never);
 
 			expect(flagModel.updateOne).toHaveBeenCalledWith(
 				expect.anything(),
 				{ $set: { triage: { category: "FRAUD_SCAM", severity: "high", summary: "", provider: "rules" } } }
+			);
+			expect(userModel.updateOne).not.toHaveBeenCalled();
+			expect(listingModel.updateMany).not.toHaveBeenCalled();
+		});
+
+		it("severe reports from 2 distinct linked verified reporters hide the listings without suspending", async () => {
+			const { service, flagModel, userModel, listingModel } = setup({ verifiedReporters: 2, severeReporters: verified => verified });
+			await service.create(report("Total scam: he took my deposit and the flat does not exist"), reporter as never);
+
+			expect(flagModel.distinct).toHaveBeenCalledWith(
+				"createdBy",
+				expect.objectContaining({ status: FlagStatus.UNDER_REVIEW, "triage.severity": "high", createdAt: { $gte: expect.any(Date) } })
 			);
 			expect(userModel.updateOne).not.toHaveBeenCalled();
 			expect(listingModel.updateMany).toHaveBeenCalledWith(
@@ -121,8 +138,22 @@ describe("FlagsService", () => {
 			expect(listingModel.updateMany.mock.calls[0][1].$set.moderationReasons[0]).not.toMatch(/student|report/i);
 		});
 
+		it("does not count a second severe reporter who is unverified", async () => {
+			const unverified = new Types.ObjectId();
+			const { service, listingModel } = setup({ severeReporters: () => [reporter._id, unverified] });
+			await service.create(report(), reporter as never);
+			expect(listingModel.updateMany).not.toHaveBeenCalled();
+		});
+
+		it("does not count a second severe reporter who never dealt with the account", async () => {
+			const { service, listingModel, conversationModel } = setup({ verifiedReporters: 2, severeReporters: verified => verified });
+			conversationModel.distinct.mockReturnValue(exec([new Types.ObjectId(reported), reporter._id]));
+			await service.create(report(), reporter as never);
+			expect(listingModel.updateMany).not.toHaveBeenCalled();
+		});
+
 		it("hides the listings only once per reporter in 30 days, however often the same account reports", async () => {
-			const { service, listingModel } = setup({ severeFromReporter: 2 });
+			const { service, listingModel } = setup({ verifiedReporters: 2, severeReporters: verified => verified, severeFromReporter: 2 });
 			await service.create(report(), reporter as never);
 			expect(listingModel.updateMany).not.toHaveBeenCalled();
 		});

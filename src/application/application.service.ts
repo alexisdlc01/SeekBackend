@@ -108,8 +108,9 @@ export class ApplicationService {
 			// Remove only this request's unused conversation and return the winner.
 			if (this.isDuplicateKeyError(error)) {
 				await this.converstaionModel.deleteOne({ _id: conversation._id });
+				// The winner may be this user's own application or a household they just joined.
 				const existing = await this.applicationModel
-					.findOne({ applicationKey })
+					.findOne({ listing: listing._id, applicants: user._id })
 					.exec();
 				if (existing) return this.toDto(existing);
 			}
@@ -150,9 +151,13 @@ export class ApplicationService {
 			if (committed) throw new ConflictException("An application with an offer, acceptance or signed agreement cannot be deleted.");
 			await this.sharesService.revokeForApplication(applicationId);
 		}
-		await this.applicationModel.deleteOne({
+		const deleted = await this.applicationModel.findOneAndDelete({
 			_id: applicationId
 		});
+		// Close the conversation to new messages; members stay so they keep the history and can still report (flags linkedTo).
+		if (deleted?.conversation) {
+			await this.converstaionModel.updateOne({ _id: deleted.conversation }, { $set: { closedAt: new Date() } }).exec();
+		}
 	}
 
 	async getAllMyApplications(userId: string): Promise<ApplicationDto[]> {
@@ -406,6 +411,7 @@ export class ApplicationService {
 	async approve(applicationId: string): Promise<{ tenancy: string }> {
 		const current = await this.applicationModel.findById(applicationId).exec();
 		if (!current) throw new NotFoundException("Application not found");
+		if (current.lapseCleanupPending) throw new ConflictException("The last offer is still being closed. Try again in an hour.");
 		if (current.stage !== ApplicationStage.ACCEPTED) {
 			if (!LANDLORD_OPEN_STAGES.includes(current.stage as ApplicationStage)) {
 				throw new BadRequestException("Only open applications can be accepted.");
@@ -417,6 +423,7 @@ export class ApplicationService {
 			.findOneAndUpdate({
 				_id: applicationId,
 				stage: current.stage,
+				lapseCleanupPending: { $ne: true },
 			}, {
 				$set: { stage: ApplicationStage.ACCEPTED }
 			}, { new: true })
@@ -424,9 +431,9 @@ export class ApplicationService {
 		if (!application) {
 			throw new BadRequestException("Only open applications can be accepted.");
 		}
-		// Approved straight from an offer: unpaid holding deposits can't be paid any more.
-		if (current.stage === ApplicationStage.OFFERED) await this.dropUnpaidHoldingDeposits(application._id);
-		const tenancy = await this.tenanciesService.createFromApplication(application);
+		const tenancy = await this.createOrReopen(application, current.stage as ApplicationStage);
+		// Only once the tenancy exists (a 409 reopens the offer, whose deposits must stay payable); also on an ACCEPTED retry, in case it failed here.
+		if (current.stage === ApplicationStage.OFFERED || current.stage === ApplicationStage.ACCEPTED) await this.dropUnpaidHoldingDeposits(application._id);
 		await this.closeOthers(application);
 		return { tenancy: tenancy._id.toString() };
 	}
@@ -439,6 +446,7 @@ export class ApplicationService {
 		const now = new Date();
 		const current = await this.applicationModel.findById(applicationId).exec();
 		if (!current) throw new NotFoundException("Application not found");
+		if (current.lapseCleanupPending) throw new ConflictException("The last offer is still being closed. Try again in an hour.");
 		const lapsed = current.stage === ApplicationStage.OFFERED
 			&& !!current.offerExpiresAt && current.offerExpiresAt <= now;
 		if (!LANDLORD_OPEN_STAGES.includes(current.stage as ApplicationStage) || (current.stage === ApplicationStage.OFFERED && !lapsed)) {
@@ -450,6 +458,8 @@ export class ApplicationService {
 			.findOneAndUpdate({
 				_id: applicationId,
 				stage: current.stage,
+				// The sweep's lapse clean-up would otherwise drop this offer's new deposit rows and revoke its shares.
+				lapseCleanupPending: { $ne: true },
 			}, {
 				$set: {
 					stage: ApplicationStage.OFFERED,
@@ -578,75 +588,96 @@ export class ApplicationService {
 	 * is pointed at the next qualified household.
 	 */
 	async expireOffers(now: Date = new Date()): Promise<number> {
+		// Lapsed offers to claim, plus claimed ones whose clean-up threw on an earlier sweep.
 		const lapsed = await this.applicationModel
-			.find({ stage: ApplicationStage.OFFERED, offerExpiresAt: { $lte: now } })
+			.find({ $or: [{ stage: ApplicationStage.OFFERED, offerExpiresAt: { $lte: now } }, { lapseCleanupPending: true }] })
 			.exec();
 		let expired = 0;
-		for (const application of lapsed) {
-			const reopened = await this.applicationModel.findOneAndUpdate(
-				{ _id: application._id, stage: ApplicationStage.OFFERED, offerExpiresAt: application.offerExpiresAt },
-				{
-					$set: {
-						stage: application.viewingAt ? ApplicationStage.VIEWED : ApplicationStage.SENT,
-						offeredAt: null,
-						offerExpiresAt: null,
-						offerExpiredAt: application.offerExpiresAt,
-						holdingDeposit: null,
-					}
-				},
-				{ new: true }
-			).exec();
-			if (!reopened) continue;
-			expired += 1;
-			await this.sharesService.revokeForApplication(application._id);
-			await this.dropUnpaidHoldingDeposits(application._id);
-			const key = application.offerExpiresAt?.toISOString();
-			const queue = await this.queueFor(application.listing, now);
-			const title = queue.listing?.propertyTitle ?? queue.listing?.streetAddress ?? "the property";
-			// Same as a decline: rows left are PAID or kept because Stripe already took the money.
-			const refunds = await this.paymentModel.updateMany(
-				{ application: application._id, kind: PaymentKind.HOLDING_DEPOSIT },
-				{ $set: { refundDue: true } }
-			);
-			if (refunds.matchedCount > 0) {
-				await this.notificationsService.notify({
-					user: application.landlord,
-					kind: NotificationKind.OFFER_EXPIRED,
-					title: `Refund the holding deposit for ${title}`,
-					body: "Your offer lapsed after the household paid a holding deposit. The law (Tenant Fees Act) requires you to refund it within 7 days, unless they failed to take reasonable steps to agree the tenancy.",
-					...notificationTarget("landlord", NotificationTargetKind.APPLICATION, application._id, { listing: application.listing }),
-					dedupeKey: `holding-refund:${application._id.toString()}:${key}`
-				});
+		let failure: unknown;
+		for (const found of lapsed) {
+			try {
+				let application = found;
+				if (!found.lapseCleanupPending) {
+					// Claim before any clean-up: a landlord accepting or renewing this offer at the same moment either wins (we skip) or finds it reopened.
+					const claimed = await this.applicationModel.findOneAndUpdate(
+						{ _id: found._id, stage: ApplicationStage.OFFERED, offerExpiresAt: found.offerExpiresAt },
+						{
+							$set: {
+								stage: found.viewingAt ? ApplicationStage.VIEWED : ApplicationStage.SENT,
+								offeredAt: null,
+								offerExpiresAt: null,
+								offerExpiredAt: found.offerExpiresAt,
+								holdingDeposit: null,
+								lapseCleanupPending: true,
+							}
+						},
+						{ new: true }
+					).exec();
+					if (!claimed) continue;
+					application = claimed;
+					expired += 1;
+				}
+				await this.finishLapse(application, now);
+				await this.applicationModel.updateOne({ _id: application._id, lapseCleanupPending: true }, { $set: { lapseCleanupPending: false } }).exec();
+			} catch (error) {
+				// The marker stays set, so the next sweep retries; carry on so one stuck offer doesn't hold back the others' refund flags.
+				failure ??= error;
 			}
-			await this.notificationsService.notifyMany(
-				application.applicants.map(applicant => ({
-					user: applicant,
-					kind: NotificationKind.OFFER_EXPIRED,
-					title: `Your offer for ${title} has expired`,
-					body: "It wasn't accepted within 15 days, so you're back in the queue.",
-					...notificationTarget("student", NotificationTargetKind.APPLICATION, application._id),
-					dedupeKey: `offer-expired:${application._id.toString()}:${key}`
-				}))
-			);
-			const next = queue.qualified.find(entry =>
-				entry.id !== application._id.toString()
-				&& !entry.application.offerExpiredAt
-				&& entry.application.stage !== ApplicationStage.OFFERED
-			);
-			if (!next) continue;
-			await this.notificationsService.notify(
-				{
-					user: application.landlord,
-					kind: NotificationKind.NEW_QUALIFIED_HOUSEHOLD,
-					title: `Offer expired for ${title}: the next qualified household is waiting`,
-					body: `${next.members.length} ${next.members.length === 1 ? "student" : "students"}, first in line. Make them an offer.`,
-					...notificationTarget("landlord", NotificationTargetKind.APPLICATION, next.application._id, { listing: application.listing }),
-					dedupeKey: `offer-next:${application._id.toString()}:${key}`
-				},
-				"newQualifiedHousehold"
-			);
 		}
+		if (failure) throw failure;
 		return expired;
+	}
+
+	/** Clean-up after an offer lapses. Every step is safe to repeat: the sweep reruns it until it all succeeds. */
+	private async finishLapse(application: Application & { _id: Types.ObjectId }, now: Date) {
+		await this.sharesService.revokeForApplication(application._id);
+		await this.dropUnpaidHoldingDeposits(application._id);
+		const key = application.offerExpiredAt?.toISOString();
+		const queue = await this.queueFor(application.listing, now);
+		const title = queue.listing?.propertyTitle ?? queue.listing?.streetAddress ?? "the property";
+		// Same as a decline: rows left are PAID or kept because Stripe already took the money.
+		const refunds = await this.paymentModel.updateMany(
+			{ application: application._id, kind: PaymentKind.HOLDING_DEPOSIT },
+			{ $set: { refundDue: true } }
+		);
+		if (refunds.matchedCount > 0) {
+			await this.notificationsService.notify({
+				user: application.landlord,
+				kind: NotificationKind.OFFER_EXPIRED,
+				title: `Refund the holding deposit for ${title}`,
+				body: "Your offer lapsed after the household paid a holding deposit. The law (Tenant Fees Act) requires you to refund it within 7 days, unless they failed to take reasonable steps to agree the tenancy.",
+				...notificationTarget("landlord", NotificationTargetKind.APPLICATION, application._id, { listing: application.listing }),
+				dedupeKey: `holding-refund:${application._id.toString()}:${key}`
+			});
+		}
+		// Declined while this clean-up was pending (reject() is not blocked by the marker): no "back in the queue".
+		if (application.stage !== ApplicationStage.REJECTED) await this.notificationsService.notifyMany(
+			application.applicants.map(applicant => ({
+				user: applicant,
+				kind: NotificationKind.OFFER_EXPIRED,
+				title: `Your offer for ${title} has expired`,
+				body: "It wasn't accepted within 15 days, so you're back in the queue.",
+				...notificationTarget("student", NotificationTargetKind.APPLICATION, application._id),
+				dedupeKey: `offer-expired:${application._id.toString()}:${key}`
+			}))
+		);
+		const next = queue.qualified.find(entry =>
+			entry.id !== application._id.toString()
+			&& !entry.application.offerExpiredAt
+			&& entry.application.stage !== ApplicationStage.OFFERED
+		);
+		if (!next) return;
+		await this.notificationsService.notify(
+			{
+				user: application.landlord,
+				kind: NotificationKind.NEW_QUALIFIED_HOUSEHOLD,
+				title: `Offer expired for ${title}: the next qualified household is waiting`,
+				body: `${next.members.length} ${next.members.length === 1 ? "student" : "students"}, first in line. Make them an offer.`,
+				...notificationTarget("landlord", NotificationTargetKind.APPLICATION, next.application._id, { listing: application.listing }),
+				dedupeKey: `offer-next:${application._id.toString()}:${key}`
+			},
+			"newQualifiedHousehold"
+		);
 	}
 
 	/** A household member accepts an open offer, which creates the tenancy. */
@@ -667,6 +698,8 @@ export class ApplicationService {
 			const existing = await this.applicationModel.findById(applicationId).lean().exec();
 			if (existing?.stage === ApplicationStage.ACCEPTED || existing?.stage === ApplicationStage.SIGNED) {
 				const tenancy = await this.tenanciesService.createFromApplication(existing);
+				// A retry after the drop below failed: finish it.
+				await this.dropUnpaidHoldingDeposits(existing._id);
 				return { tenancy: tenancy._id.toString() };
 			}
 			throw new BadRequestException("There is no open offer to accept. It may have expired.");
@@ -678,11 +711,26 @@ export class ApplicationService {
 			await this.applicationModel.updateOne({ _id: application._id, stage: ApplicationStage.ACCEPTED }, { $set: { stage: ApplicationStage.OFFERED } });
 			throw error;
 		}
-		// The offer is taken: a holding deposit nobody paid can't be paid any more.
+		const tenancy = await this.createOrReopen(application, ApplicationStage.OFFERED);
+		// The offer is taken: a holding deposit nobody paid can't be paid any more. Not before: a 409 above reopens the offer.
 		await this.dropUnpaidHoldingDeposits(application._id);
-		const tenancy = await this.tenanciesService.createFromApplication(application);
 		await this.closeOthers(application);
 		return { tenancy: tenancy._id.toString() };
+	}
+
+	/**
+	 * A member's other tenancy can land while this accept waits on Stripe: createFromApplication then
+	 * refuses with a 409. Reopen the application so the listing isn't left ACCEPTED with no tenancy.
+	 */
+	private async createOrReopen(application: Application & { _id: Types.ObjectId }, previousStage: ApplicationStage) {
+		try {
+			return await this.tenanciesService.createFromApplication(application);
+		} catch (error) {
+			if (error instanceof ConflictException && previousStage !== ApplicationStage.ACCEPTED) {
+				await this.applicationModel.updateOne({ _id: application._id, stage: ApplicationStage.ACCEPTED }, { $set: { stage: previousStage } });
+			}
+			throw error;
+		}
 	}
 
 	/** The property is let: every other open application on it is declined, so nobody waits forever. */
@@ -701,29 +749,40 @@ export class ApplicationService {
 
 	/**
 	 * Once an offer lapses or is accepted, its unpaid holding deposits go, and
-	 * their open Stripe Checkout sessions are closed first so nobody pays a row
-	 * that no longer exists. A session Stripe already took payment on keeps its
-	 * row, so the webhook can still mark it paid.
+	 * their open Stripe Checkout sessions (or PaymentIntents, from POST /payments/:id/pay)
+	 * are closed first so nobody pays a row that no longer exists. One Stripe already
+	 * took (or is taking) payment on keeps its row, so the webhook can still mark it paid.
 	 */
 	private async dropUnpaidHoldingDeposits(applicationId: Types.ObjectId) {
 		const unpaid = { application: applicationId, kind: PaymentKind.HOLDING_DEPOSIT, status: { $ne: PaymentStatus.PAID } };
 		const keep: Types.ObjectId[] = [];
 		if (process.env.STRIPE_SECRET_KEY) {
-			const withSession = await this.paymentModel.find({ ...unpaid, providerRef: /^cs_/ }, { providerRef: 1 }).lean().exec();
+			const withSession = await this.paymentModel.find({ ...unpaid, providerRef: /^(cs|pi)_/ }, { providerRef: 1 }).lean().exec();
 			const paid = await this.closeCheckoutSessions(withSession);
 			keep.push(...withSession.filter(row => paid.has(row._id.toString())).map(row => row._id));
 		}
 		await this.paymentModel.deleteMany({ ...unpaid, _id: { $nin: keep } });
 	}
 
-	/** Expires each row's open Checkout session; returns the ids of rows whose session Stripe already took payment on. */
+	/** Expires each row's open Checkout session or cancels its PaymentIntent; returns the ids of rows Stripe already took (or is taking) payment on. */
 	private async closeCheckoutSessions(rows: { _id: Types.ObjectId; providerRef?: string | null }[]): Promise<Set<string>> {
 		const paid = new Set<string>();
 		const key = process.env.STRIPE_SECRET_KEY;
-		const open = rows.filter(row => row.providerRef?.startsWith("cs_"));
+		const open = rows.filter(row => row.providerRef?.startsWith("cs_") || row.providerRef?.startsWith("pi_"));
 		if (!key || open.length === 0) return paid;
 		const stripe = new StripeClient(key);
 		for (const row of open) {
+			if (row.providerRef!.startsWith("pi_")) {
+				try {
+					await stripe.cancelPaymentIntent(row.providerRef!);
+				} catch (error) {
+					if (!(error instanceof StripeApiError)) throw error;
+					// Not cancellable: succeeded or processing (kept for the webhook); only an already-canceled intent can go.
+					const intent = await stripe.retrievePaymentIntent(row.providerRef!).catch(() => null);
+					if (intent?.status !== "canceled") paid.add(row._id.toString());
+				}
+				continue;
+			}
 			try {
 				await stripe.expireCheckoutSession(row.providerRef!);
 			} catch (error) {
@@ -922,11 +981,19 @@ export class ApplicationService {
 
 		// Once an offer is made (or the application is closed) the household is fixed.
 		const joinable = HOUSEHOLD_OPEN_STAGES;
-		const updatedApplication: Application | null =
-			await this.applicationModel.findOneAndUpdate(
+		let updatedApplication: Application | null;
+		try {
+			updatedApplication = await this.applicationModel.findOneAndUpdate(
 				{ _id: applicationId, stage: { $in: joinable } },
 				{ $addToSet: { applicants: new Types.ObjectId(userId) } },
 			);
+		} catch (error) {
+			// The unique (listing, applicants) index caught a concurrent create or join.
+			if (this.isDuplicateKeyError(error)) {
+				throw new BadRequestException("You already have an application for this listing.");
+			}
+			throw error;
+		}
 
 		if (!updatedApplication) {
 			throw new BadRequestException("This household can no longer change: an offer has been made or the application is closed.");
@@ -979,6 +1046,30 @@ export class ApplicationService {
 			{ _id: application.conversation },
 			{ $pull: { users: member } }
 		).exec();
+	}
+
+	/** A deleted account leaves its open households: ownership passes to the next member, and an application left with nobody is deleted. */
+	async releaseDeletedMember(userId: Types.ObjectId): Promise<void> {
+		const applications = await this.applicationModel
+			.find({ applicants: userId, stage: { $in: HOUSEHOLD_OPEN_STAGES } })
+			.exec();
+		for (const application of applications) {
+			const users = await Promise.all(application.applicants.map(applicant => this.userSevice.getUserById(applicant.toString())));
+			// Accounts deleted before this cleanup existed leave too, so ownership lands on a live member.
+			const gone = application.applicants.filter((applicant, i) => applicant.toString() === userId.toString() || !users[i] || users[i]?.deletedAt);
+			const remaining = application.applicants.filter(applicant => !gone.includes(applicant));
+			if (!remaining.length) {
+				await this.delete(application._id.toString());
+				continue;
+			}
+			const ownerGone = gone.some(applicant => applicant.toString() === application.owner?.toString());
+			await this.applicationModel.updateOne(
+				{ _id: application._id },
+				{ $pull: { applicants: { $in: gone } }, ...(ownerGone ? { $set: { owner: remaining[0] } } : {}) }
+			);
+			await this.sharesService.revokeForApplication(application._id.toString(), gone);
+			await this.converstaionModel.updateOne({ _id: application.conversation }, { $pull: { users: { $in: gone } } }).exec();
+		}
 	}
 
 	async sendApplication(applicationId: string): Promise<void> {

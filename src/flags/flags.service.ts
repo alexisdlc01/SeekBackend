@@ -20,6 +20,8 @@ const DAY_MS = 86_400_000;
 const REPORT_WINDOW_MS = 30 * DAY_MS;
 /** Distinct email-verified reporters, each linked to the account, within 30 days that suspend it. */
 const REPORTERS_TO_SUSPEND = 3;
+/** Distinct email-verified, linked reporters whose open severe reports in 30 days take the listings offline. */
+const SEVERE_REPORTERS_TO_HIDE = 2;
 const CLOSED_RESPONSE = "Thanks for your report. We keep it on file for 30 days: if other people who dealt with this account report it too, we suspend it automatically.";
 const SUSPENDED_RESPONSE = "Thanks for your report. We have suspended this account.";
 // Neutral on purpose: a landlord with one applicant must not learn who reported him.
@@ -27,7 +29,7 @@ const HIDDEN_AFTER_REPORT = "Your listing needs a new automatic check: edit and 
 const SEVERE_CATEGORIES: FlagTriage["category"][] = ["THREATS_VIOLENCE", "FRAUD_SCAM"];
 
 // No AI (product decision): a report is severe when its text names a threat or a scam.
-// shortcut: plain keywords, blind to negation ("not a scam"); the linked-reporter and once-per-30-days limits below cap the harm.
+// shortcut: plain keywords, blind to negation ("not a scam"); so one report never hides listings alone (SEVERE_REPORTERS_TO_HIDE).
 const SEVERE_REPORT_RULES: [FlagTriage["category"], RegExp][] = [
 	["THREATS_VIOLENCE", /\b(threat\w*|kill|murder|attacked|assault\w*|punch(ed)?|weapon|knife|gun|violen\w*)\b/i],
 	["FRAUD_SCAM", /\b(scam\w*|fraud\w*|stole|stolen|fake (listing|advert|landlord|property|flat|house|room)|wire( the)? (money|deposit)|western union|gift ?cards?|crypto\w*)\b/i]
@@ -92,8 +94,8 @@ export class FlagsService {
 
 	/**
 	 * Only reporters who really dealt with the account count, so strangers or throwaway
-	 * accounts cannot take anyone down. 3 of them in 30 days suspend it; one severe report
-	 * takes its listings offline until they pass a new check, without suspending the account.
+	 * accounts cannot take anyone down. 3 of them in 30 days suspend it; severe reports from 2 of
+	 * them take its listings offline until they pass a new check, without suspending the account.
 	 */
 	private async enforce(reportedUser: string, reporter: User, triage: FlagTriage | null): Promise<void> {
 		const id = new Types.ObjectId(reportedUser);
@@ -109,6 +111,17 @@ export class FlagsService {
 		}
 		const severe = triage?.severity === "high" && SEVERE_CATEGORIES.includes(triage.category);
 		if (!severe || !linked.some(user => user.equals(reporter._id))) return;
+		// Keywords cannot read intent: a second linked reporter must confirm before any listing goes offline.
+		const severeReporters = await this.flagModel
+			.distinct("createdBy", {
+				reportedUser: id,
+				status: FlagStatus.UNDER_REVIEW,
+				createdAt: { $gte: since },
+				"triage.severity": "high",
+				"triage.category": { $in: SEVERE_CATEGORIES }
+			})
+			.exec();
+		if (linked.filter(user => severeReporters.some(other => user.equals(other))).length < SEVERE_REPORTERS_TO_HIDE) return;
 		// Once per reporter per 30 days: one account cannot keep a landlord's listings offline by reporting again and again.
 		const severeFromReporter = await this.flagModel
 			.countDocuments({ reportedUser: id, createdBy: reporter._id, "triage.severity": "high", createdAt: { $gte: since } })

@@ -59,6 +59,30 @@ export class UpdateRentPlanDto {
 	remindDaysBefore?: number;
 }
 
+export class RentPlanPreviewQueryDto {
+	@ApiProperty({ enum: PlanFrequency })
+	@IsEnum(PlanFrequency)
+	frequency: PlanFrequency;
+}
+
+/** One payment as it would stand after switching plan. Nothing is saved. */
+export class RentPlanPreviewItemDto {
+	@ApiProperty()
+	dueDate: Date;
+
+	@ApiProperty({ description: "In pence, after any holding deposit credit." })
+	amount: number;
+
+	@ApiProperty({ description: "Months of rent this payment covers." })
+	coversMonths: number;
+
+	@ApiProperty({ description: "Holding deposit taken off this payment, in pence." })
+	holdingDepositCredit: number;
+
+	@ApiProperty({ enum: PaymentStatus })
+	status: PaymentStatus;
+}
+
 export class MyPaymentsQueryDto {
 	@ApiPropertyOptional({ description: "Only payments for this tenancy." })
 	@IsOptional()

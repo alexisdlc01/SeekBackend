@@ -242,7 +242,10 @@ export function parseMoveIn(text: string, now: Date = new Date()): string | unde
 		return undefined;
 	}
 	const monthIndex = MONTHS.findIndex(month => month.startsWith(match[2].toLowerCase().slice(0, 3)));
-	const day = match[1] ? Math.min(31, Math.max(1, Number(match[1]))) : 1;
+	// "from November" said in November means from today, not next November.
+	const thisMonth =
+		!match[1] && monthIndex === now.getUTCMonth() && (!match[3] || Number(match[3]) === now.getUTCFullYear());
+	const day = match[1] ? Math.min(31, Math.max(1, Number(match[1]))) : thisMonth ? now.getUTCDate() : 1;
 	let year = match[3] ? Number(match[3]) : now.getUTCFullYear();
 	if (!match[3]) {
 		const candidate = Date.UTC(year, monthIndex, day);

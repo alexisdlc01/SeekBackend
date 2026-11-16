@@ -1,5 +1,6 @@
 import { parseAddress, parseAddressList } from "../housing-filter";
 import {
+	KnownCheck,
 	MailFull,
 	MailMeta,
 	MailProviderClient,
@@ -105,16 +106,29 @@ export class GmailClient implements MailProviderClient {
 		return (profile.emailAddress ?? "").toLowerCase();
 	}
 
-	async listRecent(accessToken: string, since: Date, limit: number): Promise<MailMeta[]> {
-		const params = new URLSearchParams({
-			maxResults: String(Math.min(limit, 500)),
-			q: `after:${Math.floor(since.getTime() / 1000)} -in:chats -in:spam -in:trash`
+	async listRecent(accessToken: string, since: Date, limit: number, isKnown?: KnownCheck, before?: Date): Promise<MailMeta[]> {
+		const base = new URLSearchParams({
+			maxResults: "500",
+			// before: is exclusive, so +1s keeps messages received exactly at `before`.
+			q: `after:${Math.floor(since.getTime() / 1000)}${before ? ` before:${Math.floor(before.getTime() / 1000) + 1}` : ""} -in:chats -in:spam -in:trash`
 		});
-		const list = await fetchJson<{ messages?: { id: string }[] }>(`${API}/messages?${params.toString()}`, {
-			headers: this.auth(accessToken)
-		});
+		// Ids are cheap: list the whole window, keep the unknown ones, and fetch headers only for those.
+		const fresh: string[] = [];
+		let pageToken: string | undefined;
+		do {
+			const params = new URLSearchParams(base);
+			if (pageToken) params.set("pageToken", pageToken);
+			const page = await fetchJson<{ messages?: { id: string }[]; nextPageToken?: string }>(
+				`${API}/messages?${params.toString()}`,
+				{ headers: this.auth(accessToken) }
+			);
+			for (const { id } of page.messages ?? []) {
+				if (fresh.length < limit && !(await isKnown?.(id))) fresh.push(id);
+			}
+			pageToken = page.nextPageToken;
+		} while (pageToken && fresh.length < limit);
 		const metas: MailMeta[] = [];
-		for (const { id } of list.messages ?? []) {
+		for (const id of fresh) {
 			// Headers only: bodies are fetched later, and only for housing mail.
 			const query = ["From", "To", "Cc", "Subject", "Message-ID"].map(name => `metadataHeaders=${name}`).join("&");
 			const message = await fetchJson<GmailMessage>(`${API}/messages/${id}?format=metadata&${query}`, {

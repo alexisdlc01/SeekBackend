@@ -88,7 +88,7 @@ export class ListingsService {
 
 	/** Places left per viewing slot: capacity minus open households already booked at that time. */
 	async viewingSlotAvailability(listing: Pick<Listing, "_id" | "viewingSlots" | "viewingSlotCapacity">): Promise<ViewingSlotAvailability[]> {
-		const slots = (listing.viewingSlots ?? []).map(slot => new Date(slot));
+		const slots = (listing.viewingSlots ?? []).map(slot => new Date(slot)).filter(slot => slot.getTime() > Date.now());
 		if (slots.length === 0) return [];
 		const booked: { _id: Date; count: number }[] = await this.applicationModel.aggregate([
 			{ $match: {

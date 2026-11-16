@@ -17,6 +17,7 @@ import { isKeyOwnedBy } from "../upload/object-key";
 import { Listing } from "../listings/listings.schema";
 import { ModerationStatus } from "../listings/enums/moderation-status.enum";
 import { ContractsService } from "../contracts/contracts.service";
+import { ApplicationService } from "../application/application.service";
 
 const MAX_TEAM = 20;
 
@@ -240,6 +241,11 @@ export class AccountService {
 			?.get(ContractsService, { strict: false })
 			.settleForDeletedTenant(userId)
 			.catch(error => this.logger.warn(`Contract re-check after deleting ${userId.toString()} failed: ${(error as Error).message}`));
+		// Households this account was in must not keep a deleted owner or member nobody can replace.
+		await this.moduleRef
+			?.get(ApplicationService, { strict: false })
+			.releaseDeletedMember(userId)
+			.catch(error => this.logger.warn(`Leaving applications after deleting ${userId.toString()} failed: ${(error as Error).message}`));
 		return { deletedAt };
 	}
 }

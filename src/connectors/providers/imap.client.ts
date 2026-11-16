@@ -2,7 +2,7 @@ import { lookup } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
 import { connect } from "node:tls";
 import { parseAddress, parseAddressList } from "../housing-filter";
-import { MailFull, ProviderError } from "./mail-provider";
+import { KnownCheck, MailFull, ProviderError } from "./mail-provider";
 
 export interface ImapCredentials {
 	host: string;
@@ -12,7 +12,8 @@ export interface ImapCredentials {
 }
 
 const TIMEOUT_MS = 15_000;
-// A hostile server must not trickle forever or fill memory. Headers of SYNC_LIMIT (100) mails fit in well under 1 MB.
+const FETCH_BATCH = 100;
+// A hostile server must not trickle forever or fill memory. Headers of the ~1000 mails of one sync fit in a few MB.
 const MAX_SESSION_BYTES = 10 * 1024 * 1024;
 const SESSION_DEADLINE_MS = 60_000;
 // Every non-global-unicast range (RFC 6890): refused in production so the IMAP form cannot probe the server's network.
@@ -202,25 +203,43 @@ export async function verifyImapLogin(credentials: ImapCredentials, allowPrivate
 	}
 }
 
-/** Headers of the newest INBOX messages received since `since`. */
+/** Headers of the newest INBOX messages received since `since`, at most `limit` of those `isKnown` does not recognise. */
 export async function listRecentImap(
 	credentials: ImapCredentials,
 	since: Date,
 	limit: number,
-	allowPrivate = false
+	allowPrivate = false,
+	isKnown?: KnownCheck,
+	before?: Date
 ): Promise<MailFull[]> {
 	const session = await openSession(credentials.host, credentials.port, allowPrivate);
 	try {
 		await session.command(`LOGIN ${imapQuote(credentials.username)} ${imapQuote(credentials.password)}`);
 		await session.command("SELECT INBOX");
-		const search = await session.command(`UID SEARCH SINCE ${imapDate(since)}`);
-		const uids = (/\* SEARCH([\d ]*)/.exec(search)?.[1] ?? "").trim().split(/\s+/).filter(Boolean).slice(-limit);
-		if (!uids.length) return [];
-		const fetched = await session.command(
-			`UID FETCH ${uids.join(",")} (UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE MESSAGE-ID)])`
+		// IMAP BEFORE is day-granular and exclusive: search up to the day after, then cut by internal date below.
+		const search = await session.command(
+			`UID SEARCH SINCE ${imapDate(since)}${before ? ` BEFORE ${imapDate(new Date(before.getTime() + 24 * 3_600_000))}` : ""}`
 		);
+		// UIDs only grow, so the highest ones are the newest; skip those already stored, keep the newest `limit`.
+		const all = (/\* SEARCH([\d ]*)/.exec(search)?.[1] ?? "").trim().split(/\s+/).filter(Boolean).reverse();
+		const mails: MailFull[] = [];
+		let batch: string[] = [];
+		const flush = async () => {
+			const fetched = await session.command(
+				`UID FETCH ${batch.join(",")} (UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE MESSAGE-ID)])`
+			);
+			batch = [];
+			mails.push(...parseFetchHeaders(fetched).filter(mail => !before || mail.receivedAt <= before));
+		};
+		for (const uid of all) {
+			if (mails.length >= limit) break;
+			if (await isKnown?.(uid)) continue;
+			batch.push(uid);
+			if (batch.length >= FETCH_BATCH) await flush();
+		}
+		if (batch.length && mails.length < limit) await flush();
 		await session.command("LOGOUT").catch(() => undefined);
-		return parseFetchHeaders(fetched);
+		return mails;
 	} finally {
 		session.close();
 	}

@@ -93,6 +93,7 @@ export class UsersRepository {
 			{
 				$set: {
 					"refreshSessions.$.tokenHash": nextTokenHash,
+					"refreshSessions.$.previousTokenHash": previousTokenHash,
 					"refreshSessions.$.expiresAt": expiresAt,
 					"refreshSessions.$.lastUsedAt": new Date()
 				}

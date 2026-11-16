@@ -50,6 +50,16 @@ describe("ListingsService", () => {
 		})).resolves.toEqual([{ at: first, remaining: 0 }, { at: second, remaining: 2 }]);
 	});
 
+	it("drops past viewing slots", async () => {
+		applicationModel.aggregate.mockResolvedValue([]);
+		const future = new Date(Date.now() + 86400000);
+		await expect(service.viewingSlotAvailability({
+			_id: new Types.ObjectId(),
+			viewingSlots: [new Date(Date.now() - 86400000), future],
+			viewingSlotCapacity: 1
+		})).resolves.toEqual([{ at: future, remaining: 1 }]);
+	});
+
 	it("passes the created draft to the owner-scoped gateway", async () => {
 		const listing = makeListing(true);
 		listingModel.create.mockResolvedValue(listing);

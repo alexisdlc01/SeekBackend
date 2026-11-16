@@ -50,3 +50,23 @@ describe("fileBill", () => {
 		expect(rows).toHaveLength(1);
 	});
 });
+
+describe("tenancyFor (student, unknown sender)", () => {
+	it("files on the home running now, not next year's tenancy", async () => {
+		const day = 86_400_000;
+		const current = { _id: new Types.ObjectId(), startDate: new Date(Date.now() - 30 * day), endDate: new Date(Date.now() + 200 * day), listing: new Types.ObjectId() };
+		const nextYear = { _id: new Types.ObjectId(), startDate: new Date(Date.now() + 300 * day), endDate: null, listing: new Types.ObjectId() };
+		const ended = { _id: new Types.ObjectId(), startDate: new Date(Date.now() - 400 * day), endDate: new Date(Date.now() - 40 * day), listing: new Types.ObjectId() };
+		const chain = (value: any) => {
+			const c: any = { sort: () => c, select: () => c, lean: () => c, exec: async () => value };
+			return c;
+		};
+		const service = Object.create(ConnectorsService.prototype) as any;
+		// Returned in startDate order, as the sorted query would.
+		service.tenancyModel = { find: jest.fn(() => chain([ended, current, nextYear])), findOne: jest.fn(() => chain(nextYear)) };
+		service.listingModel = { findById: jest.fn(() => chain(null)) };
+		const user = { _id: new Types.ObjectId(), role: "STUDENT" };
+		const target = await service.tenancyFor(user, {} as any, { subject: "Bill", body: "" } as any);
+		expect(target.tenancy._id).toBe(current._id);
+	});
+});

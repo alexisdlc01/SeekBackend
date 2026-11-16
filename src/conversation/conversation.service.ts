@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Conversation } from "./converstaion.schema";
 import { Model, Types } from "mongoose";
@@ -31,6 +31,9 @@ export class ConversationService {
 			conversationId,
 			senderId,
 		);
+		if (await this.conversationModel.exists({ _id: conversationId, closedAt: { $ne: null } })) {
+			throw new ForbiddenException("This conversation is closed.");
+		}
 
 		const message = await this.messageModel.create({
 			sender: senderId,

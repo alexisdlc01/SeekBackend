@@ -22,6 +22,8 @@ import {
 	ReminderScheduleDto,
 	RemindLateDto,
 	RemindLateResponseDto,
+	RentPlanPreviewItemDto,
+	RentPlanPreviewQueryDto,
 	RentPlanViewDto,
 	StudentPaymentDto,
 	UpdateReminderScheduleDto,
@@ -39,6 +41,19 @@ export class PaymentsController {
 	@ApiResponse({ status: 403, type: ErrorDto })
 	async getPlan(@Param("tenancyId", ParseObjectIdPipe) tenancyId: string, @CurrentUser() user: User) {
 		return this.paymentsService.getPlan(tenancyId, user);
+	}
+
+	@Get("plan/:tenancyId/preview")
+	@Student()
+	@ApiOperation({ summary: "The next payments if the tenant switched to this frequency. Read-only: nothing is saved or charged." })
+	@ApiResponse({ status: 200, type: [RentPlanPreviewItemDto] })
+	@ApiResponse({ status: 400, type: ErrorDto, description: "Frequency not allowed (England: monthly only)." })
+	async previewPlan(
+		@Param("tenancyId", ParseObjectIdPipe) tenancyId: string,
+		@Query() query: RentPlanPreviewQueryDto,
+		@CurrentUser() user: User
+	) {
+		return this.paymentsService.previewPlan(tenancyId, query.frequency, user);
 	}
 
 	@Put("plan/:tenancyId")

@@ -41,13 +41,17 @@ export interface OutgoingMail {
 	replyToInternetMessageId: string | null;
 }
 
+/** True when a message is already stored, so its details need not be fetched again. */
+export type KnownCheck = (providerMessageId: string) => Promise<boolean>;
+
 export interface MailProviderClient {
 	readonly scopes: string;
 	authUrl(params: { clientId: string; redirectUri: string; state: string }): string;
 	exchangeCode(params: { clientId: string; clientSecret: string; redirectUri: string; code: string }): Promise<TokenSet>;
 	refresh(params: { clientId: string; clientSecret: string; refreshToken: string }): Promise<TokenSet>;
 	mailboxAddress(accessToken: string): Promise<string>;
-	listRecent(accessToken: string, since: Date, limit: number): Promise<MailMeta[]>;
+	/** Newest first, at most `limit` messages that `isKnown` does not already recognise; pages through the whole window. With `before`, only messages received at or before it. */
+	listRecent(accessToken: string, since: Date, limit: number, isKnown?: KnownCheck, before?: Date): Promise<MailMeta[]>;
 	getFull(accessToken: string, meta: MailMeta): Promise<MailFull>;
 	send(accessToken: string, mail: OutgoingMail): Promise<{ providerMessageId: string; providerThreadId: string }>;
 	revoke(token: string): Promise<void>;

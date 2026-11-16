@@ -10,6 +10,7 @@ import { DocumentType } from "../users/types/document-type";
 import { PlanFrequency } from "../payments/payment.enums";
 import { ApiProperty } from "@nestjs/swagger";
 import { Expose, Transform } from "class-transformer";
+import { ObjectIdString } from "../shared/object-id.transform";
 
 /** What the landlord asks of applicant households; checked against each application. */
 @Schema({ _id: false })
@@ -68,6 +69,7 @@ export class Listing {
 		index: true
 	})
 	@ApiProperty({ type: String })
+	@ObjectIdString()
 	landlord: Types.ObjectId;
 
 	@Expose()
@@ -202,6 +204,7 @@ export class Listing {
 		],
 		default: []
 	})
+	@Transform(({ obj }) => obj?.requirements?.map((r: any) => ({ ...r, _id: r?._id?.toString() })))
 	requirements?: {
 		name: string;
 		desc: string;

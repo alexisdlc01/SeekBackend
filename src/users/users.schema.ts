@@ -153,6 +153,10 @@ export class RefreshSession {
 
 	@Prop({ default: Date.now })
 	lastUsedAt: Date;
+
+	/** Hash rotated out last, so a concurrent refresh with it is not taken for a replay. */
+	@Prop()
+	previousTokenHash?: string;
 }
 
 export const RefreshSessionSchema = SchemaFactory.createForClass(RefreshSession);
@@ -366,6 +370,10 @@ export class User {
 
 	@Prop()
 	suspensionReason?: string;
+
+	/** Claimed by WeeklySummarySweeper before sending, so a landlord gets one digest per London Monday. */
+	@Prop({ type: Date, default: null })
+	weeklySummarySentAt?: Date | null;
 
 	/** Set by DELETE /users/me. The email is replaced so the address can sign up again. */
 	@Prop({ type: Date, default: null })

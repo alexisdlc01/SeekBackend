@@ -1,10 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { Model, Types } from "mongoose";
+import { FilterQuery, Model, Types } from "mongoose";
 import { Payment } from "./payment.schema";
 import { RentPlan } from "./rent-plan.schema";
 import { PaymentKind, PaymentStatus, PlanFrequency } from "./payment.enums";
-import { addMonths, buildSchedule, computeFee, firstTrackedDate, startOfUtcDay } from "./schedule";
+import { addMonths, buildSchedule, computeFee, firstTrackedDate, ScheduledInstalment, startOfUtcDay } from "./schedule";
 
 interface TenancyForSchedule {
 	_id: Types.ObjectId;
@@ -79,6 +79,38 @@ export class RentScheduleService {
 
 	private async rewrite(tenancy: TenancyForSchedule, tenant: Types.ObjectId, frequency: PlanFrequency, now: Date) {
 		const today = startOfUtcDay(now);
+		await this.paymentModel.deleteMany(await this.replaceable(tenancy, tenant, now));
+
+		const latest = await this.paymentModel
+			.findOne({ tenancy: tenancy._id, tenant })
+			.sort({ dueDate: -1 })
+			.lean()
+			.exec();
+		return this.insert(tenancy, tenant, this.instalmentsAfter(tenancy, latest, frequency, today), today);
+	}
+
+	/**
+	 * What regenerate() would do, without writing: `replaced` matches the rows it
+	 * deletes, `added` the rows it inserts (same buildSchedule run, same holding
+	 * deposit credit). Read-only, so the plan screen can show a plan before it's chosen.
+	 */
+	async preview(tenancy: TenancyForSchedule, tenant: Types.ObjectId, frequency: PlanFrequency, now: Date = new Date()) {
+		const today = startOfUtcDay(now);
+		const replaced = await this.replaceable(tenancy, tenant, now);
+		const latest = await this.paymentModel
+			.findOne({ tenancy: tenancy._id, tenant, $nor: [replaced] })
+			.sort({ dueDate: -1 })
+			.lean()
+			.exec();
+		const credit = await this.unusedHoldingCredit(tenancy, tenant, replaced);
+		const added = withHoldingCredit(this.instalmentsAfter(tenancy, latest, frequency, today), credit)
+			.map(instalment => ({ ...instalment, status: statusOn(instalment.dueDate, today) }));
+		return { replaced, added };
+	}
+
+	/** Future SCHEDULED rows a plan change replaces. */
+	private async replaceable(tenancy: TenancyForSchedule, tenant: Types.ObjectId, now: Date): Promise<FilterQuery<Payment>> {
+		const today = startOfUtcDay(now);
 		// Unpaid months before a kept instalment (opened or paid early) stay as they are, or they would never be billed.
 		const lastKept = await this.paymentModel
 			.findOne({
@@ -89,7 +121,7 @@ export class RentScheduleService {
 			.sort({ dueDate: -1 })
 			.lean()
 			.exec();
-		await this.paymentModel.deleteMany({
+		return {
 			tenancy: tenancy._id,
 			tenant,
 			status: PaymentStatus.SCHEDULED,
@@ -97,13 +129,16 @@ export class RentScheduleService {
 			providerRef: { $not: /^cs_/ },
 			// Only rows the autopay sweep (dueDate <= now) can't have tried yet: a retried one must keep its _id, its Stripe idempotency key.
 			dueDate: { $gt: new Date(Math.max(now.getTime(), lastKept ? new Date(lastKept.dueDate).getTime() : 0)) }
-		});
+		};
+	}
 
-		const latest = await this.paymentModel
-			.findOne({ tenancy: tenancy._id, tenant })
-			.sort({ dueDate: -1 })
-			.lean()
-			.exec();
+	/** New instalments start after the last period `latest` (the last kept row) covers. */
+	private instalmentsAfter(
+		tenancy: TenancyForSchedule,
+		latest: { dueDate: Date; coversMonths?: number | null } | null,
+		frequency: PlanFrequency,
+		today: Date
+	) {
 		const from = latest
 			? new Date(Math.max(
 				today.getTime(),
@@ -111,14 +146,13 @@ export class RentScheduleService {
 			))
 			: firstTrackedDate(new Date(tenancy.startDate), today);
 
-		const instalments = buildSchedule({
+		return buildSchedule({
 			startDate: new Date(tenancy.startDate),
 			endDate: tenancy.endDate ? new Date(tenancy.endDate) : null,
 			monthlyRent: tenancy.monthlyRent,
 			frequency,
 			from
 		});
-		return this.insert(tenancy, tenant, instalments, today);
 	}
 
 	/**
@@ -189,29 +223,21 @@ export class RentScheduleService {
 	) {
 		if (instalments.length === 0) return [];
 
-		// Tenant Fees Act: a paid holding deposit goes towards the first rent.
-		let credit = await this.unusedHoldingCredit(tenancy, tenant);
-		const rows = instalments.map(instalment => {
-			const applied = Math.min(credit, instalment.amount);
-			credit -= applied;
-			if (applied === 0) return instalment;
-			const amount = instalment.amount - applied;
-			return { ...instalment, amount, ...computeFee(amount), holdingDepositCredit: applied };
-		});
+		const rows = withHoldingCredit(instalments, await this.unusedHoldingCredit(tenancy, tenant));
 
 		return this.paymentModel.insertMany(
 			rows.map(instalment => ({
 				tenancy: tenancy._id,
 				tenant,
 				landlord: tenancy.landlord,
-				status: instalment.dueDate < today ? PaymentStatus.LATE : PaymentStatus.SCHEDULED,
+				status: statusOn(instalment.dueDate, today),
 				...instalment
 			}))
 		);
 	}
 
-	/** The tenant's paid holding deposits for this tenancy's application, less what rent rows already absorbed. */
-	private async unusedHoldingCredit(tenancy: TenancyForSchedule, tenant: Types.ObjectId): Promise<number> {
+	/** The tenant's paid holding deposits for this tenancy's application, less what rent rows already absorbed (bar `excluding`). */
+	private async unusedHoldingCredit(tenancy: TenancyForSchedule, tenant: Types.ObjectId, excluding?: FilterQuery<Payment>): Promise<number> {
 		if (!tenancy.application) return 0;
 		const [paid, applied] = await Promise.all([
 			this.paymentModel
@@ -219,11 +245,26 @@ export class RentScheduleService {
 				.lean()
 				.exec(),
 			this.paymentModel
-				.find({ tenancy: tenancy._id, tenant, holdingDepositCredit: { $gt: 0 } }, { holdingDepositCredit: 1 })
+				.find({ tenancy: tenancy._id, tenant, holdingDepositCredit: { $gt: 0 }, ...(excluding ? { $nor: [excluding] } : {}) }, { holdingDepositCredit: 1 })
 				.lean()
 				.exec()
 		]);
 		const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
 		return Math.max(0, sum(paid.map(row => row.amount)) - sum(applied.map(row => row.holdingDepositCredit ?? 0)));
 	}
+}
+
+/** Tenant Fees Act: a paid holding deposit goes towards the first rent. */
+function withHoldingCredit(instalments: ScheduledInstalment[], credit: number): (ScheduledInstalment & { holdingDepositCredit?: number })[] {
+	return instalments.map(instalment => {
+		const applied = Math.min(credit, instalment.amount);
+		credit -= applied;
+		if (applied === 0) return instalment;
+		const amount = instalment.amount - applied;
+		return { ...instalment, amount, ...computeFee(amount), holdingDepositCredit: applied };
+	});
+}
+
+function statusOn(dueDate: Date, today: Date): PaymentStatus {
+	return dueDate < today ? PaymentStatus.LATE : PaymentStatus.SCHEDULED;
 }

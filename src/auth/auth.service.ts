@@ -29,6 +29,7 @@ const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
 const MAX_ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const REFRESH_REUSE_GRACE_MS = 10 * 1000;
 const GENERIC_RESET_RESPONSE =
 	"If an account exists, a password reset link has been sent.";
 
@@ -227,12 +228,19 @@ export class AuthService {
 		const session = user?.refreshSessions?.find(
 			candidate => candidate.sessionId === sessionId
 		);
-		if (
-			!user ||
-			!session ||
-			session.expiresAt <= new Date() ||
-			!this.tokensMatch(refreshToken, session.tokenHash)
-		) {
+		if (!user || !session || session.expiresAt <= new Date()) {
+			throw new UnauthorizedException("Refresh token is not valid.");
+		}
+		if (!this.tokensMatch(refreshToken, session.tokenHash)) {
+			// An already-rotated token is a replay: end the session so a stolen chain dies too.
+			// Only the token rotated out in the last few seconds is spared (two tabs refreshing at once).
+			const concurrentRefresh =
+				!!session.previousTokenHash &&
+				this.tokensMatch(refreshToken, session.previousTokenHash) &&
+				Date.now() - new Date(session.lastUsedAt).getTime() < REFRESH_REUSE_GRACE_MS;
+			if (!concurrentRefresh) {
+				await this.usersRepo.removeRefreshSession(userId, sessionId);
+			}
 			throw new UnauthorizedException("Refresh token is not valid.");
 		}
 
@@ -687,7 +695,13 @@ export class AuthService {
 
 	private assertCanAuthenticate(user: User) {
 		if (this.isEmailVerificationEnabled() && !user.isVerified) {
-			throw new UnauthorizedException("Email verification is required.");
+			// userId lets the mobile app reopen the OTP screen (resend-otp needs it).
+			throw new UnauthorizedException({
+				statusCode: 401,
+				message: "Email verification is required.",
+				error: "Unauthorized",
+				userId: user._id.toString()
+			});
 		}
 	}
 

@@ -190,5 +190,7 @@ export function estimateNextPayout(params: {
  */
 export function firstTrackedDate(startDate: Date, now: Date): Date {
 	const today = startOfUtcDay(now);
-	return startDate.getTime() >= today.getTime() ? new Date(startDate) : today;
+	// Day precision: addMonths drops seconds, so a start of 14:37:12 must not skip its own 14:37:00 first instalment.
+	const startDay = startOfUtcDay(startDate);
+	return startDay.getTime() >= today.getTime() ? startDay : today;
 }

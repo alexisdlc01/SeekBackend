@@ -63,6 +63,13 @@ export class EmailConnection {
 	@Prop({ type: Date, default: null })
 	lastSyncAt: Date | null;
 
+	/** Unfinished backfill: messages in [backfillSince, backfillBefore] have not all been read yet (a sync hit its cap). Both null when none. */
+	@Prop({ type: Date, default: null })
+	backfillBefore?: Date | null;
+
+	@Prop({ type: Date, default: null })
+	backfillSince?: Date | null;
+
 	@Prop({ type: String, default: null })
 	lastError: string | null;
 

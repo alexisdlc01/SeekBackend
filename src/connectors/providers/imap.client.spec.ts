@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { connect } from "node:tls";
-import { isPrivateAddress, verifyImapLogin } from "./imap.client";
+import { isPrivateAddress, listRecentImap, verifyImapLogin } from "./imap.client";
 import { ProviderError } from "./mail-provider";
 
 jest.mock("node:tls", () => ({ connect: jest.fn() }));
@@ -8,7 +8,7 @@ jest.mock("node:tls", () => ({ connect: jest.fn() }));
 /** A socket that never answers unless the test pushes data. */
 class FakeSocket extends EventEmitter {
 	setTimeout() {}
-	write() {
+	write(_line?: string) {
 		return true;
 	}
 	end() {}
@@ -59,5 +59,38 @@ describe("imap.client resource limits", () => {
 		socket.emit("data", Buffer.from("x"));
 		jest.advanceTimersByTime(1);
 		await settled;
+	});
+});
+
+describe("listRecentImap", () => {
+	it("reads every UID in the window in batches, skipping stored ones, newest first up to the limit", async () => {
+		const uids = Array.from({ length: 250 }, (_, i) => i + 1);
+		const fetches: string[] = [];
+		class ServerSocket extends FakeSocket {
+			constructor() {
+				super();
+				setImmediate(() => this.emit("data", Buffer.from("* OK ready\r\n")));
+			}
+			write(line: string) {
+				const [tag, ...rest] = line.trim().split(" ");
+				const command = rest.join(" ");
+				let body = "";
+				if (command.startsWith("UID SEARCH")) body = `* SEARCH ${uids.join(" ")}\r\n`;
+				if (command.startsWith("UID FETCH")) {
+					fetches.push(command);
+					for (const uid of command.split(" ")[2].split(",")) {
+						const raw = `Subject: s${uid}\r\n\r\n`;
+						body += `* ${uid} FETCH (UID ${uid} INTERNALDATE "01-Nov-2026 10:00:00 +0000" BODY[HEADER.FIELDS (FROM)] {${raw.length}}\r\n${raw})\r\n`;
+					}
+				}
+				setImmediate(() => this.emit("data", Buffer.from(`${body}${tag} OK done\r\n`)));
+				return true;
+			}
+		}
+		jest.mocked(connect).mockReset().mockImplementation(() => new ServerSocket() as never);
+		const mails = await listRecentImap(local, new Date(0), 200, true, async uid => uid === "250");
+		expect(mails).toHaveLength(200);
+		expect(mails[0].providerMessageId).toBe("249");
+		expect(fetches).toHaveLength(2); // 100 UIDs per FETCH, not slice(-100)
 	});
 });

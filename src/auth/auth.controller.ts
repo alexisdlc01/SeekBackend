@@ -78,7 +78,7 @@ export class AuthController {
 	}
 
 	@Post("/signup")
-	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60_000 } })
+	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60 * 60_000 } })
 	@ApiSignupDocs()
 	async signup(
 		@Body() body: CreateUserDto,
@@ -111,18 +111,19 @@ export class AuthController {
 	) {
 		const isMobile = request.headers.platform === "mobile";
 		const user = await this.authService.verifyEmail(body.userId, body.token, isMobile);
+		assertMobileRole(user, isMobile);
 		return this.authService.login(user, response, isMobile);
 	}
 
 	@Patch("/resend-otp")
-	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60_000 } })
+	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60 * 60_000 } })
 	@ApiResendOtpDocs()
 	async resendOtp(@Body() body: ResendOtpDto) {
 		return this.authService.resendOtp(body.userId);
 	}
 
 	@Post("/forgot-password")
-	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60_000 } })
+	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60 * 60_000 } })
 	@ApiForgotPasswordDocs()
 	async forgotPassword(
 		@Body() body: ForgotPasswordDto,
@@ -133,7 +134,7 @@ export class AuthController {
 	}
 
 	@Post("/confirmPasswordReset")
-	@Throttle({ auth: { limit: 10, ttl: 60 * 60_000, blockDuration: 60_000 } })
+	@Throttle({ auth: { limit: 10, ttl: 60 * 60_000, blockDuration: 60 * 60_000 } })
 	@ApiConfirmPasswordDocs()
 	async confirmPasswordReset(
 		@Body() body: ConfirmPasswordResetDto,
@@ -180,7 +181,7 @@ export class AuthController {
 	}
 
 	@Post("/confirmEmailChange")
-	@Throttle({ auth: { limit: 10, ttl: 60 * 60_000, blockDuration: 60_000 } })
+	@Throttle({ auth: { limit: 10, ttl: 60 * 60_000, blockDuration: 60 * 60_000 } })
 	async confirmEmailChange(
 		@Body() body: ConfirmEmailChangeDto,
 		@Req() request: Request,

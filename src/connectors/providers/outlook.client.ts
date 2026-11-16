@@ -1,4 +1,5 @@
 import {
+	KnownCheck,
 	MailFull,
 	MailMeta,
 	MailProviderClient,
@@ -23,6 +24,7 @@ interface GraphMessage {
 	from?: GraphAddress;
 	toRecipients?: GraphAddress[];
 	ccRecipients?: GraphAddress[];
+	parentFolderId?: string;
 	body?: { contentType?: string; content?: string };
 }
 
@@ -72,17 +74,34 @@ export class OutlookClient implements MailProviderClient {
 		return (me.mail || me.userPrincipalName || "").toLowerCase();
 	}
 
-	async listRecent(accessToken: string, since: Date, limit: number): Promise<MailMeta[]> {
+	async listRecent(accessToken: string, since: Date, limit: number, isKnown?: KnownCheck, before?: Date): Promise<MailMeta[]> {
 		const params = new URLSearchParams({
 			$top: String(Math.min(limit, 100)),
-			$select: "id,conversationId,internetMessageId,subject,bodyPreview,receivedDateTime,from,toRecipients,ccRecipients",
-			$filter: `receivedDateTime ge ${since.toISOString()} and isDraft eq false`,
+			$select: "id,conversationId,internetMessageId,subject,bodyPreview,receivedDateTime,from,toRecipients,ccRecipients,parentFolderId",
+			$filter: `receivedDateTime ge ${since.toISOString()}${before ? ` and receivedDateTime le ${before.toISOString()}` : ""} and isDraft eq false`,
 			$orderby: "receivedDateTime desc"
 		});
-		const page = await fetchJson<{ value?: GraphMessage[] }>(`${GRAPH}/messages?${params.toString()}`, {
-			headers: this.headers(accessToken)
-		});
-		return (page.value ?? []).map(message => this.toMeta(message));
+		// /me/messages spans every folder; Gmail's query drops spam and trash, so do the same here.
+		const excluded = new Set(
+			await Promise.all(
+				["junkemail", "deleteditems"].map(async folder =>
+					(await fetchJson<{ id: string }>(`${GRAPH}/mailFolders/${folder}?$select=id`, { headers: this.headers(accessToken) })).id
+				)
+			)
+		);
+		const messages: GraphMessage[] = [];
+		let url: string | undefined = `${GRAPH}/messages?${params.toString()}`;
+		while (url && messages.length < limit) {
+			const page: { value?: GraphMessage[]; "@odata.nextLink"?: string } = await fetchJson(url, {
+				headers: this.headers(accessToken)
+			});
+			for (const message of page.value ?? []) {
+				if (message.parentFolderId && excluded.has(message.parentFolderId)) continue;
+				if (messages.length < limit && !(await isKnown?.(message.id))) messages.push(message);
+			}
+			url = page["@odata.nextLink"];
+		}
+		return messages.map(message => this.toMeta(message));
 	}
 
 	async getFull(accessToken: string, meta: MailMeta): Promise<MailFull> {
