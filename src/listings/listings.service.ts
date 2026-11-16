@@ -148,7 +148,16 @@ export class ListingsService {
 			}
 		}
 		if (data.criteria) update.criteria = normaliseCriteria(data.criteria);
-		if (data.viewingSlots) update.viewingSlots = normaliseViewingSlots(data.viewingSlots as string[]);
+		if (data.viewingSlots) {
+			// Slots already stored that have since passed are dropped; a newly added past slot is still refused.
+			const stored = await this.listingModel
+				.findOne({ _id: new Types.ObjectId(listingId), landlord: new Types.ObjectId(landlord._id) })
+				.select("viewingSlots")
+				.lean()
+				.exec();
+			const lapsed = new Set((stored?.viewingSlots ?? []).map(slot => new Date(slot).getTime()).filter(time => time <= Date.now()));
+			update.viewingSlots = normaliseViewingSlots((data.viewingSlots as string[]).filter(slot => !lapsed.has(new Date(slot).getTime())));
+		}
 		if (["holdingDeposit", "securityDeposit", "monthlyRent", "numOfPeople", "nation"].some(key => key in data)) {
 			const current = await this.listingModel
 				.findOne({ _id: new Types.ObjectId(listingId), landlord: new Types.ObjectId(landlord._id) })

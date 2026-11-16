@@ -524,14 +524,16 @@ export class ApplicationService {
 	 * One payable holding deposit per member (the listing's amount is per room),
 	 * due when the offer lapses. A renewed offer reuses each member's unpaid
 	 * row (keeping an open Checkout session when the amount is unchanged),
-	 * drops any extra one, and never charges a member who already paid. Seek's
+	 * drops any extra one, and never charges a member who already paid for an
+	 * offer still standing. Seek's
 	 * fee is on rent only, so the landlord receives the whole holding deposit.
 	 */
 	private async createHoldingDeposits(application: HydratedDocument<Application>, pounds?: number | null) {
 		const amount = Math.round(Number(pounds) * 100);
 		const valid = Number.isFinite(amount) && amount > 0;
 		const base = { application: application._id, kind: PaymentKind.HOLDING_DEPOSIT };
-		const existing = await this.paymentModel.find(base).lean().exec();
+		// A deposit flagged refundDue is owed back from an earlier offer: it neither covers nor gets reused for this one.
+		const existing = (await this.paymentModel.find(base).lean().exec()).filter(row => !row.refundDue);
 		const paid = new Set(existing.filter(row => row.status === PaymentStatus.PAID).map(row => row.tenant.toString()));
 		const members = new Set(application.applicants.map(applicant => applicant.toString()));
 		const kept = new Map<string, (typeof existing)[number]>();

@@ -800,6 +800,24 @@ describe("ApplicationService pipeline", () => {
 		expect(paymentModel.insertMany).not.toHaveBeenCalled();
 	});
 
+	it("charges a new holding deposit when the old one is owed back from a lapsed offer", async () => {
+		queue({ id: applicationId, qualified: true });
+		applicationModel.findById.mockReturnValue(exec(stored(ApplicationStage.VIEWED)));
+		applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.OFFERED, { offeredAt: new Date() })));
+		const owedBack = { _id: new Types.ObjectId(), tenant: studentId, amount: 15000, status: "PAID", providerRef: "cs_test_first", refundDue: true };
+		paymentModel.find.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue([owedBack]) }) });
+		paymentModel.updateOne = jest.fn().mockResolvedValue({});
+
+		await service.offer(applicationId.toString());
+
+		// The refund-due row stays for the landlord to refund; it isn't touched or counted as paid.
+		expect(paymentModel.updateOne).not.toHaveBeenCalled();
+		expect(paymentModel.deleteMany).not.toHaveBeenCalledWith(expect.objectContaining({ _id: { $in: [owedBack._id] } }));
+		const [docs] = paymentModel.insertMany.mock.calls[0];
+		expect(docs).toHaveLength(1);
+		expect(docs[0]).toMatchObject({ tenant: studentId, kind: "HOLDING_DEPOSIT", amount: 15000, status: "SCHEDULED" });
+	});
+
 	it("on renewal closes the open session of a dropped or repriced deposit, and keeps one Stripe already took", async () => {
 		const previousKey = process.env.STRIPE_SECRET_KEY;
 		process.env.STRIPE_SECRET_KEY = "sk_test_x";

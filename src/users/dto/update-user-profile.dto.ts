@@ -132,14 +132,4 @@ export class UpdateUserProfileDto {
 	@ValidateNested()
 	@Type(() => NotificationPrefsInputDto)
 	notificationPrefs?: NotificationPrefsInputDto;
-
-	@ApiPropertyOptional({
-		description: "Stripe Connect account (acct_...) that receives rent payouts. Landlords only. Empty string clears it."
-	})
-	@IsOptional()
-	@IsString()
-	@Matches(/^$|^acct_[A-Za-z0-9]{6,40}$/, {
-		message: "stripeAccountId must be a Stripe account id (acct_...)"
-	})
-	stripeAccountId?: string;
 }

@@ -361,6 +361,27 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 		expect(stripeCalls.some(call => call.url.endsWith("/payment_intents"))).toBe(false);
 		expect(doc.status).toBe(PaymentStatus.SCHEDULED);
 	});
+
+	it("closes an open held Checkout session before POST /pay opens a PaymentIntent, and skips when it can't", async () => {
+		const { service } = setup({ payoutStatus: PayoutStatus.HELD });
+		session.status = "open";
+		await service.pay(id.toString(), { _id: tenant } as any);
+		const urls = stripeCalls.map(call => call.url);
+		expect(urls.findIndex(url => url.endsWith("/cs_1/expire"))).toBeGreaterThan(-1);
+		expect(urls.findIndex(url => url.endsWith("/cs_1/expire"))).toBeLessThan(urls.findIndex(url => url.endsWith("/payment_intents")));
+
+		const second = setup({ payoutStatus: PayoutStatus.HELD });
+		session.status = "open";
+		failExpire = true;
+		await expect(second.service.pay(id.toString(), { _id: tenant } as any)).rejects.toThrow("could not be started");
+		expect(stripeCalls.some(call => call.url.endsWith("/payment_intents"))).toBe(false);
+		expect(doc).toMatchObject({ providerRef: "cs_1", payoutStatus: PayoutStatus.HELD });
+
+		const third = setup({ payoutStatus: PayoutStatus.HELD });
+		await third.service.pay(id.toString(), { _id: tenant } as any);
+		expect(stripeCalls.some(call => call.url.endsWith("/payment_intents"))).toBe(false);
+		expect(doc).toMatchObject({ status: PaymentStatus.PAID, providerRef: "pi_checkout", payoutStatus: PayoutStatus.HELD });
+	});
 });
 
 describe("PaymentsService.landlordMonth", () => {

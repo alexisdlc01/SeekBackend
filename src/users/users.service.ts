@@ -159,12 +159,10 @@ class UsersService {
 
 		if (
 			!isLandlord &&
-			(data.companyName !== undefined ||
-				data.registrations !== undefined ||
-				data.stripeAccountId !== undefined)
+			(data.companyName !== undefined || data.registrations !== undefined)
 		) {
 			throw new BadRequestException(
-				"Company name, registrations and payouts are only available to landlords."
+				"Company name and registrations are only available to landlords."
 			);
 		}
 
@@ -172,11 +170,6 @@ class UsersService {
 			const companyName = data.companyName.trim();
 			if (companyName.length === 0) unset.companyName = 1;
 			else set.companyName = companyName;
-		}
-
-		if (data.stripeAccountId !== undefined) {
-			if (data.stripeAccountId === "") unset.stripeAccountId = 1;
-			else set.stripeAccountId = data.stripeAccountId;
 		}
 
 		if (data.registrations !== undefined) {

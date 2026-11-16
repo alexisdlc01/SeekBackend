@@ -1,3 +1,6 @@
+import { validate } from "class-validator";
+import { plainToInstance } from "class-transformer";
+import { ResolveFlagDto } from "./dto/resolve-flag.dto";
 import { Types } from "mongoose";
 import { FlagStatus } from "./enums/flag-status";
 import { FlagsService } from "./flags.service";
@@ -213,6 +216,26 @@ describe("FlagsService", () => {
 				{ reportedUser: new Types.ObjectId(reported), status: FlagStatus.ACCOUNT_SUSPENDED },
 				{ $set: expect.objectContaining({ status: FlagStatus.NO_ACTION }) }
 			);
+		});
+
+		it("PATCH resolve rejects a status outside the resolutions and stamps resolutionDate", async () => {
+			for (const status of ["FOO", FlagStatus.UNDER_REVIEW]) {
+				const errors = await validate(plainToInstance(ResolveFlagDto, { status }));
+				expect(errors.map((e) => e.property)).toContain("status");
+			}
+			expect(await validate(plainToInstance(ResolveFlagDto, { status: FlagStatus.NO_ACTION }))).toHaveLength(0);
+			const { service, flagModel } = setup();
+			await service.resolve(new Types.ObjectId().toString(), { status: FlagStatus.NO_ACTION } as never);
+			expect(flagModel.findByIdAndUpdate.mock.calls[0][1].$set.resolutionDate).toBeInstanceOf(Date);
+		});
+
+		it("PATCH resolve with ACCOUNT_SUSPENDED notifies the reporter of that very flag and gives it a reply", async () => {
+			const { service, flagModel } = setup();
+			const flagId = new Types.ObjectId();
+			flagModel.findByIdAndUpdate.mockReturnValue(exec({ _id: flagId, reportedUser: new Types.ObjectId(reported) }));
+			await service.resolve(flagId.toString(), { status: FlagStatus.ACCOUNT_SUSPENDED } as never);
+			expect(flagModel.distinct).toHaveBeenCalledWith("createdBy", expect.objectContaining({ $or: expect.arrayContaining([{ _id: flagId }]) }));
+			expect(flagModel.findByIdAndUpdate.mock.calls[0][1].$set.supportResponse).toEqual(expect.stringContaining("suspended"));
 		});
 
 		it("PATCH resolve with ACCOUNT_SUSPENDED really suspends the reported account", async () => {

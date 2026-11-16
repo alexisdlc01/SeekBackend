@@ -26,6 +26,7 @@ const REPORT_WINDOW_MS = 30 * DAY_MS;
 /** Distinct email-verified reporters, each linked to the account, within 30 days that suspend it. */
 const REPORTERS_TO_SUSPEND = 3;
 const CLOSED_RESPONSE = "Thanks for your report. We keep it on file for 30 days: if other people who dealt with this account report it too, we suspend it automatically.";
+const SUSPENDED_RESPONSE = "Thanks for your report. We have suspended this account.";
 // Neutral on purpose: a landlord with one applicant must not learn who reported him.
 const HIDDEN_AFTER_REPORT = "Your listing needs a new automatic check: edit and resubmit it.";
 const SEVERE_CATEGORIES: FlagTriage["category"][] = ["THREATS_VIOLENCE", "FRAUD_SCAM"];
@@ -168,7 +169,7 @@ export class FlagsService {
 	}
 
 	/** Blocks the account (JwtStrategy answers 403), hides its listings and closes open reports about it. */
-	async suspend(userId: string | Types.ObjectId, reason: string): Promise<void> {
+	async suspend(userId: string | Types.ObjectId, reason: string, resolvedFlag?: Types.ObjectId): Promise<void> {
 		const id = new Types.ObjectId(userId.toString());
 		const result = await this.userModel
 			.updateOne({ _id: id, suspendedAt: null, role: { $ne: Role.SUPERUSER } }, { $set: { suspendedAt: new Date(), suspensionReason: reason } })
@@ -177,20 +178,22 @@ export class FlagsService {
 		this.logger.warn(`Account ${id.toString()} suspended: ${reason}`);
 		await this.hideListings(id, "This account is suspended.");
 		// Reporters see the outcome in GET /flags/mine (supportResponse) and in their in-app notifications.
-		const reporters = await this.flagModel.distinct("createdBy", { reportedUser: id, status: FlagStatus.UNDER_REVIEW }).exec();
+		// resolvedFlag: resolve() already moved that flag out of UNDER_REVIEW, its reporter must be told too.
+		const open = { status: FlagStatus.UNDER_REVIEW };
+		const reporters = await this.flagModel.distinct("createdBy", { reportedUser: id, ...(resolvedFlag ? { $or: [open, { _id: resolvedFlag }] } : open) }).exec();
 		await this.notifications?.notifyMany(
 			reporters.map(reporter => ({
 				user: reporter,
 				kind: NotificationKind.REPORT_ACTIONED,
 				title: "We acted on your report",
-				body: "Thanks for your report. We have suspended this account.",
+				body: SUSPENDED_RESPONSE,
 				dedupeKey: `report-actioned:${id.toString()}:${reporter.toString()}`
 			}))
 		);
 		await this.flagModel
 			.updateMany(
 				{ reportedUser: id, status: FlagStatus.UNDER_REVIEW },
-				{ $set: { status: FlagStatus.ACCOUNT_SUSPENDED, resolutionDate: new Date(), supportResponse: "Thanks for your report. We have suspended this account." } }
+				{ $set: { status: FlagStatus.ACCOUNT_SUSPENDED, resolutionDate: new Date(), supportResponse: SUSPENDED_RESPONSE } }
 			)
 			.exec();
 	}
@@ -249,7 +252,12 @@ export class FlagsService {
 			.findByIdAndUpdate(id, {
 				$set: {
 					status: resolveFlagDto.status,
-					...(resolveFlagDto.supportResponse !== undefined ? { supportResponse: resolveFlagDto.supportResponse.trim() } : {})
+					resolutionDate: new Date(),
+					...(resolveFlagDto.supportResponse !== undefined
+						? { supportResponse: resolveFlagDto.supportResponse.trim() }
+						: resolveFlagDto.status === FlagStatus.ACCOUNT_SUSPENDED
+							? { supportResponse: SUSPENDED_RESPONSE }
+							: {})
 				}
 			})
 			.exec();
@@ -257,7 +265,7 @@ export class FlagsService {
 			throw new NotFoundException("Flag not found");
 		}
 		if (resolveFlagDto.status === FlagStatus.ACCOUNT_SUSPENDED) {
-			await this.suspend(result.reportedUser, "Suspended by Seek support");
+			await this.suspend(result.reportedUser, "Suspended by Seek support", result._id);
 		}
 	}
 

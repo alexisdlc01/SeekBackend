@@ -902,8 +902,10 @@ export class PaymentsService {
 
 	/** The landlord's connected account, when Stripe lets it receive destination charges and transfers. */
 	private async destinationFor(stripe: StripeClient, landlordId: Types.ObjectId): Promise<string | null> {
-		const landlord = await this.userModel.findById(landlordId, { stripeAccountId: 1 }).lean().exec();
+		const landlord = await this.userModel.findById(landlordId, { stripeAccountId: 1, suspendedAt: 1, deletedAt: 1 }).lean().exec();
 		const accountId = landlord?.stripeAccountId;
+		// A suspended or deleted landlord gets no payout: the payment is held, and released if the suspension is lifted.
+		if (landlord?.suspendedAt || landlord?.deletedAt) return null;
 		if (!accountId || accountId.startsWith("acct_sim_")) return null;
 		try {
 			const account = await stripe.retrieveAccount(accountId);
@@ -1371,6 +1373,15 @@ export class PaymentsService {
 		const stripe = new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!);
 
 		try {
+			// An open Checkout page could still be paid (with its own destination): close it first, or let it settle the payment.
+			if (payment.providerRef?.startsWith("cs_")) {
+				const session = await stripe.retrieveCheckoutSession(payment.providerRef);
+				if (session.status === "open") await stripe.expireCheckoutSession(session.id);
+				else if (session.status !== "expired") {
+					const settled = await this.completeCheckout(session);
+					return this.payResponse(settled ?? payment, null);
+				}
+			}
 			if (payment.providerRef?.startsWith("pi_") && payment.provider === PaymentProvider.STRIPE) {
 				const existing = await stripe.retrievePaymentIntent(payment.providerRef);
 				if (existing.status === "succeeded") {

@@ -111,6 +111,34 @@ describe("ListingsService", () => {
 		});
 	});
 
+	describe("viewing slots", () => {
+		const found = (doc: object | null) => ({
+			select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(doc) }) })
+		});
+		const past = new Date(Date.now() - 86400000);
+		const future = new Date(Date.now() + 7 * 86400000);
+
+		beforeEach(() => {
+			listingModel.findOne = jest.fn().mockReturnValue(found({ viewingSlots: [past, future] }));
+			listingModel.findOneAndUpdate = jest.fn().mockResolvedValue(makeListing(false));
+		});
+
+		it("drops a stored slot that has passed instead of rejecting the save", async () => {
+			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), {
+				viewingSlots: [past.toISOString(), future.toISOString()]
+			} as never);
+			expect(listingModel.findOneAndUpdate.mock.calls[0][1].$set.viewingSlots).toEqual([future]);
+		});
+
+		it("still refuses a newly added slot in the past", async () => {
+			await expect(
+				service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), {
+					viewingSlots: [new Date(Date.now() - 3600000).toISOString()]
+				} as never)
+			).rejects.toThrow("Viewing times must be in the future.");
+		});
+	});
+
 	describe("reviewed fields", () => {
 		const found = (doc: object | null) => ({
 			select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(doc) }) })
