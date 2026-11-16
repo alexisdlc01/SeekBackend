@@ -477,7 +477,7 @@ export class ContractsService {
 			.exec();
 		const current = withSignature ?? (await this.find(contractId));
 
-		if (current.status === ContractStatus.SENT && allTenantsSigned(tenancy.tenants, current.signatures)) {
+		if (current.status === ContractStatus.SENT && allTenantsSigned(tenancy, current.signatures)) {
 			const signed = await this.contractModel
 				.findOneAndUpdate(
 					{ _id: contract._id, status: ContractStatus.SENT },

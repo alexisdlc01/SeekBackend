@@ -40,6 +40,7 @@ export class PaymentsSweeper implements OnApplicationBootstrap, OnModuleDestroy 
 		try {
 			await this.payments.sweep();
 			await this.applications.expireOffers();
+			await this.payments.extendSchedules();
 		} catch (error) {
 			this.logger.error(`Payments sweep failed: ${(error as Error)?.message}`);
 		} finally {

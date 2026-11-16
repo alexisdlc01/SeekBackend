@@ -6,6 +6,7 @@ import {
 	HttpException,
 	HttpStatus,
 	Injectable,
+	NotFoundException,
 	UnauthorizedException
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -267,27 +268,33 @@ export class AuthService {
 		}
 
 		const maximumAttempts = this.verificationMaxAttempts();
+		const tooManyAttempts = new BadRequestException(
+			"Too many verification attempts. Request a new code."
+		);
 		if ((user.emailVerificationAttempts ?? 0) >= maximumAttempts) {
-			throw new BadRequestException(
-				"Too many verification attempts. Request a new code."
-			);
+			throw tooManyAttempts;
 		}
+		// Count the attempt atomically before comparing, so parallel guesses cannot all slip under the limit.
+		await this.usersService.updateUser(
+			{ _id: user._id, emailVerificationAttempts: { $not: { $gte: maximumAttempts } } },
+			{ $inc: { emailVerificationAttempts: 1 } }
+		).catch(error => {
+			throw error instanceof NotFoundException ? tooManyAttempts : error;
+		});
 
 		if (!this.tokensMatch(token, storedToken)) {
-			const attempts = (user.emailVerificationAttempts ?? 0) + 1;
-			await this.usersService.updateUser(
-				{ _id: user._id },
-				attempts >= maximumAttempts
-					? {
-						$set: { emailVerificationAttempts: attempts },
+			if ((user.emailVerificationAttempts ?? 0) + 1 >= maximumAttempts) {
+				await this.usersService.updateUser(
+					{ _id: user._id },
+					{
 						$unset: {
 							emailVerificationToken: 1,
 							otpVerificationCode: 1,
 							emailVerificationTokenExpires: 1
 						}
 					}
-					: { $set: { emailVerificationAttempts: attempts } }
-			);
+				);
+			}
 			throw new BadRequestException("Verification code is invalid or expired.");
 		}
 

@@ -21,7 +21,7 @@ import { Tenancy } from "../tenancies/tenancy.schema";
 import { DocumentSource, TenancyDocumentType, TenancyStatus } from "../tenancies/tenancy.enums";
 import { TenanciesService } from "../tenancies/tenancies.service";
 import { Application } from "../application/application.schema";
-import { ApplicationStage } from "../application/enums/application-stage.enum";
+import { ApplicationStage, LANDLORD_OPEN_STAGES } from "../application/enums/application-stage.enum";
 import { Listing } from "../listings/listings.schema";
 import { Bill, BillCategory, BillSource, BillStatus } from "../bills/bill.schema";
 import { UploadService } from "../upload/upload.service";
@@ -634,7 +634,9 @@ export class ConnectorsService {
 					status: ConnectionStatus.DISCONNECTED,
 					accessTokenEnc: null,
 					refreshTokenEnc: null,
-					expiresAt: null
+					expiresAt: null,
+					// The emails are deleted below, so a reconnect must re-import the full first-sync window.
+					lastSyncAt: null
 				}
 			}
 		);
@@ -797,7 +799,10 @@ export class ConnectorsService {
 		const applications = await this.applicationModel
 			.find(
 				isLandlord
-					? { landlord: uid, stage: { $in: [ApplicationStage.SENT, ApplicationStage.ACCEPTED] } }
+					? {
+							landlord: uid,
+							stage: { $in: [...LANDLORD_OPEN_STAGES, ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] }
+						}
 					: { $or: [{ applicants: uid }, { owner: uid }] }
 			)
 			.sort({ createdAt: -1 })
@@ -1038,6 +1043,8 @@ export class ConnectorsService {
 			const tenancy = await this.tenancyModel.findById(classification.contact.tenancyId).lean().exec();
 			if (tenancy) return withListing(tenancy as Tenancy & { _id: Types.ObjectId });
 		}
+		// A known contact with no tenancy (a home the student applied for) is not about the current home.
+		if (classification.contact && !isLandlord) return null;
 		const uid = new Types.ObjectId(user._id.toString());
 		if (!isLandlord) {
 			const tenancy = await this.tenancyModel

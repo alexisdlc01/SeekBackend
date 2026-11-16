@@ -1,6 +1,7 @@
 import { Types } from "mongoose";
 import { PaymentsService } from "./payments.service";
 import { PaymentStatus } from "./payment.enums";
+import { StripeClient } from "./stripe";
 
 const lean = <T>(value: T) => ({ lean: () => ({ exec: () => Promise.resolve(value) }) });
 
@@ -51,6 +52,48 @@ describe("PaymentsService reminders and receipts", () => {
 		const byDefault = setup(undefined, inFiveDays);
 		await byDefault.service.sweep(now);
 		expect(byDefault.notifications.notify).not.toHaveBeenCalled();
+	});
+
+	it("marks a stale PENDING rent late, but not one attempted within the hour", async () => {
+		const { service, paymentModel } = setup({}, now);
+		const stale = { _id: new Types.ObjectId(), tenancy: new Types.ObjectId(), tenant, landlord, amount: 69500, status: PaymentStatus.PENDING, dueDate: new Date("2026-11-01") };
+		paymentModel.find.mockReset().mockReturnValueOnce(lean([])).mockReturnValueOnce(lean([stale])).mockReturnValue(lean([]));
+		await service.sweep(now);
+		const overdueQuery = paymentModel.find.mock.calls[1][0];
+		expect(overdueQuery.$or).toContainEqual({ status: PaymentStatus.PENDING, updatedAt: { $lt: new Date(now.getTime() - 3600000) } });
+		expect(paymentModel.updateOne).toHaveBeenCalledWith({ _id: stale._id, status: PaymentStatus.PENDING }, { $set: { status: PaymentStatus.LATE } });
+	});
+
+	describe("a stale PENDING rent with a Stripe intent", () => {
+		afterEach(() => jest.restoreAllMocks());
+
+		async function sweepWithIntent(status: string) {
+			const { service, paymentModel } = setup({}, now);
+			const stale = { _id: new Types.ObjectId(), tenancy: new Types.ObjectId(), tenant, landlord, amount: 69500, status: PaymentStatus.PENDING, providerRef: "pi_1", dueDate: new Date("2026-11-01") };
+			paymentModel.find.mockReset().mockReturnValueOnce(lean([])).mockReturnValueOnce(lean([stale])).mockReturnValue(lean([]));
+			jest.spyOn(StripeClient.prototype, "retrievePaymentIntent").mockResolvedValue({ id: "pi_1", client_secret: null, status, amount: 69500 });
+			const markPaid = jest.spyOn(service as any, "markPaid").mockResolvedValue(null);
+			await service.sweep(now);
+			const lateMarked = paymentModel.updateOne.mock.calls.some(([, update]) => update.$set?.status === PaymentStatus.LATE);
+			return { lateMarked, markPaid, stale };
+		}
+
+		it("stays PENDING while the debit is processing", async () => {
+			const { lateMarked, markPaid } = await sweepWithIntent("processing");
+			expect(lateMarked).toBe(false);
+			expect(markPaid).not.toHaveBeenCalled();
+		});
+
+		it("goes LATE once the attempt is dead", async () => {
+			expect((await sweepWithIntent("requires_payment_method")).lateMarked).toBe(true);
+			expect((await sweepWithIntent("canceled")).lateMarked).toBe(true);
+		});
+
+		it("is marked PAID when the intent already succeeded", async () => {
+			const { lateMarked, markPaid, stale } = await sweepWithIntent("succeeded");
+			expect(lateMarked).toBe(false);
+			expect(markPaid).toHaveBeenCalledWith(stale, "stripe", "pi_1");
+		});
 	});
 
 	it("defaults to three days before", async () => {

@@ -124,7 +124,13 @@ describe("ConversationService.getAllForUser", () => {
 		email: "alice@example.com",
 		role: "STUDENT",
 		password: "$2a$10$hashedsecret",
-		refreshToken: "should-not-leak"
+		refreshToken: "should-not-leak",
+		phone: "07000 000000",
+		dateOfBirth: new Date("1980-01-01"),
+		notificationPrefs: { weeklySummary: true },
+		registrations: [{ kind: "HMO", number: "123" }],
+		payoutBank: { last4: "1234", bankName: "Bank", verified: true },
+		profilePicUrl: "https://example.test/alice.png"
 	};
 
 	const conversations = [
@@ -204,6 +210,17 @@ describe("ConversationService.getAllForUser", () => {
 		expect(sender.name).toBe("Alice");
 		expect(sender.password).toBeUndefined();
 		expect(sender.refreshToken).toBeUndefined();
+	});
+
+	it("hides contact details, birth date, prefs and payout bank from other members", async () => {
+		const [, older] = await service.getAllForUser(me.toHexString());
+
+		for (const user of [older.users.find(u => u.name === "Alice"), older.lastMessage!.sender] as any[]) {
+			expect(user).toMatchObject({ name: "Alice", role: "STUDENT", profilePicUrl: "https://example.test/alice.png" });
+			for (const key of ["email", "phone", "dateOfBirth", "notificationPrefs", "registrations", "payoutBank", "payoutsConnected", "teamOf"]) {
+				expect(user).not.toHaveProperty(key);
+			}
+		}
 	});
 
 	it("serialises message ObjectId references as the same hex ids", async () => {

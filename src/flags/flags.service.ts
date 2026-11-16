@@ -207,6 +207,13 @@ export class FlagsService {
 				{ $set: { status: FlagStatus.NO_ACTION, resolutionDate: new Date(), supportResponse: CLOSED_RESPONSE } }
 			)
 			.exec();
+		// Flags that caused the suspension are resolved too: otherwise the dashboard keeps offering "Lift suspension" and a retry 404s.
+		await this.flagModel
+			.updateMany(
+				{ reportedUser: new Types.ObjectId(userId), status: FlagStatus.ACCOUNT_SUSPENDED },
+				{ $set: { status: FlagStatus.NO_ACTION, resolutionDate: new Date(), supportResponse: "Suspension lifted after review." } }
+			)
+			.exec();
 	}
 
 	/** Reports that reached no threshold within the window get a fixed answer, so none waits on a person. */

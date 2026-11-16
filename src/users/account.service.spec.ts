@@ -14,12 +14,17 @@ function setup() {
 		updateOne: jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
 		updateMany: jest.fn().mockResolvedValue({})
 	};
-	const tenancyModel = { find: jest.fn((): unknown => selectLean([])), distinct: jest.fn().mockResolvedValue([]) };
+	const tenancyModel = {
+		find: jest.fn((): unknown => selectLean([])),
+		distinct: jest.fn().mockResolvedValue([]),
+		updateMany: jest.fn().mockResolvedValue({})
+	};
 	const paymentModel = { exists: jest.fn().mockResolvedValue(null) };
 	const shareModel = { updateMany: jest.fn().mockResolvedValue({}) };
 	const connectionModel = { find: jest.fn((): unknown => selectLean([])) };
 	const connectors = { disconnect: jest.fn().mockResolvedValue({}) };
 	const uploads = { deletePrivateObject: jest.fn().mockResolvedValue(undefined), deletePublicObject: jest.fn().mockResolvedValue(undefined) };
+	const listingModel = { updateMany: jest.fn().mockResolvedValue({}) };
 	const service = new AccountService(
 		userModel as any,
 		tenancyModel as any,
@@ -27,9 +32,10 @@ function setup() {
 		shareModel as any,
 		connectionModel as any,
 		connectors as any,
-		uploads as any
+		uploads as any,
+		listingModel as any
 	);
-	return { service, userModel, tenancyModel, paymentModel, shareModel, connectionModel, connectors, uploads };
+	return { service, userModel, tenancyModel, paymentModel, shareModel, connectionModel, connectors, uploads, listingModel };
 }
 
 describe("AccountService team", () => {
@@ -130,6 +136,26 @@ describe("AccountService deleteAccount", () => {
 		expect(shareModel.updateMany).toHaveBeenCalledWith(
 			{ owner: id, revokedAt: null },
 			{ $set: { revokedAt: expect.any(Date) } }
+		);
+	});
+
+	it("takes the landlord's published listings offline so nobody applies to a deleted account", async () => {
+		const { service, listingModel } = setup();
+		const id = new Types.ObjectId();
+		await service.deleteAccount(id);
+		expect(listingModel.updateMany).toHaveBeenCalledWith(
+			{ landlord: id, isDraft: false },
+			{ $set: expect.objectContaining({ isVerified: false, moderationStatus: "NEEDS_CHANGES" }) }
+		);
+	});
+
+	it("calls off tenancies still waiting on invites, so they never stay stuck or bill a deleted account", async () => {
+		const { service, tenancyModel } = setup();
+		const id = new Types.ObjectId();
+		await service.deleteAccount(id);
+		expect(tenancyModel.updateMany).toHaveBeenCalledWith(
+			{ status: "PENDING_ACCEPTANCE", $or: [{ tenants: id }, { pendingTenants: id }, { landlord: id }] },
+			{ $set: { status: "ENDED" } }
 		);
 	});
 

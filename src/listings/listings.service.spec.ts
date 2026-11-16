@@ -10,6 +10,7 @@ describe("ListingsService", () => {
 	let listingModel: Record<string, jest.Mock>;
 	let gateway: Record<string, jest.Mock>;
 	let applicationModel: Record<string, jest.Mock>;
+	let tenancyModel: Record<string, jest.Mock>;
 
 	beforeEach(() => {
 		listingModel = {
@@ -20,8 +21,10 @@ describe("ListingsService", () => {
 		};
 		applicationModel = {
 			aggregate: jest.fn().mockResolvedValue([]),
-			distinct: jest.fn().mockResolvedValue([])
+			distinct: jest.fn().mockResolvedValue([]),
+			exists: jest.fn().mockResolvedValue(null)
 		};
+		tenancyModel = { exists: jest.fn().mockResolvedValue(null) };
 		gateway = {
 			emitListingCreated: jest.fn(),
 			emitListingUpdated: jest.fn(),
@@ -31,7 +34,8 @@ describe("ListingsService", () => {
 			listingModel as any,
 			gateway as unknown as ListingsGateway,
 			{} as ConfigService,
-			applicationModel as any
+			applicationModel as any,
+			tenancyModel as any
 		);
 	});
 
@@ -63,6 +67,19 @@ describe("ListingsService", () => {
 		await service.deleteListing(listing._id.toString(), makeLandlord());
 
 		expect(gateway.emitListingDeleted).toHaveBeenCalledWith(listing);
+	});
+
+	it.each([
+		["an accepted or signed application", "application"],
+		["a tenancy", "tenancy"]
+	])("refuses to delete a listing with %s", async (_label, kind) => {
+		const listing = makeListing(false);
+		listingModel.findById.mockResolvedValue(listing);
+		(kind === "application" ? applicationModel : tenancyModel).exists.mockResolvedValue({ _id: new Types.ObjectId() });
+
+		await expect(service.deleteListing(listing._id.toString(), makeLandlord())).rejects.toThrow("cannot be deleted");
+		expect(listingModel.deleteOne).not.toHaveBeenCalled();
+		expect(gateway.emitListingDeleted).not.toHaveBeenCalled();
 	});
 
 	describe("availableFrom in the past", () => {

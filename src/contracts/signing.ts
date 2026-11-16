@@ -1,10 +1,12 @@
 import { Types } from "mongoose";
 
-/** A contract is signed once every tenant on the tenancy has signed it. */
+/** A contract is signed once every tenant on the tenancy has signed it. An invited housemate who has not accepted yet still has to sign. */
 export function allTenantsSigned(
-	tenants: (Types.ObjectId | string)[],
+	tenancy: { tenants: (Types.ObjectId | string)[]; pendingTenants?: (Types.ObjectId | string)[] },
 	signatures: { user: Types.ObjectId | string }[]
 ): boolean {
+	if (tenancy.pendingTenants?.length) return false;
+	const { tenants } = tenancy;
 	if (tenants.length === 0) return false;
 	const signed = new Set(signatures.map(signature => signature.user.toString()));
 	return tenants.every(tenant => signed.has(tenant.toString()));

@@ -86,6 +86,16 @@ describe("ApplicationService", () => {
 		);
 	});
 
+	it("create returns the household application the user already joined instead of a duplicate", async () => {
+		const joined = documentFrom({ _id: applicationId, listing: listingId, owner: new Types.ObjectId(), applicants: [userId] });
+		applicationModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(joined) });
+
+		await service.create(listingId.toString(), user);
+
+		expect(applicationModel.findOne.mock.calls[0][0].$or).toContainEqual({ listing: listingId, applicants: userId });
+		expect(applicationModel.create).not.toHaveBeenCalled();
+	});
+
 	it("rejects a new application when a required document is missing", async () => {
 		applicationModel.findOne.mockReturnValue({
 			exec: jest.fn().mockResolvedValue(null),
@@ -338,6 +348,16 @@ describe("ApplicationService", () => {
 			);
 		});
 
+		it("refuses to join when already in another application for the same listing", async () => {
+			mockApplication({ listing: listingId });
+			applicationModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+
+			await expect(
+				service.join(applicationId.toString(), new Types.ObjectId().toString(), VALID_INVITE),
+			).rejects.toThrow("already have an application");
+			expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
+		});
+
 		it("refuses to join on the application id alone", async () => {
 			mockApplication();
 
@@ -438,6 +458,7 @@ describe("ApplicationService", () => {
 				_id: applicationId,
 				conversation: conversationId,
 				owner: userId,
+				stage: "SENT",
 				applicants: [userId, memberId],
 				...overrides,
 			});
@@ -460,6 +481,16 @@ describe("ApplicationService", () => {
 				{ _id: conversationId },
 				{ $pull: { users: memberId } },
 			);
+		});
+
+		it.each(["OFFERED", "ACCEPTED", "SIGNED", "REJECTED"])("does not let a member leave once %s", async (stage) => {
+			mockApplication({ stage });
+
+			await expect(
+				service.leave(applicationId.toString(), memberId.toString()),
+			).rejects.toBeInstanceOf(BadRequestException);
+			expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
+			expect(conversationModel.updateOne).not.toHaveBeenCalled();
 		});
 
 		it("does not let the creator leave their own application", async () => {
@@ -632,6 +663,27 @@ describe("ApplicationService pipeline", () => {
 		}));
 		return jest.spyOn(service as any, "queueFor").mockResolvedValue({ all, qualified: all.filter(entry => entry.qualified), listing: null });
 	}
+
+	describe("delete", () => {
+		it.each([ApplicationStage.OFFERED, ApplicationStage.ACCEPTED, ApplicationStage.SIGNED])("refuses to delete a %s application", async stage => {
+			applicationModel.exists.mockResolvedValue({ _id: applicationId });
+			applicationModel.deleteOne = jest.fn();
+
+			await expect(service.delete(applicationId.toString())).rejects.toThrow(ConflictException);
+
+			expect(applicationModel.exists).toHaveBeenCalledWith(expect.objectContaining({ stage: { $in: expect.arrayContaining([stage]) } }));
+			expect(applicationModel.deleteOne).not.toHaveBeenCalled();
+			expect(sharesService.revokeForApplication).not.toHaveBeenCalled();
+		});
+
+		it("deletes an application that is still open", async () => {
+			applicationModel.deleteOne = jest.fn().mockResolvedValue({});
+
+			await service.delete(applicationId.toString());
+
+			expect(applicationModel.deleteOne).toHaveBeenCalledWith({ _id: applicationId.toString() });
+		});
+	});
 
 	describe("offer queue rules", () => {
 		const earlier = new Types.ObjectId();

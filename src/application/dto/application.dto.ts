@@ -130,6 +130,17 @@ export class ApplicationDto {
 	@Type(() => Date)
 	offerExpiresAt?: Date | null;
 
+	@ApiProperty({
+		type: String,
+		format: "date-time",
+		nullable: true,
+		required: false,
+		description: "When the last offer lapsed unaccepted; a lapsed household goes to the back of the offer queue."
+	})
+	@Expose()
+	@Type(() => Date)
+	offerExpiredAt?: Date | null;
+
 	@ApiProperty({ type: Number, nullable: true, required: false, description: "Holding deposit per room in whole pounds, recorded with the offer." })
 	@Expose()
 	holdingDeposit?: number | null;

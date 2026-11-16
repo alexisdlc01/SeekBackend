@@ -34,6 +34,9 @@ import { StripeApiError, StripeClient } from "../payments/stripe";
 /** How long a shared invite link stays usable. */
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** Stages where members may still join or leave; afterwards the household is fixed. */
+const HOUSEHOLD_OPEN_STAGES = [ApplicationStage.NOT_SENT, ApplicationStage.SENT, ApplicationStage.VIEWED];
+
 @Injectable()
 export class ApplicationService {
 	constructor(
@@ -67,6 +70,8 @@ export class ApplicationService {
 				$or: [
 					{ applicationKey },
 					{ listing: listing._id, owner: user._id },
+					// Already a member of a household application for this listing.
+					{ listing: listing._id, applicants: user._id },
 				]
 			})
 			.exec();
@@ -136,7 +141,15 @@ export class ApplicationService {
 	async delete(
 		applicationId: string,
 	): Promise<void> {
-		if (Types.ObjectId.isValid(applicationId)) await this.sharesService.revokeForApplication(applicationId);
+		if (Types.ObjectId.isValid(applicationId)) {
+			// An offered/accepted/signed application backs a tenancy and its payments; deleting it would reopen the listing.
+			const committed = await this.applicationModel.exists({
+				_id: applicationId,
+				stage: { $in: [ApplicationStage.OFFERED, ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] }
+			});
+			if (committed) throw new ConflictException("An application with an offer, acceptance or signed agreement cannot be deleted.");
+			await this.sharesService.revokeForApplication(applicationId);
+		}
 		await this.applicationModel.deleteOne({
 			_id: applicationId
 		});
@@ -896,8 +909,17 @@ export class ApplicationService {
 			throw new ForbiddenException("Invite is not valid or has expired.");
 		}
 
+		// One application per listing per student: joining a second one would hide it in /mine.
+		if (await this.applicationModel.exists({
+			_id: { $ne: application._id },
+			listing: application.listing,
+			applicants: new Types.ObjectId(userId),
+		})) {
+			throw new BadRequestException("You already have an application for this listing.");
+		}
+
 		// Once an offer is made (or the application is closed) the household is fixed.
-		const joinable = [ApplicationStage.NOT_SENT, ApplicationStage.SENT, ApplicationStage.VIEWED];
+		const joinable = HOUSEHOLD_OPEN_STAGES;
 		const updatedApplication: Application | null =
 			await this.applicationModel.findOneAndUpdate(
 				{ _id: applicationId, stage: { $in: joinable } },
@@ -939,6 +961,10 @@ export class ApplicationService {
 			throw new BadRequestException(
 				"The creator can't leave their application; delete it instead."
 			);
+		}
+
+		if (!HOUSEHOLD_OPEN_STAGES.includes(application.stage as ApplicationStage)) {
+			throw new BadRequestException("This household can no longer change: an offer has been made or the application is closed.");
 		}
 
 		const member = new Types.ObjectId(userId);

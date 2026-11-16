@@ -206,6 +206,15 @@ describe("FlagsService", () => {
 			);
 		});
 
+		it("resolves the ACCOUNT_SUSPENDED flags when the suspension is lifted, so the dashboard stops offering the button", async () => {
+			const { service, flagModel } = setup();
+			await service.liftSuspension(reported);
+			expect(flagModel.updateMany).toHaveBeenCalledWith(
+				{ reportedUser: new Types.ObjectId(reported), status: FlagStatus.ACCOUNT_SUSPENDED },
+				{ $set: expect.objectContaining({ status: FlagStatus.NO_ACTION }) }
+			);
+		});
+
 		it("PATCH resolve with ACCOUNT_SUSPENDED really suspends the reported account", async () => {
 			const { service, userModel } = setup();
 			await service.resolve(new Types.ObjectId().toString(), { status: FlagStatus.ACCOUNT_SUSPENDED } as never);

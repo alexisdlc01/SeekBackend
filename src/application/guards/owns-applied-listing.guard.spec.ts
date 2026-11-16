@@ -58,6 +58,7 @@ describe("OwnsAppliedListingGuard", () => {
 		listingModel as never,
 		{} as never,
 		{} as never,
+		{} as never,
 		{} as never
 	);
 

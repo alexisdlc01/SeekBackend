@@ -2,6 +2,7 @@ import {
 	BadRequestException,
 	ConflictException,
 	ForbiddenException,
+	NotFoundException,
 	UnauthorizedException
 } from "@nestjs/common";
 import { hash } from "bcryptjs";
@@ -206,8 +207,42 @@ describe("AuthService", () => {
 			true
 		)).rejects.toBeInstanceOf(BadRequestException);
 		expect(usersService.updateUser).toHaveBeenCalledWith(
-			{ _id: pending._id },
-			{ $set: { emailVerificationAttempts: 1 } }
+			{ _id: pending._id, emailVerificationAttempts: { $not: { $gte: 5 } } },
+			{ $inc: { emailVerificationAttempts: 1 } }
+		);
+	});
+
+	it("does not let parallel guesses exceed the OTP attempt limit", async () => {
+		config.AUTH_EMAIL_VERIFICATION_ENABLED = true;
+		const pending = makeUser({
+			isVerified: false,
+			otpVerificationCode: tokenHash("54321"),
+			emailVerificationTokenExpires: new Date(Date.now() + 60_000),
+			emailVerificationAttempts: 4
+		});
+		usersRepo.getUserById.mockResolvedValue(pending);
+		// Simulates Mongo applying the conditional $inc atomically on the stored counter.
+		let storedAttempts = 4;
+		usersService.updateUser.mockImplementation(async (filter, update) => {
+			if (update.$inc) {
+				if (storedAttempts >= filter.emailVerificationAttempts.$not.$gte) {
+					throw new NotFoundException("User not found.");
+				}
+				storedAttempts += 1;
+			}
+			return {};
+		});
+
+		const guesses = ["00001", "00002", "00003", "00004", "00005", "00006", "00007", "00008", "54321"];
+		const results = await Promise.allSettled(
+			guesses.map(guess => service.verifyEmail(pending._id.toString(), guess, true))
+		);
+
+		expect(results.every(result => result.status === "rejected")).toBe(true);
+		expect(storedAttempts).toBe(5);
+		expect(usersService.updateUser).not.toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ $set: expect.objectContaining({ isVerified: true }) })
 		);
 	});
 

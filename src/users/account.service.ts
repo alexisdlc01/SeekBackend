@@ -13,6 +13,8 @@ import { ConnectionStatus, EmailConnection } from "../connectors/email-connectio
 import { ConnectorsService } from "../connectors/connectors.service";
 import { UploadService } from "../upload/upload.service";
 import { isKeyOwnedBy } from "../upload/object-key";
+import { Listing } from "../listings/listings.schema";
+import { ModerationStatus } from "../listings/enums/moderation-status.enum";
 
 const MAX_TEAM = 20;
 
@@ -36,7 +38,8 @@ export class AccountService {
 		@InjectModel(DocumentShare.name) private readonly shareModel: Model<DocumentShare>,
 		@InjectModel(EmailConnection.name) private readonly connectionModel: Model<EmailConnection>,
 		private readonly connectors: ConnectorsService,
-		private readonly uploads: UploadService
+		private readonly uploads: UploadService,
+		@InjectModel(Listing.name) private readonly listingModel: Model<Listing>
 	) {}
 
 	async listTeam(ownerId: Types.ObjectId): Promise<TeamMemberDto[]> {
@@ -132,7 +135,7 @@ export class AccountService {
 	 * account can no longer sign in (sessions and password cleared, email
 	 * replaced). Refused while an active tenancy still has unpaid rent.
 	 * Mailboxes are disconnected (token revoked, synced emails deleted), landlord
-	 * shares revoked and Seek Passport files erased first, so a failure leaves
+	 * shares revoked, listings unpublished and Seek Passport files erased first, so a failure leaves
 	 * the account intact and the user can retry. Tenancy files, contracts and
 	 * payments are kept: they belong to the tenancy record, not the profile.
 	 */
@@ -162,6 +165,16 @@ export class AccountService {
 			.exec();
 		for (const connection of connections) await this.connectors.disconnect({ _id: userId }, connection._id.toString());
 		await this.shareModel.updateMany({ owner: userId, revokedAt: null }, { $set: { revokedAt: deletedAt } });
+		// A tenancy still waiting on invites can never activate without this account (nor should it schedule rent to it): call it off.
+		await this.tenancyModel.updateMany(
+			{ status: TenancyStatus.PENDING_ACCEPTANCE, $or: [{ tenants: userId }, { pendingTenants: userId }, { landlord: userId }] },
+			{ $set: { status: TenancyStatus.ENDED } }
+		);
+		// Take the landlord's listings offline, as a suspension does; NEEDS_CHANGES keeps the moderation retry from re-approving them.
+		await this.listingModel.updateMany(
+			{ landlord: userId, isDraft: false },
+			{ $set: { isVerified: false, moderationStatus: ModerationStatus.NEEDS_CHANGES, moderationReasons: ["This account was deleted."], lastUpdated: deletedAt } }
+		);
 		const profile = await this.userModel.findById(userId).select("documents.key profilePicUrl").lean().exec();
 		const keys = (profile?.documents ?? []).map(doc => doc.key).filter(key => key?.startsWith("private/"));
 		// A file also filed on a tenancy stays: the landlord and co-tenants keep that record.

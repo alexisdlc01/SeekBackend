@@ -61,7 +61,8 @@ const RENT_PER_PERSON = { min: 150, max: 3000 };
 // Off-platform payment asks. "transfer" only counts when tied to before viewing / to hold / outside Seek, so "bank transfer accepted for rent" passes.
 const OFF_PLATFORM_PAYMENT = new RegExp([
 	"\\bwestern\\s+union\\b", "\\bmoney\\s?gram\\b", "\\bwire\\s+transfer\\b", "\\bbitcoin\\b", "\\bcrypto(?:currency)?\\b", "\\busdt\\b", "\\bgift\\s+cards?\\b",
-	"\\bpay(?:ing)?\\s+(?:the\\s+|a\\s+)?(?:deposit|rent|fees?)\\s+before\\s+(?:the\\s+|any\\s+)?(?:viewing|visit)s?\\b",
+	"\\bpaypal\\b", "\\brevolut\\b", "\\bvenmo\\b", "\\bcash\\s?app\\b", "\\bzelle\\b",
+	"\\bpay(?:ing)?\\s[^.\\n]{0,40}?(?:\\b(?:deposit|rent|fees?|pounds?)\\b|£\\s?\\d)[^.\\n]{0,20}\\sbefore\\s+(?:the\\s+|any\\s+|you\\s+)?(?:view|visit)",
 	"\\btransfer\\b[^.\\n]{0,40}\\b(?:before\\s+(?:the\\s+|any\\s+)?(?:viewing|visit)|to\\s+(?:hold|reserve|secure)|outside\\s+(?:of\\s+)?seek)"
 ].join("|"), "i");
 

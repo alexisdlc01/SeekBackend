@@ -1085,12 +1085,17 @@ export class PaymentsService {
 			// Holding deposits lapse with their offer instead of going late.
 			.find({
 				kind: { $ne: PaymentKind.HOLDING_DEPOSIT },
-				status: { $in: [PaymentStatus.SCHEDULED, PaymentStatus.FAILED] },
+				$or: [
+					{ status: { $in: [PaymentStatus.SCHEDULED, PaymentStatus.FAILED] } },
+					// An abandoned payment sheet or a crashed autopay leaves PENDING behind; an hour lets live attempts settle.
+					{ status: PaymentStatus.PENDING, updatedAt: { $lt: new Date(now.getTime() - 60 * 60 * 1000) } }
+				],
 				dueDate: { $lt: today }
 			})
 			.lean()
 			.exec();
 		for (const payment of overdue) {
+			if (payment.status === PaymentStatus.PENDING && !(await this.pendingAttemptDead(payment as PaymentLean))) continue;
 			const result = await this.paymentModel.updateOne(
 				{ _id: payment._id, status: payment.status },
 				{ $set: { status: PaymentStatus.LATE } }
@@ -1185,6 +1190,52 @@ export class PaymentsService {
 		}
 
 		await this.sweepCompliance(now);
+	}
+
+	/** Keeps a year of rent scheduled for every active tenancy (buildSchedule only goes 12 months ahead). */
+	async extendSchedules(now: Date = new Date()) {
+		const tenancies = await this.tenancyModel
+			.find(
+				{ status: TenancyStatus.ACTIVE, $or: [{ endDate: null }, { endDate: { $gt: startOfUtcDay(now) } }] },
+				{ landlord: 1, tenants: 1, startDate: 1, endDate: 1, monthlyRent: 1, application: 1 }
+			)
+			.lean()
+			.exec();
+		if (tenancies.length === 0) return;
+		const plans = await this.planModel
+			.find({ tenancy: { $in: tenancies.map(tenancy => tenancy._id) } }, { tenancy: 1, tenant: 1, frequency: 1 })
+			.lean()
+			.exec();
+		const byId = new Map(tenancies.map(tenancy => [tenancy._id.toString(), tenancy]));
+		for (const plan of plans) {
+			const tenancy = byId.get(plan.tenancy.toString());
+			if (tenancy) await this.rentSchedule.extend(tenancy, plan.tenant, plan.frequency, now);
+		}
+	}
+
+	/**
+	 * A stale PENDING row goes late only once Stripe says its attempt is over: a bank debit can sit in
+	 * "processing" for days, and a late row is payable again. Settled ones are marked paid; no answer means wait.
+	 */
+	private async pendingAttemptDead(payment: PaymentLean): Promise<boolean> {
+		if (!payment.providerRef) return true;
+		if (this.mode() !== "stripe") return false;
+		const stripe = new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!);
+		try {
+			if (payment.providerRef.startsWith("cs_")) {
+				const session = await stripe.retrieveCheckoutSession(payment.providerRef);
+				if (session.payment_status === "paid") await this.completeCheckout(session);
+				return session.status === "expired";
+			}
+			if (!payment.providerRef.startsWith("pi_")) return false;
+			const intent = await stripe.retrievePaymentIntent(payment.providerRef);
+			// Same guard as the webhook: a mismatched amount is left to it (it refunds).
+			if (intent.status === "succeeded" && intent.amount === payment.amount) await this.markPaid(payment, PaymentProvider.STRIPE, intent.id);
+			return ["canceled", "requires_payment_method"].includes(intent.status);
+		} catch (error) {
+			this.logger.warn(`Pending payment ${payment._id.toString()} left pending: Stripe could not be checked (${error instanceof StripeApiError ? error.status : (error as Error).message})`);
+			return false;
+		}
 	}
 
 	/** Charges due instalments off-session with the card saved at Checkout. */

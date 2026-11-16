@@ -2,7 +2,7 @@ import { ApiProperty } from "@nestjs/swagger";
 import { Expose, Transform, Type } from "class-transformer";
 import { IsOptional, ValidateNested } from "class-validator";
 import { MessageDto } from "../../message/dto/message.dto";
-import { UserDto } from "../../users/dto/user.dto";
+import { PublicUserDto } from "../../users/dto/user.dto";
 
 export class ConversationDto {
 	@ApiProperty()
@@ -37,11 +37,11 @@ export class ConversationDto {
 	@Expose()
 	avatar?: string;
 
-	@ApiProperty({ type: UserDto, isArray: true })
+	@ApiProperty({ type: PublicUserDto, isArray: true })
 	@Expose()
 	@ValidateNested({ each: true })
-	@Type(() => UserDto)
-	users: UserDto[];
+	@Type(() => PublicUserDto)
+	users: PublicUserDto[];
 
 	@ApiProperty({ type: MessageDto, isArray: true })
 	@Expose()

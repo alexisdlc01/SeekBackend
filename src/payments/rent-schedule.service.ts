@@ -94,6 +94,50 @@ export class RentScheduleService {
 			frequency,
 			from
 		});
+		return this.insert(tenancy, tenant, instalments, today);
+	}
+
+	/**
+	 * Hourly top-up so rent keeps running a year ahead (periodic and long
+	 * tenancies outlive the first 12 months). Only appends after the last
+	 * period already covered; existing rows are never touched.
+	 */
+	async extend(
+		tenancy: TenancyForSchedule,
+		tenant: Types.ObjectId,
+		frequency: PlanFrequency,
+		now: Date = new Date()
+	) {
+		const today = startOfUtcDay(now);
+		const latest = await this.paymentModel
+			.findOne({ tenancy: tenancy._id, tenant })
+			.sort({ dueDate: -1 })
+			.lean()
+			.exec();
+		// No rows yet: ensureDefaultPlans / updatePlan build the first schedule.
+		if (!latest) return [];
+		const horizon = addMonths(today, 12);
+		const from = new Date(Math.max(
+			today.getTime(),
+			addMonths(new Date(latest.dueDate), latest.coversMonths ?? 1).getTime()
+		));
+		if (from >= horizon) return [];
+		const instalments = buildSchedule({
+			startDate: new Date(tenancy.startDate),
+			endDate: tenancy.endDate ? new Date(tenancy.endDate) : null,
+			monthlyRent: tenancy.monthlyRent,
+			frequency,
+			from
+		}).filter(instalment => instalment.dueDate < horizon);
+		return this.insert(tenancy, tenant, instalments, today);
+	}
+
+	private async insert(
+		tenancy: TenancyForSchedule,
+		tenant: Types.ObjectId,
+		instalments: ReturnType<typeof buildSchedule>,
+		today: Date
+	) {
 		if (instalments.length === 0) return [];
 
 		// Tenant Fees Act: a paid holding deposit goes towards the first rent.

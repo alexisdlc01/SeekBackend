@@ -1,7 +1,7 @@
 import { Expose, Transform, Type } from "class-transformer";
 import { IsOptional } from "class-validator";
 import { Role } from "../../auth/role.enum";
-import { ApiProperty } from "@nestjs/swagger";
+import { ApiProperty, PickType } from "@nestjs/swagger";
 import { RegistrationKind, RegistrationStatus } from "../types/landlord-registration";
 import { TeamScope } from "../types/team-scope";
 
@@ -158,3 +158,8 @@ export class UserDto {
 	@Transform(({ obj }) => obj?.teamOf ?? null)
 	teamOf?: TeamOfDto | null;
 }
+
+// What other members of a conversation may see: no contact details, birth date, prefs or payout bank.
+export class PublicUserDto extends PickType(UserDto, [
+	"_id", "name", "username", "role", "studentVerified", "university", "profilePicUrl", "isVerified", "lastSeen", "companyName"
+] as const) {}

@@ -18,6 +18,7 @@ import { Payment, PaymentSchema } from "../payments/payment.schema";
 import { UploadModule } from "../upload/upload.module";
 import { ConnectorsModule } from "../connectors/connectors.module";
 import { DocumentReviewService } from "./document-review.service";
+import { Listing, ListingSchema } from "../listings/listings.schema";
 
 @Module({
 	imports: [
@@ -31,7 +32,8 @@ import { DocumentReviewService } from "./document-review.service";
 				schema: DocumentShareSchema
 			},
 			{ name: Tenancy.name, schema: TenancySchema },
-			{ name: Payment.name, schema: PaymentSchema }
+			{ name: Payment.name, schema: PaymentSchema },
+			{ name: Listing.name, schema: ListingSchema }
 		]),
 		SharedModule,
 		RedisModule,

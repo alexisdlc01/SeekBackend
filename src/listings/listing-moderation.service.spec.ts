@@ -113,6 +113,9 @@ describe("scam rule", () => {
 		expect(flagged).toEqual([expect.stringContaining("outside Seek")]);
 		expect(listingRuleFailures(goodListing({ amenities: ["western union"] }) as never, NOW, true)).toEqual([expect.stringContaining("outside Seek")]);
 		expect(listingRuleFailures(goodListing({ propertyDesc: "Pay in bit\u200bcoin or b.i.t.c.o.i.n or western-union" }) as never, NOW, true)).toEqual([expect.stringContaining("outside Seek")]);
+		for (const desc of ["Please pay the first month's rent before viewing", "Send 200 pounds to hold the room via PayPal", "Pay by Revolut or Venmo before you visit", "pay a 200 pound deposit before viewing", "pay the holding deposit before the viewing"]) {
+			expect(listingRuleFailures(goodListing({ propertyDesc: desc }) as never, NOW, true)).toEqual([expect.stringContaining("outside Seek")]);
+		}
 		expect(listingRuleFailures(goodListing({ propertyDesc: "Bank transfer accepted for rent, paid monthly through Seek." }) as never, NOW, true)).toEqual([]);
 	});
 });

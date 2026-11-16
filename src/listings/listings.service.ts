@@ -3,6 +3,7 @@ import {
 	forwardRef,
 	Inject,
 	BadRequestException,
+	ConflictException,
 	NotFoundException,
 	UnauthorizedException
 } from "@nestjs/common";
@@ -10,6 +11,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Listing, ViewingSlotAvailability } from "./listings.schema";
 import { Application } from "../application/application.schema";
 import { ApplicationStage } from "../application/enums/application-stage.enum";
+import { Tenancy } from "../tenancies/tenancy.schema";
 import { Model, Types } from "mongoose";
 import { CreateListingDto } from "./dto/create-listing.dto";
 import { User } from "../users/users.schema";
@@ -78,7 +80,9 @@ export class ListingsService {
 		private readonly listingsGateway: ListingsGateway,
 		private readonly configService: ConfigService,
 		@InjectModel(Application.name)
-		private readonly applicationModel: Model<Application>
+		private readonly applicationModel: Model<Application>,
+		@InjectModel(Tenancy.name)
+		private readonly tenancyModel: Model<Tenancy>
 	) {}
 
 	/** Places left per viewing slot: capacity minus open households already booked at that time. */
@@ -224,6 +228,15 @@ export class ListingsService {
 			throw new UnauthorizedException(
 				"Unauthorized: You do not own this listing"
 			);
+		}
+
+		// An accepted/signed application or any tenancy references the listing; deleting it would orphan them.
+		const [let_, tenancy] = await Promise.all([
+			this.applicationModel.exists({ listing: listing._id, stage: { $in: [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] } }),
+			this.tenancyModel.exists({ listing: listing._id })
+		]);
+		if (let_ || tenancy) {
+			throw new ConflictException("A listing with an accepted application or a tenancy cannot be deleted.");
 		}
 
 		await this.listingModel.deleteOne({ _id: listingId });

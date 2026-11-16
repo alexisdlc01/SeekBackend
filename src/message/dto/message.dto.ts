@@ -2,7 +2,7 @@ import { Expose, Transform, Type } from "class-transformer";
 import { IsEnum, ValidateNested } from "class-validator";
 import { ApiProperty } from "@nestjs/swagger";
 import { MessageType } from "../../conversation/message.schema";
-import { UserDto } from "../../users/dto/user.dto";
+import { PublicUserDto } from "../../users/dto/user.dto";
 import { ObjectIdString } from "src/shared/object-id.transform";
 
 export class MessageDto {
@@ -14,8 +14,8 @@ export class MessageDto {
 	@ApiProperty()
 	@Expose()
 	@ValidateNested({ each: true })
-	@Type(() => UserDto)
-	sender: UserDto;
+	@Type(() => PublicUserDto)
+	sender: PublicUserDto;
 
 	@ApiProperty({ enum: MessageType })
 	@IsEnum(MessageType)

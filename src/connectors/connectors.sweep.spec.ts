@@ -129,3 +129,17 @@ describe("ConnectorsService reply during a disconnect", () => {
 		expect(deleteOne).toHaveBeenCalledWith({ _id: createdId });
 	});
 });
+
+describe("ConnectorsService disconnect", () => {
+	it("clears lastSyncAt so a reconnect re-imports the history it deleted", async () => {
+		const imap = { ...conn(EmailProvider.IMAP), lastSyncAt: new Date("2026-11-10T00:00:00Z") };
+		const { service, connectionModel, messageModel } = setup([imap]);
+		Object.assign(messageModel, { deleteMany: jest.fn().mockResolvedValue({ deletedCount: 40 }) });
+
+		await service.disconnect({ _id: owner } as any, imap._id.toString());
+		expect((connectionModel.updateOne.mock.calls[0] as any)[1].$set).toMatchObject({
+			status: ConnectionStatus.DISCONNECTED,
+			lastSyncAt: null
+		});
+	});
+});
