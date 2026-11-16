@@ -86,6 +86,7 @@ export class AuthController {
 		@Res({ passthrough: true }) response: Response
 	) {
 		const isMobile = request.headers.platform === "mobile";
+		assertMobileRole({ role: body.role } as User, isMobile);
 		const result = await this.authService.signup(body, isMobile);
 		if (result.verificationRequired) {
 			return result;

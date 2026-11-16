@@ -63,9 +63,11 @@ export class AuthService {
 	}
 
 	async signup(body: CreateUserDto, isMobile: boolean): Promise<SignupResult> {
-		if (body.role !== undefined && body.role !== Role.STUDENT) {
+		const role = body.role ?? Role.STUDENT;
+		// Anyone may open a student or landlord account; never SUPERUSER.
+		if (role !== Role.STUDENT && role !== Role.LANDLORD_AGENCY) {
 			throw new ForbiddenException(
-				"Public signup is only available for student accounts."
+				"Public signup is only available for student and landlord accounts."
 			);
 		}
 
@@ -77,7 +79,7 @@ export class AuthService {
 			name: body.name.trim(),
 			email: this.normalizeEmail(body.email),
 			password,
-			role: Role.STUDENT,
+			role,
 			isVerified: !verificationRequired,
 			profilePicUrl: body.imageUrl
 		};

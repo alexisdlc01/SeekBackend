@@ -133,12 +133,30 @@ describe("AuthService", () => {
 		expect(mailService.sendOtpEmail).not.toHaveBeenCalled();
 	});
 
-	it("rejects privileged roles on public signup", async () => {
-		await expect(service.signup({
+	it("lets anyone sign up as a landlord", async () => {
+		usersRepo.create.mockImplementation(async data => makeUser(data));
+
+		const result = await service.signup({
 			name: "Agency",
 			email: "agency@example.com",
 			password: "Str0ng!Password",
 			role: Role.LANDLORD_AGENCY
+		}, false);
+
+		expect(result.verificationRequired).toBe(true);
+		expect(usersRepo.create).toHaveBeenCalledWith(expect.objectContaining({
+			role: Role.LANDLORD_AGENCY,
+			isVerified: false
+		}));
+		expect(mailService.sendVerificationEmail).toHaveBeenCalled();
+	});
+
+	it("rejects privileged roles on public signup", async () => {
+		await expect(service.signup({
+			name: "Admin",
+			email: "admin@example.com",
+			password: "Str0ng!Password",
+			role: Role.SUPERUSER
 		}, false)).rejects.toBeInstanceOf(ForbiddenException);
 		expect(usersRepo.create).not.toHaveBeenCalled();
 	});
