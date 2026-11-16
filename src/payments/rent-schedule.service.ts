@@ -28,6 +28,19 @@ export class RentScheduleService {
 		@InjectModel(Payment.name) private readonly paymentModel: Model<Payment>
 	) {}
 
+	// shortcut: in-process only (one API instance runs the sweeper too); use a DB/Redis lock once there are several instances.
+	private readonly queues = new Map<string, Promise<unknown>>();
+
+	/** Runs schedule rewrites for one tenant one at a time: overlapping ones would each insert the whole schedule. */
+	private serialized<T>(tenancy: TenancyForSchedule, tenant: Types.ObjectId, work: () => Promise<T>): Promise<T> {
+		const key = `${tenancy._id}:${tenant}`;
+		const run = (this.queues.get(key) ?? Promise.resolve()).then(work);
+		const tail = run.then(() => undefined, () => undefined);
+		this.queues.set(key, tail);
+		void tail.then(() => { if (this.queues.get(key) === tail) this.queues.delete(key); });
+		return run;
+	}
+
 	/** Gives every tenant a monthly plan and a year of scheduled rent. */
 	async ensureDefaultPlans(tenancy: TenancyForSchedule, now: Date = new Date()) {
 		for (const tenant of tenancy.tenants) {
@@ -53,26 +66,37 @@ export class RentScheduleService {
 
 	/**
 	 * Replaces future SCHEDULED payments with ones for the new frequency.
-	 * Paid, pending, failed and late payments stay; new instalments start
-	 * after the last period they cover. A tenant with no payments yet starts
+	 * Paid, pending, failed and late payments stay, and so does every unpaid
+	 * instalment before the last of them; new instalments start after the
+	 * last period covered. A tenant with no payments yet starts
 	 * from the tenancy start date, or from this month when it began earlier
 	 * (earlier months are not back-filled), so the current month's rent exists.
 	 * An instalment whose due date has already passed is created as LATE.
 	 */
-	async regenerate(
-		tenancy: TenancyForSchedule,
-		tenant: Types.ObjectId,
-		frequency: PlanFrequency,
-		now: Date = new Date()
-	) {
+	regenerate(tenancy: TenancyForSchedule, tenant: Types.ObjectId, frequency: PlanFrequency, now: Date = new Date()) {
+		return this.serialized(tenancy, tenant, () => this.rewrite(tenancy, tenant, frequency, now));
+	}
+
+	private async rewrite(tenancy: TenancyForSchedule, tenant: Types.ObjectId, frequency: PlanFrequency, now: Date) {
 		const today = startOfUtcDay(now);
+		// Unpaid months before a kept instalment (opened or paid early) stay as they are, or they would never be billed.
+		const lastKept = await this.paymentModel
+			.findOne({
+				tenancy: tenancy._id,
+				tenant,
+				$or: [{ status: { $ne: PaymentStatus.SCHEDULED } }, { dueDate: { $lt: today } }, { providerRef: /^cs_/ }]
+			})
+			.sort({ dueDate: -1 })
+			.lean()
+			.exec();
 		await this.paymentModel.deleteMany({
 			tenancy: tenancy._id,
 			tenant,
 			status: PaymentStatus.SCHEDULED,
-			dueDate: { $gte: today },
 			// An instalment with a Checkout session open can still be paid: keep it, the new plan starts after it.
-			providerRef: { $not: /^cs_/ }
+			providerRef: { $not: /^cs_/ },
+			// Only rows the autopay sweep (dueDate <= now) can't have tried yet: a retried one must keep its _id, its Stripe idempotency key.
+			dueDate: { $gt: new Date(Math.max(now.getTime(), lastKept ? new Date(lastKept.dueDate).getTime() : 0)) }
 		});
 
 		const latest = await this.paymentModel
@@ -102,12 +126,11 @@ export class RentScheduleService {
 	 * tenancies outlive the first 12 months). Only appends after the last
 	 * period already covered; existing rows are never touched.
 	 */
-	async extend(
-		tenancy: TenancyForSchedule,
-		tenant: Types.ObjectId,
-		frequency: PlanFrequency,
-		now: Date = new Date()
-	) {
+	extend(tenancy: TenancyForSchedule, tenant: Types.ObjectId, frequency: PlanFrequency, now: Date = new Date()) {
+		return this.serialized(tenancy, tenant, () => this.append(tenancy, tenant, frequency, now));
+	}
+
+	private async append(tenancy: TenancyForSchedule, tenant: Types.ObjectId, frequency: PlanFrequency, now: Date) {
 		const today = startOfUtcDay(now);
 		const latest = await this.paymentModel
 			.findOne({ tenancy: tenancy._id, tenant })

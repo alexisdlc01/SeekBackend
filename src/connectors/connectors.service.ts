@@ -1141,11 +1141,22 @@ export class ConnectorsService {
 		const category = billCategoryFor(mail.from, mail.subject);
 		const provider = classification.counterpartName || mail.fromName || mail.from;
 		const period = billPeriod(mail.subject, mail.receivedAt);
+		// RFC Message-ID is the same in every flatmate's mailbox; the provider id is per mailbox.
+		const sourceMessageId = mail.internetMessageId || mail.providerMessageId;
 		const duplicate = await this.billModel.exists({
 			tenancy: target.tenancy._id,
 			provider,
 			amount,
-			...(period ? { periodStart: period.start } : { createdAt: { $gte: new Date(Date.now() - 45 * 24 * 3_600_000) } })
+			// No month in the subject: key on this email, so a fixed monthly bill is never mistaken for the last one.
+			// Bills filed before the key existed have none: fall back to the old 45-day window so a re-sync never refiles them.
+			...(period
+				? { periodStart: period.start }
+				: {
+						$or: [
+							{ sourceMessageId },
+							{ sourceMessageId: null, createdAt: { $gte: new Date(Date.now() - 45 * 24 * 3_600_000) } }
+						]
+					})
 		});
 		if (duplicate) return true;
 		const coveredByRent =
@@ -1158,6 +1169,7 @@ export class ConnectorsService {
 			amount,
 			periodStart: period?.start ?? null,
 			periodEnd: period?.end ?? null,
+			sourceMessageId,
 			dueDate: null,
 			includedInRent: coveredByRent,
 			splitBetween: target.tenancy.tenants,

@@ -111,6 +111,17 @@ describe("ContractsService deductions", () => {
 		expect(current().deductions.status).toBe(DeductionStatus.DISPUTED);
 	});
 
+	it("lets the landlord re-propose after a dispute, clearing earlier answers", async () => {
+		const { service, current } = setup({});
+		const landlord = { _id: tenancy.landlord } as any;
+		await service.proposeDeductions(id, { items: [{ description: "Carpet", amount: 12000 }] }, landlord);
+		await service.respondToDeductions(id, { accept: false, note: "Already stained" }, { _id: maya } as any);
+		expect(current().deductions.status).toBe(DeductionStatus.DISPUTED);
+		const result = await service.proposeDeductions(id, { items: [{ description: "Carpet", amount: 6000 }] }, landlord);
+		expect(result!.deductions!.status).toBe(DeductionStatus.PROPOSED);
+		expect(result!.deductions!.responses).toEqual([]);
+	});
+
 	it("is DISPUTED as soon as one tenant disagrees", async () => {
 		const { service } = setup({});
 		await service.proposeDeductions(id, { items: [{ description: "Carpet", amount: 12000 }] }, { _id: tenancy.landlord } as any);

@@ -52,6 +52,9 @@ export class Bill {
 	@Prop({ type: Date, default: null })
 	periodEnd: Date | null;
 
+	@Prop({ type: String, default: null })
+	sourceMessageId: string | null;
+
 	@ApiProperty({ type: String, format: "date-time", nullable: true })
 	@Prop({ type: Date, default: null })
 	dueDate: Date | null;

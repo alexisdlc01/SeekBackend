@@ -1,4 +1,5 @@
 import { firstValueFrom, of } from "rxjs";
+import { ThrottlerStorageService } from "@nestjs/throttler";
 import { AuthController } from "./auth.controller";
 import { SerializeInterceptor } from "../interceptors/serialize.interceptor";
 import { UserDto } from "../users/dto/user.dto";
@@ -123,4 +124,27 @@ describe("AuthController", () => {
 		await expect(new Guard().canActivate(ctx)).resolves.toBe(true);
 		expect(req.user).toEqual({ _id: "u1", authSessionId: "s1" });
 	});
+
+	it("rate-limits password changes like change-email, since each attempt checks the current password", () => {
+		const handler = AuthController.prototype.changePassword;
+		expect(Reflect.getMetadata("THROTTLER:LIMITauth", handler)).toBe(5);
+		expect(Reflect.getMetadata("THROTTLER:TTLauth", handler)).toBe(60 * 60_000);
+	});
+
+	it.each(["changePassword", "requestEmailChange"] as const)(
+		"%s stays blocked for the whole hour once the 5 tries are used",
+		async method => {
+			jest.useFakeTimers();
+			const handler = AuthController.prototype[method];
+			const [limit, ttl, block] = ["LIMIT", "TTL", "BLOCK_DURATION"].map(k => Reflect.getMetadata(`THROTTLER:${k}auth`, handler));
+			const storage = new ThrottlerStorageService();
+			const hit = () => storage.increment("user-1", ttl, limit, block, "auth");
+			for (let i = 0; i < limit; i++) await hit();
+			expect((await hit()).isBlocked).toBe(true);
+			jest.advanceTimersByTime(5 * 60_000);
+			expect((await hit()).isBlocked).toBe(true);
+			storage.onApplicationShutdown();
+			jest.useRealTimers();
+		}
+	);
 });

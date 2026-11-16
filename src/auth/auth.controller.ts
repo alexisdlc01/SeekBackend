@@ -152,6 +152,8 @@ export class AuthController {
 	}
 
 	@Patch("/password")
+	// Block for the whole window: throttler 6 resets the count when the block ends, so a 1-min block allowed ~6 guesses a minute.
+	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60 * 60_000 } })
 	@UseGuards(JwtAuthGuard)
 	@ApiChangePasswordDocs()
 	async changePassword(
@@ -168,7 +170,7 @@ export class AuthController {
 	}
 
 	@Post("/change-email")
-	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60_000 } })
+	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60 * 60_000 } })
 	@UseGuards(JwtAuthGuard)
 	async requestEmailChange(
 		@Body() body: ChangeEmailDto,
