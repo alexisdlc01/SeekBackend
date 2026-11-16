@@ -42,6 +42,18 @@ describe("rule-based search parser", () => {
 			expect(parseMaxRent("£150pw")).toBe(650);
 		});
 
+		it("uses the upper end of a range and ignores distances", () => {
+			expect(parseMaxRent("£600-£700 pcm")).toBe(700);
+			expect(parseMaxRent("between £600 and £700 each")).toBe(700);
+			expect(parseMaxRent("£150-£200 pw")).toBe(867);
+			expect(parseMaxRent("4 bed within 800 metres of campus")).toBeUndefined();
+			expect(parseMaxRent("within £700")).toBe(700);
+			expect(parseMaxRent("£500 to 700 pcm")).toBe(700);
+			expect(parseMaxRent("£500 - 700 pcm")).toBe(700);
+			expect(parseMaxRent("£150 to 200 pw")).toBe(867);
+			expect(parseMaxRent("£500 and 2 bathrooms")).toBe(500);
+		});
+
 		it("ignores numbers that are not rents", () => {
 			expect(parseMaxRent("2-bed for 12 months")).toBeUndefined();
 			expect(parseMaxRent("within 10 minutes of campus")).toBeUndefined();

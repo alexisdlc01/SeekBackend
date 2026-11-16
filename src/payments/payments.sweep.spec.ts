@@ -54,6 +54,19 @@ describe("PaymentsService reminders and receipts", () => {
 		expect(byDefault.notifications.notify).not.toHaveBeenCalled();
 	});
 
+	it("keeps the compliance dedupe key of an over-cap listing deposit stable from one day to the next", async () => {
+		const listing = { _id: new Types.ObjectId(), landlord, monthlyRent: 1000, securityDeposit: 3000, gasSafetyExpiry: new Date("2026-01-01") };
+		const keysOn = async (day: string) => {
+			const { service, notifications } = setup({}, now);
+			(service as any).listingModel.find.mockReturnValue(lean([listing]));
+			await (service as any).sweepCompliance(new Date(day));
+			return notifications.notify.mock.calls.map(([n]) => n.dedupeKey).filter((k: string) => k.includes("OVER_CAP"));
+		};
+		const first = await keysOn("2026-11-16T09:00:00Z");
+		expect(first).toHaveLength(1);
+		expect(await keysOn("2026-11-17T09:00:00Z")).toEqual(first);
+	});
+
 	it("marks a stale PENDING rent late, but not one attempted within the hour", async () => {
 		const { service, paymentModel } = setup({}, now);
 		const stale = { _id: new Types.ObjectId(), tenancy: new Types.ObjectId(), tenant, landlord, amount: 69500, status: PaymentStatus.PENDING, dueDate: new Date("2026-11-01") };
@@ -94,6 +107,20 @@ describe("PaymentsService reminders and receipts", () => {
 			expect(lateMarked).toBe(false);
 			expect(markPaid).toHaveBeenCalledWith(stale, "stripe", "pi_1");
 		});
+	});
+
+	it("keeps the autopay wording out of the reminder when Stripe has no saved card", async () => {
+		const dueDate = new Date("2026-11-06T00:00:00Z");
+		const bodyFor = async (plan: Record<string, unknown>) => {
+			const ctx = setup(undefined, dueDate);
+			// paymentMethodId is select:false: only return the fields the query projects.
+			ctx.planModel.findOne.mockImplementation((_f: unknown, proj: Record<string, number> = {}) =>
+				lean(Object.fromEntries(Object.entries(plan).filter(([k]) => proj[k]))));
+			await ctx.service.sweep(now);
+			return ctx.notifications.notify.mock.calls[0][0].body;
+		};
+		expect(await bodyFor({ autopay: true })).toBe("Pay in Seek in a couple of taps.");
+		expect(await bodyFor({ autopay: true, paymentMethodId: "pm_1" })).toBe("Autopay will take it automatically.");
 	});
 
 	it("defaults to three days before", async () => {

@@ -113,7 +113,7 @@ const PER_WEEK = /^\s*(?:a|per|\/|p)\s*(?:week|wk|w)\b|^\s*pw\b|^\s*weekly\b/i;
 /** Monthly rent per person in pounds, from "under £700", "max 650pcm", "£160 a week"... */
 export function parseMaxRent(text: string): number | undefined {
 	const patterns = [
-		/(?:under|below|less than|max(?:imum)?|up to|no more than|at most|within|budget(?: of| is)?|cheaper than|<)\s*£?\s*(\d{1,3}(?:,\d{3})+|\d{1,5}(?:\.\d+)?)(k)?/gi,
+		/(?:under|below|less than|max(?:imum)?|up to|no more than|at most|within(?=\s*£)|budget(?: of| is)?|cheaper than|<)\s*£?\s*(\d{1,3}(?:,\d{3})+|\d{1,5}(?:\.\d+)?)(k)?/gi,
 		/£\s*(\d{1,3}(?:,\d{3})+|\d{1,5}(?:\.\d+)?)(k)?/gi,
 		/(\d{1,3}(?:,\d{3})+|\d{2,5})(k)?\s*(?:pounds|gbp|pcm|pppm|pm|a month|per month|\/month|\/m\b|pw|a week|per week|\/week)/gi
 	];
@@ -123,7 +123,13 @@ export function parseMaxRent(text: string): number | undefined {
 		while ((match = pattern.exec(text)) !== null) {
 			let value = amount(match[1], match[2]);
 			if (!Number.isFinite(value) || value <= 0) continue;
-			const after = text.slice(match.index + match[0].length);
+			let after = text.slice(match.index + match[0].length);
+			// A range ("£600-£700", "between £600 and £700") caps at its upper end.
+			const range = /^\s*(?:(?:[-–—]|to\b)\s*£?|and\s*£)\s*(\d{1,3}(?:,\d{3})+|\d{1,5}(?:\.\d+)?)(k)?/i.exec(after);
+			if (range) {
+				value = Math.max(value, amount(range[1], range[2]));
+				after = after.slice(range[0].length);
+			}
 			const tail = match[0].toLowerCase();
 			if (PER_WEEK.test(after) || /\b(?:pw|a week|per week|\/week)\b/.test(tail)) {
 				value = (value * 52) / 12;

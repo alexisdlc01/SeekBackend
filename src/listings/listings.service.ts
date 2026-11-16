@@ -26,6 +26,7 @@ import { ModerationStatus } from "./enums/moderation-status.enum";
 import { listingDepositCompliance } from "../tenancies/compliance";
 import { isKeyOwnedBy } from "../upload/object-key";
 import {
+	assertAvailabilityWindow,
 	assertAvailableFromNotPast,
 	normaliseCriteria,
 	normaliseViewingSlots,
@@ -44,7 +45,7 @@ type DraftUpdateData = Partial<Omit<CreateListingDto, "viewingSlots">> & {
 };
 
 /** What moderation checks: a change on a live listing re-runs the automatic check (ListingModerationService). */
-const REVIEWED_FIELDS = ["propertyTitle", "propertyDesc", "amenities", "streetAddress", "cityTown", "postcodeZIP", "country", "photos", "monthlyRent", "numOfPeople", "registrationNumber", "registerOfTitleKey"] as const;
+const REVIEWED_FIELDS = ["propertyTitle", "propertyDesc", "amenities", "streetAddress", "cityTown", "postcodeZIP", "country", "photos", "monthlyRent", "numOfPeople", "registrationNumber", "registerOfTitleKey", "propertyType", "bedroomsCount", "availableFrom", "gasSafetyExpiry", "eicrExpiry"] as const;
 
 export type ListingWithCoordinates = Listing & {
 	lat: number | null;
@@ -117,15 +118,19 @@ export class ListingsService {
 		data: Partial<DraftUpdateData>
 	): Promise<Listing> {
 		const update: Record<string, unknown> = { ...data, lastUpdated: new Date() };
-		if (data.availableFrom) {
+		if (data.availableFrom || data.availableUntil) {
 			const current = await this.listingModel
 				.findOne({ _id: new Types.ObjectId(listingId), landlord: new Types.ObjectId(landlord._id) })
-				.select("isDraft availableFrom")
+				.select("isDraft availableFrom availableUntil")
 				.lean()
 				.exec();
 			// Drafts may hold any date until publish; a live listing may keep its date but not move it into the past.
-			const moved = current?.availableFrom?.getTime() !== new Date(data.availableFrom).getTime();
-			if (current && !current.isDraft && moved) assertAvailableFromNotPast(data.availableFrom);
+			const moved = !!data.availableFrom && current?.availableFrom?.getTime() !== new Date(data.availableFrom).getTime();
+			if (current && !current.isDraft && moved) assertAvailableFromNotPast(data.availableFrom!);
+			// Drafts are checked at publish; a live listing must stay consistent on every edit.
+			if (current && !current.isDraft && (moved || data.availableUntil)) {
+				assertAvailabilityWindow(data.availableFrom ?? current.availableFrom, data.availableUntil ?? current.availableUntil);
+			}
 		}
 		// By value, not key: a DTO instance carries every declared field, unset ones as undefined.
 		const reviewed = REVIEWED_FIELDS.filter(key => data[key] !== undefined);
@@ -135,7 +140,11 @@ export class ListingsService {
 				.select(["isDraft", ...reviewed].join(" "))
 				.lean()
 				.exec();
-			const changed = reviewed.filter(key => JSON.stringify(data[key]) !== JSON.stringify((current as Record<string, unknown> | null)?.[key]));
+			// Stored dates come back as Date: compare by time, so resending the same date is not a change.
+			const changed = reviewed.filter(key => {
+				const stored = (current as Record<string, unknown> | null)?.[key];
+				return stored instanceof Date && data[key] ? new Date(data[key] as string).getTime() !== stored.getTime() : JSON.stringify(data[key]) !== JSON.stringify(stored);
+			});
 			// Only a key minted for this landlord: an applicant's key stored here would skip the share checks on download.
 			if (changed.includes("registerOfTitleKey") && data.registerOfTitleKey && !isKeyOwnedBy(data.registerOfTitleKey, landlord._id.toString())) {
 				throw new BadRequestException("Document key was not issued to this account.");
@@ -201,10 +210,11 @@ export class ListingsService {
 	async publishDraft(listingId: string, landlord: User): Promise<Listing> {
 		const draft = await this.listingModel
 			.findOne({ _id: new Types.ObjectId(listingId), landlord: new Types.ObjectId(landlord._id) })
-			.select("isDraft availableFrom")
+			.select("isDraft availableFrom availableUntil")
 			.lean()
 			.exec();
 		if (draft?.isDraft && draft.availableFrom) assertAvailableFromNotPast(draft.availableFrom);
+		if (draft?.isDraft) assertAvailabilityWindow(draft.availableFrom, draft.availableUntil);
 		const listing = await this.listingModel.findOneAndUpdate(
 			{
 				_id: new Types.ObjectId(listingId),

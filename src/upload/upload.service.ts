@@ -165,6 +165,13 @@ export class UploadService {
 		}
 
 		const userId = user._id.toString();
+		// Staff review title deeds from the dashboard: a superuser opens only a key a listing declares as its register of title.
+		if (user.role === Role.SUPERUSER) {
+			if (!(await this.listingModel.exists({ registerOfTitleKey: key }))) {
+				throw new ForbiddenException("File access is not allowed.");
+			}
+			return this.getPresignedDownloadUrl(key, "private");
+		}
 		// The key must also be minted for this landlord: a stored applicant key must not skip the share checks.
 		// A key from before owner-scoped keys (private/<timestamp>-<name>) still opens, unless it is a user's own document.
 		const ownsListingDocument = (isKeyOwnedBy(key, userId)

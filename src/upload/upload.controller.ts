@@ -6,7 +6,7 @@ import { UploadService } from "./upload.service";
 import { ApiAccessDocs, ApiPresignDocs } from "./upload-swagger.decorator";
 import { PresignReqDto } from "./dto/presign.dto";
 import { AccessReqDto } from "./dto/access.dto";
-import { StudentOrLandlord } from "../auth/decorators/role-auth.decorator";
+import { StudentOrLandlord, StudentOrLandlordOrSuperuser } from "../auth/decorators/role-auth.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "../users/users.schema";
 
@@ -35,7 +35,7 @@ export class UploadController {
 	@ApiAccessDocs()
 	@TeamAccess(TeamScope.APPLICATIONS, TeamScope.VIEWINGS_INBOX, TeamScope.TENANCIES)
 	@Get("access")
-	@StudentOrLandlord()
+	@StudentOrLandlordOrSuperuser()
 	async download(
 		@Query() { key }: AccessReqDto,
 		@CurrentUser() user: User

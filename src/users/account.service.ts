@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { ModuleRef } from "@nestjs/core";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { User } from "./users.schema";
@@ -7,7 +8,7 @@ import { Role } from "../auth/role.enum";
 import { Tenancy } from "../tenancies/tenancy.schema";
 import { TenancyStatus } from "../tenancies/tenancy.enums";
 import { Payment } from "../payments/payment.schema";
-import { PaymentStatus } from "../payments/payment.enums";
+import { PaymentStatus, PayoutStatus } from "../payments/payment.enums";
 import { DocumentShare } from "./shares/document-share.schema";
 import { ConnectionStatus, EmailConnection } from "../connectors/email-connection.schema";
 import { ConnectorsService } from "../connectors/connectors.service";
@@ -15,6 +16,7 @@ import { UploadService } from "../upload/upload.service";
 import { isKeyOwnedBy } from "../upload/object-key";
 import { Listing } from "../listings/listings.schema";
 import { ModerationStatus } from "../listings/enums/moderation-status.enum";
+import { ContractsService } from "../contracts/contracts.service";
 
 const MAX_TEAM = 20;
 
@@ -31,6 +33,7 @@ function publicKeyFromUrl(url: string): string | null {
 /** A landlord's team, and closing an account. */
 @Injectable()
 export class AccountService {
+	private readonly logger = new Logger(AccountService.name);
 	constructor(
 		@InjectModel(User.name) private readonly userModel: Model<User>,
 		@InjectModel(Tenancy.name) private readonly tenancyModel: Model<Tenancy>,
@@ -39,7 +42,9 @@ export class AccountService {
 		@InjectModel(EmailConnection.name) private readonly connectionModel: Model<EmailConnection>,
 		private readonly connectors: ConnectorsService,
 		private readonly uploads: UploadService,
-		@InjectModel(Listing.name) private readonly listingModel: Model<Listing>
+		@InjectModel(Listing.name) private readonly listingModel: Model<Listing>,
+		// Looked up at call time: importing ContractsModule here would loop back through AuthModule to UsersModule.
+		private readonly moduleRef?: ModuleRef
 	) {}
 
 	async listTeam(ownerId: Types.ObjectId): Promise<TeamMemberDto[]> {
@@ -133,7 +138,8 @@ export class AccountService {
 	/**
 	 * Soft delete: the record stays for tenancy and payment history, but the
 	 * account can no longer sign in (sessions and password cleared, email
-	 * replaced). Refused while an active tenancy still has unpaid rent.
+	 * replaced). Refused while an active tenancy still has unpaid rent, or while
+	 * Seek still holds collected rent for this landlord (it could never be paid out after).
 	 * Mailboxes are disconnected (token revoked, synced emails deleted), landlord
 	 * shares revoked, listings unpublished and Seek Passport files erased first, so a failure leaves
 	 * the account intact and the user can retry. Tenancy files, contracts and
@@ -156,6 +162,16 @@ export class AccountService {
 					"You still have rent to pay or collect on an active tenancy. End the tenancy or settle it before deleting your account."
 				);
 			}
+		}
+		// The payout sweep skips a deleted landlord, so rent Seek still holds for them would never be paid out.
+		const heldPayout = await this.paymentModel.exists({ landlord: userId, status: PaymentStatus.PAID, payoutStatus: PayoutStatus.HELD, refundDue: { $ne: true } });
+		if (heldPayout) {
+			throw new ConflictException("Seek is still holding rent collected for you. Finish setting up payouts so it can be paid out before deleting your account.");
+		}
+		// A checkout opened before deletion could still complete and leave money held for a deleted landlord.
+		const openCheckout = await this.paymentModel.exists({ landlord: userId, status: PaymentStatus.PENDING, providerRef: /^(cs_|pi_)/ });
+		if (openCheckout) {
+			throw new ConflictException("A payment to you is still in progress. Wait for it to complete or expire before deleting your account.");
 		}
 		const deletedAt = new Date();
 		const connections = await this.connectionModel
@@ -219,6 +235,11 @@ export class AccountService {
 		if (!result.matchedCount) throw new NotFoundException("Account not found.");
 		// Drop the address from other landlords' teams too.
 		await this.userModel.updateMany({ "team.user": userId }, { $pull: { team: { user: userId } } });
+		// Co-tenants' signing and deductions stop waiting for this account. It is already deleted, so a failure only logs.
+		await this.moduleRef
+			?.get(ContractsService, { strict: false })
+			.settleForDeletedTenant(userId)
+			.catch(error => this.logger.warn(`Contract re-check after deleting ${userId.toString()} failed: ${(error as Error).message}`));
 		return { deletedAt };
 	}
 }

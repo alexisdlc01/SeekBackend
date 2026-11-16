@@ -143,6 +143,11 @@ export class PaymentsService {
 		if (application?.stage !== ApplicationStage.OFFERED || !expires || expires <= now) {
 			throw new BadRequestException("This offer is no longer open, so its holding deposit can't be paid.");
 		}
+		// A deleted or suspended landlord gets no payout, so a deposit paid now would be stuck with Seek.
+		const landlord = await this.userModel.findById(payment.landlord, { suspendedAt: 1, deletedAt: 1 }).lean().exec();
+		if (!landlord || landlord.suspendedAt || landlord.deletedAt) {
+			throw new BadRequestException("This landlord is no longer on Seek, so this holding deposit can't be paid.");
+		}
 		await this.tenancies.assertNoCurrentTenancy([payment.tenant], application.listing);
 		return expires;
 	}
@@ -1154,7 +1159,7 @@ export class PaymentsService {
 			.exec();
 		for (const payment of reminderCandidates) {
 			const plan = await this.planModel
-				.findOne({ tenancy: payment.tenancy, tenant: payment.tenant }, { autopay: 1 })
+				.findOne({ tenancy: payment.tenancy, tenant: payment.tenant }, { autopay: 1, paymentMethodId: 1 })
 				.lean()
 				.exec();
 			const stage = dueReminderStage({
@@ -1173,7 +1178,7 @@ export class PaymentsService {
 					: `Rent of ${formatPence(payment.amount)} is due on ${formatDay(payment.dueDate)}`;
 			const body = stage === "LATE"
 				? "Pay now to keep your record clean."
-				: plan?.autopay ? "Autopay will take it automatically." : "Pay in Seek in a couple of taps.";
+				: plan?.autopay && (this.mode() !== "stripe" || plan.paymentMethodId) ? "Autopay will take it automatically." : "Pay in Seek in a couple of taps.";
 			const sent = await this.notifications.notify({
 				user: payment.tenant,
 				kind: NotificationKind.RENT_REMINDER,
@@ -1356,13 +1361,15 @@ export class PaymentsService {
 		}
 
 		for (const { item, landlord } of items) {
+			// These two kinds are due "now": a date in the key would re-notify every day.
+			const day = item.kind === "LISTING_DEPOSIT_OVER_CAP" || item.kind === "HOLDING_DEPOSIT_OVER_CAP" ? "" : item.dueDate.toISOString().slice(0, 10);
 			await this.notifications.notify(
 				{
 					user: landlord,
 					kind: NotificationKind.COMPLIANCE_DUE,
 					title: `${item.listingTitle ?? "A property"}: ${item.message}`,
 					...notificationTarget("landlord", NotificationTargetKind.COMPLIANCE),
-					dedupeKey: `compliance:${item.listing}:${item.kind}:${item.dueDate.toISOString().slice(0, 10)}:${item.severity}`
+					dedupeKey: `compliance:${item.listing}:${item.kind}:${day}:${item.severity}`
 				},
 				"complianceDue"
 			);
@@ -1441,6 +1448,14 @@ export class PaymentsService {
 		if (!paid) return null;
 
 		const holding = paid.kind === PaymentKind.HOLDING_DEPOSIT;
+		if (holding && paid.application) {
+			// Paid after the offer was accepted: the rent schedule was built without this credit.
+			const tenancy = await this.tenancyModel
+				.findOne({ application: paid.application }, { landlord: 1, tenants: 1, startDate: 1, endDate: 1, monthlyRent: 1, application: 1 })
+				.lean()
+				.exec();
+			if (tenancy) await this.rentSchedule.applyHoldingCredit(tenancy, paid.tenant);
+		}
 		const plan = holding
 			? null
 			: await this.planModel

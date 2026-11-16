@@ -29,6 +29,7 @@ describe("TenanciesService create / accept", () => {
 		const listingModel = { findById: jest.fn().mockReturnValue(lean(listing)) };
 		const userModel = { countDocuments: jest.fn(async (q: any) => q._id.$in.length) };
 		const applicationModel = { findById: jest.fn() };
+		const contractModel = { exists: jest.fn().mockResolvedValue(null) };
 		const rentSchedule = { ensureDefaultPlans: jest.fn() };
 		const notifications = { notify: jest.fn(), notifyMany: jest.fn() };
 		const service = new TenanciesService(
@@ -36,11 +37,12 @@ describe("TenanciesService create / accept", () => {
 			listingModel as any,
 			userModel as any,
 			applicationModel as any,
+			contractModel as any,
 			rentSchedule as any,
 			notifications as any
 		);
 		jest.spyOn(service, "getDetail").mockResolvedValue({} as any);
-		return { service, tenancyModel, listingModel, applicationModel, rentSchedule, notifications, created };
+		return { service, tenancyModel, listingModel, applicationModel, contractModel, rentSchedule, notifications, created };
 	}
 
 	const base = { listing: listingId.toString(), startDate: "2026-12-01", monthlyRent: 69500 };
@@ -163,6 +165,19 @@ describe("TenanciesService create / accept", () => {
 		expect(created[0].startDate).toEqual(availableFrom);
 	});
 
+	it("refuses (409) an application tenancy once the listing's availability has ended, writing nothing", async () => {
+		const { service, tenancyModel, listingModel, rentSchedule } = setup();
+		(tenancyModel as any).findOne = jest.fn().mockReturnValue(lean(null));
+		listingModel.findById.mockReturnValue(lean({ ...listing, availableFrom: new Date("2026-01-01"), availableUntil: new Date(Date.now() - 60_000) }));
+		const application = { _id: new Types.ObjectId(), listing: listingId, landlord: landlordId, applicants: [new Types.ObjectId()] };
+
+		await expect(service.createFromApplication(application)).rejects.toThrow(ConflictException);
+		// The accept/offer pre-check goes through the same period, before the application is flipped.
+		await expect(service.assertNoCurrentTenancy(application.applicants, listingId)).rejects.toThrow("availability has ended");
+		expect(tenancyModel.create).not.toHaveBeenCalled();
+		expect(rentSchedule.ensureDefaultPlans).not.toHaveBeenCalled();
+	});
+
 	it("refuses a student who was not invited", async () => {
 		const { service, tenancyModel } = setup();
 		tenancyModel.findById.mockReturnValue(
@@ -241,6 +256,31 @@ describe("TenanciesService create / accept", () => {
 		expect(lastSet()).not.toHaveProperty("energyAllowance");
 	});
 
+	it("refuses a new deposit amount once the Seek agreement is signed", async () => {
+		const { service, tenancyModel, contractModel } = setup();
+		jest.spyOn(service, "findForLandlord").mockResolvedValue({ _id: new Types.ObjectId(), listing: listingId, monthlyRent: 69500, depositAmount: 50000 } as any);
+		const deposit = { depositScheme: "DPS", depositReference: "DPS-1" } as any;
+		contractModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+		await expect(service.updateDeposit("t", { ...deposit, depositAmount: 60000 }, landlord)).rejects.toThrow(/already signed/);
+		expect(tenancyModel.updateOne).not.toHaveBeenCalled();
+		// scheme and reference are only known after signing, so an unchanged amount still goes through
+		await service.updateDeposit("t", { ...deposit, depositAmount: 50000 }, landlord);
+		expect(tenancyModel.updateOne).toHaveBeenCalled();
+	});
+
+	it("refuses a new deposit amount once one tenant has signed a SENT Seek agreement", async () => {
+		const { service, tenancyModel, contractModel } = setup();
+		jest.spyOn(service, "findForLandlord").mockResolvedValue({ _id: new Types.ObjectId(), listing: listingId, monthlyRent: 69500, depositAmount: 50000 } as any);
+		// Only a SENT contract with one signature exists: it matches the signatures clause, not status SIGNED.
+		contractModel.exists.mockImplementation(async (filter: any) =>
+			filter.$or?.some((clause: any) => "signatures.0" in clause) ? { _id: new Types.ObjectId() } : null
+		);
+		await expect(
+			service.updateDeposit("t", { depositScheme: "DPS", depositReference: "DPS-1", depositAmount: 60000 } as any, landlord)
+		).rejects.toThrow(/already signed/);
+		expect(tenancyModel.updateOne).not.toHaveBeenCalled();
+	});
+
 	it("sets or clears only the allowance for the owning landlord", async () => {
 		const { service, tenancyModel } = setup();
 		jest.spyOn(service, "findForLandlord").mockResolvedValue({ _id: new Types.ObjectId() } as any);
@@ -266,6 +306,21 @@ describe("TenanciesService create / accept", () => {
 		expect(filedType()).toBe(TenancyDocumentType.COUNCIL_TAX_EXEMPTION);
 		await service.addDocument("t", doc(TenancyDocumentType.TENANCY_AGREEMENT), landlord);
 		expect(filedType()).toBe(TenancyDocumentType.TENANCY_AGREEMENT);
+	});
+});
+
+describe("TenanciesService populated tenants", () => {
+	it("never returns an invited (not yet accepted) student's email or university", async () => {
+		const populate = jest.fn();
+		const query: any = { populate, sort: () => query, lean: () => ({ exec: () => Promise.resolve([]) }) };
+		populate.mockReturnValue(query);
+		const tenancyModel = { find: jest.fn().mockReturnValue(query) };
+		const service = new TenanciesService(tenancyModel as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+
+		await service.listForLandlord(new Types.ObjectId().toString());
+
+		const pending = populate.mock.calls.find(([opts]) => opts.path === "pendingTenants")![0].select;
+		expect(pending).not.toMatch(/email|universityDetails/);
 	});
 });
 

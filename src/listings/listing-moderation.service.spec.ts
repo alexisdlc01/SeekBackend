@@ -156,7 +156,11 @@ describe("ListingModerationService.moderate", () => {
 		const service = new ListingModerationService({ find } as never, {} as never, {} as never);
 		const moderate = jest.spyOn(service, "moderate").mockResolvedValue(null);
 		await service.retryPending();
-		expect(find).toHaveBeenCalledWith({ isDraft: false, isVerified: false, moderationStatus: { $in: [ModerationStatus.PENDING, null] } });
+		const filter = find.mock.calls[0][0];
+		expect(filter.isDraft).toBe(false);
+		expect(filter.$or[0]).toEqual({ isVerified: false, moderationStatus: { $in: [ModerationStatus.PENDING, null] } });
+		// A live listing whose gas or EICR certificate expired since approval is re-checked too.
+		expect(filter.$or[1]).toEqual({ isVerified: true, $or: [{ gasSafetyExpiry: { $lt: expect.any(Date) } }, { eicrExpiry: { $lt: expect.any(Date) } }] });
 		expect(moderate.mock.calls.map(call => call[0])).toEqual(ids);
 		expect(sort).toHaveBeenCalledWith({ moderatedAt: 1 });
 	});

@@ -111,6 +111,31 @@ describe("ListingsService", () => {
 		});
 	});
 
+	describe("availableUntil window", () => {
+		const found = (doc: object) => ({
+			select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(doc) }) })
+		});
+
+		it.each([
+			["before availableFrom", "2099-09-01", "2099-06-01"],
+			["already past", "2099-09-01", "2020-01-01"]
+		])("refuses to publish a draft whose availableUntil is %s", async (_l, from, until) => {
+			listingModel.findOne = jest
+				.fn()
+				.mockReturnValue(found({ isDraft: true, availableFrom: new Date(from), availableUntil: new Date(until) }));
+			await expect(service.publishDraft(new Types.ObjectId().toString(), makeLandlord())).rejects.toThrow(
+				"Available-until date"
+			);
+		});
+
+		it("refuses to move a live listing's availableUntil before its availableFrom", async () => {
+			listingModel.findOne = jest.fn().mockReturnValue(found({ isDraft: false, availableFrom: new Date("2099-09-01") }));
+			await expect(
+				service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { availableUntil: "2099-06-01" } as never)
+			).rejects.toThrow("Available-until date");
+		});
+	});
+
 	describe("viewing slots", () => {
 		const found = (doc: object | null) => ({
 			select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(doc) }) })
@@ -171,6 +196,18 @@ describe("ListingsService", () => {
 			listingModel.findOne = jest.fn().mockReturnValue(found({ isDraft: false, streetAddress: "1 Old Road" }));
 			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { streetAddress: "9 New Road" } as never);
 			expect(updateOf().isVerified).toBe(false);
+		});
+
+		it("sends a verified live listing back to moderation when a certificate expiry date changes", async () => {
+			listingModel.findOne = jest.fn().mockReturnValue(found({ isDraft: false, gasSafetyExpiry: new Date("2027-06-01T00:00:00Z") }));
+			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { gasSafetyExpiry: "2026-01-01T00:00:00Z" } as never);
+			expect(updateOf().isVerified).toBe(false);
+		});
+
+		it("keeps verification when the same certificate date is resent", async () => {
+			listingModel.findOne = jest.fn().mockReturnValue(found({ isDraft: false, eicrExpiry: new Date("2027-06-01T00:00:00Z") }));
+			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { eicrExpiry: "2027-06-01T00:00:00Z" } as never);
+			expect(updateOf().isVerified).toBeUndefined();
 		});
 
 		it("keeps verification when only an unreviewed field is sent, even with reviewed keys present as undefined", async () => {

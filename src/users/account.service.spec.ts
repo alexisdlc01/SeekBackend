@@ -25,6 +25,7 @@ function setup() {
 	const connectors = { disconnect: jest.fn().mockResolvedValue({}) };
 	const uploads = { deletePrivateObject: jest.fn().mockResolvedValue(undefined), deletePublicObject: jest.fn().mockResolvedValue(undefined) };
 	const listingModel = { updateMany: jest.fn().mockResolvedValue({}) };
+	const contracts = { settleForDeletedTenant: jest.fn().mockResolvedValue(undefined) };
 	const service = new AccountService(
 		userModel as any,
 		tenancyModel as any,
@@ -33,9 +34,10 @@ function setup() {
 		connectionModel as any,
 		connectors as any,
 		uploads as any,
-		listingModel as any
+		listingModel as any,
+		{ get: () => contracts } as any
 	);
-	return { service, userModel, tenancyModel, paymentModel, shareModel, connectionModel, connectors, uploads, listingModel };
+	return { service, userModel, tenancyModel, paymentModel, shareModel, connectionModel, connectors, uploads, listingModel, contracts };
 }
 
 describe("AccountService team", () => {
@@ -112,6 +114,24 @@ describe("AccountService deleteAccount", () => {
 		expect(userModel.updateOne).not.toHaveBeenCalled();
 	});
 
+	it("refuses while Seek still holds rent collected for the landlord, which a deleted account could never receive", async () => {
+		const { service, paymentModel, userModel } = setup();
+		const id = new Types.ObjectId();
+		paymentModel.exists.mockImplementation(async (filter: any) => (filter.payoutStatus === "HELD" ? { _id: new Types.ObjectId() } : null));
+		await expect(service.deleteAccount(id)).rejects.toBeInstanceOf(ConflictException);
+		expect(paymentModel.exists).toHaveBeenCalledWith(expect.objectContaining({ landlord: id, status: "PAID", payoutStatus: "HELD" }));
+		expect(userModel.updateOne).not.toHaveBeenCalled();
+	});
+
+	it("refuses while a payment to the landlord is still in progress, which could complete after deletion", async () => {
+		const { service, paymentModel, userModel } = setup();
+		const id = new Types.ObjectId();
+		paymentModel.exists.mockImplementation(async (filter: any) => (filter.status === "PENDING" ? { _id: new Types.ObjectId() } : null));
+		await expect(service.deleteAccount(id)).rejects.toBeInstanceOf(ConflictException);
+		expect(paymentModel.exists).toHaveBeenCalledWith(expect.objectContaining({ landlord: id, status: "PENDING", providerRef: /^(cs_|pi_)/ }));
+		expect(userModel.updateOne).not.toHaveBeenCalled();
+	});
+
 	it("soft deletes: signs out, clears the password and frees the email", async () => {
 		const { service, userModel } = setup();
 		const id = new Types.ObjectId();
@@ -121,6 +141,16 @@ describe("AccountService deleteAccount", () => {
 		expect(filter).toEqual({ _id: id, deletedAt: null });
 		expect(update.$set).toMatchObject({ refreshSessions: [], email: `deleted-${id.toString()}@deleted.invalid` });
 		expect(update.$unset.password).toBe(1);
+	});
+
+	it("re-checks co-tenants' contracts once the account is deleted, and a failure there does not fail the deletion", async () => {
+		const { service, userModel, contracts } = setup();
+		const id = new Types.ObjectId();
+		contracts.settleForDeletedTenant.mockRejectedValue(new Error("Mongo blip"));
+		await expect(service.deleteAccount(id)).resolves.toHaveProperty("deletedAt");
+		expect(contracts.settleForDeletedTenant).toHaveBeenCalledWith(id);
+		// After the soft delete, so the deleted tenant is no longer counted nor emailed.
+		expect(contracts.settleForDeletedTenant.mock.invocationCallOrder[0]).toBeGreaterThan(userModel.updateOne.mock.invocationCallOrder[0]);
 	});
 
 	it("disconnects every mailbox and revokes landlord shares before closing the account", async () => {

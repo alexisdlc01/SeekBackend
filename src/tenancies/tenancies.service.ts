@@ -6,6 +6,7 @@ import {
 	NotFoundException
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
+import { Contract, ContractStatus } from "../contracts/contract.schema";
 import { Model, Types } from "mongoose";
 import { Tenancy, TenancyDocument } from "./tenancy.schema";
 import { DocumentSource, TenancyDocumentType, TenancyStatus } from "./tenancy.enums";
@@ -29,6 +30,8 @@ export const TENANCY_LISTING_FIELDS =
 	"propertyTitle streetAddress cityTown postcodeZIP photos location nation billsIncluded numOfPeople bedroomsCount monthlyRent securityDeposit holdingDeposit gasSafetyExpiry eicrExpiry epcExpiry hmoLicenceExpiry licenceNumber";
 const LANDLORD_FIELDS = "name email companyName profilePicUrl registrations";
 const TENANT_FIELDS = "name email profilePicUrl universityDetails";
+// An invite is not consent: contact details only once the student has accepted.
+const PENDING_TENANT_FIELDS = "name profilePicUrl";
 
 /** When the deposit was received. Never in the future: that would push back the 30-day protection deadline. */
 export function depositReceivedDate(value?: string, now: Date = new Date()): Date {
@@ -39,12 +42,17 @@ export function depositReceivedDate(value?: string, now: Date = new Date()): Dat
 	return date;
 }
 
-/** The period a tenancy made from an application gets: the listing's availability, never starting in the past. */
+/**
+ * The period a tenancy made from an application gets: the listing's availability, never starting in the past.
+ * Refuses (409) once the availability has ended, else the tenancy would end before it starts and schedule no rent.
+ */
 export function applicationTenancyPeriod(listing: Pick<Listing, "availableFrom" | "availableUntil">, now = new Date()) {
-	return {
-		startDate: listing.availableFrom && new Date(listing.availableFrom) > now ? new Date(listing.availableFrom) : now,
-		endDate: listing.availableUntil ? new Date(listing.availableUntil) : null
-	};
+	const startDate = listing.availableFrom && new Date(listing.availableFrom) > now ? new Date(listing.availableFrom) : now;
+	const endDate = listing.availableUntil ? new Date(listing.availableUntil) : null;
+	if (endDate && endDate <= startDate) {
+		throw new ConflictException("This listing's availability has ended. The landlord needs to update its 'available until' date before the tenancy can be agreed.");
+	}
+	return { startDate, endDate };
 }
 
 type Viewer = Pick<User, "_id" | "role">;
@@ -79,6 +87,7 @@ export class TenanciesService {
 		@InjectModel(Listing.name) private readonly listingModel: Model<Listing>,
 		@InjectModel(User.name) private readonly userModel: Model<User>,
 		@InjectModel(Application.name) private readonly applicationModel: Model<Application>,
+		@InjectModel(Contract.name) private readonly contractModel: Model<Contract>,
 		private readonly rentSchedule: RentScheduleService,
 		private readonly notifications: NotificationsService
 	) {}
@@ -331,6 +340,17 @@ export class TenanciesService {
 	async updateDeposit(id: string, dto: UpdateDepositDto, landlord: Viewer) {
 		const tenancy = await this.findForLandlord(id, landlord);
 		const depositAmount = dto.depositAmount ?? tenancy.depositAmount;
+		// Seek's agreement prints the amount live, so changing it once anyone signed would rewrite what they signed.
+		if (
+			depositAmount !== tenancy.depositAmount &&
+			(await this.contractModel.exists({
+				tenancy: tenancy._id,
+				templateKind: { $exists: true, $ne: null },
+				$or: [{ status: ContractStatus.SIGNED }, { "signatures.0": { $exists: true } }]
+			}))
+		) {
+			throw new ConflictException("A tenant has already signed the agreement, so the deposit amount can no longer change.");
+		}
 		const listing = await this.listingModel.findById(tenancy.listing, { nation: 1 }).lean().exec();
 		this.assertDepositWithinCap(depositAmount, tenancy.monthlyRent, listing?.nation);
 		await this.tenancyModel.updateOne(
@@ -439,7 +459,7 @@ export class TenanciesService {
 			.populate({ path: "listing", select: TENANCY_LISTING_FIELDS })
 			.populate({ path: "landlord", select: LANDLORD_FIELDS })
 			.populate({ path: "tenants", select: TENANT_FIELDS })
-			.populate({ path: "pendingTenants", select: TENANT_FIELDS })
+			.populate({ path: "pendingTenants", select: PENDING_TENANT_FIELDS })
 			.sort({ status: 1, startDate: -1 })
 			.lean()
 			.exec();

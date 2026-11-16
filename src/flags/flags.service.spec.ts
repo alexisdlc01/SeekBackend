@@ -65,7 +65,7 @@ describe("FlagsService", () => {
 		const exec = <T>(value: T) => ({ exec: jest.fn().mockResolvedValue(value) });
 		const reporter = { _id: new Types.ObjectId(), email: "r@st-andrews.ac.uk", isVerified: true };
 
-		const setup = (opts: { answer?: string | null; verifiedReporters?: number; linked?: boolean; configured?: boolean; severeFromReporter?: number; reportedSpoke?: boolean } = {}) => {
+		const setup = (opts: { verifiedReporters?: number; linked?: boolean; severeFromReporter?: number; reportedSpoke?: boolean } = {}) => {
 			// Verified reporters; the first one is the caller of create().
 			const verified = [reporter._id, ...Array.from({ length: Math.max(0, (opts.verifiedReporters ?? 1) - 1) }, () => new Types.ObjectId())];
 			const stored = { _id: new Types.ObjectId(), toObject: () => ({}) };
@@ -83,10 +83,6 @@ describe("FlagsService", () => {
 				updateOne: jest.fn().mockReturnValue(exec({ modifiedCount: 1 }))
 			};
 			const listingModel = { updateMany: jest.fn().mockReturnValue(exec({})) };
-			const llm = {
-				isConfigured: () => opts.configured ?? true,
-				complete: jest.fn().mockResolvedValue(opts.answer === null ? null : { text: opts.answer ?? "{}", provider: "gemini" })
-			};
 			const notifications = { notifyMany: jest.fn().mockResolvedValue(undefined) };
 			// Every verified reporter shares a conversation with the reported account unless linked is false.
 			const conversationModel = { distinct: jest.fn().mockReturnValue(exec(opts.linked === false ? [] : [new Types.ObjectId(reported), ...verified])) };
@@ -96,29 +92,25 @@ describe("FlagsService", () => {
 			const service = new FlagsService(
 				flagModel as never,
 				userModel as never,
-				llm as never,
 				listingModel as never,
-				undefined,
 				notifications as never,
 				conversationModel as never,
 				tenancyModel as never,
 				messageModel as never
 			);
 			jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
-			return { service, flagModel, userModel, listingModel, llm, notifications, conversationModel, messageModel };
+			return { service, flagModel, userModel, listingModel, notifications, conversationModel, messageModel };
 		};
 		const report = (text = "He asked me to wire the deposit before any viewing") =>
 			({ reportedUser: reported, text, category: "SCAM" }) as never;
 
-		it("stores the AI triage and, on one severe report from a linked verified reporter, hides the listings without suspending", async () => {
-			const { service, flagModel, userModel, listingModel } = setup({
-				answer: '{"category":"FRAUD_SCAM","severity":"high","summary":"Landlord asked for a deposit by wire transfer."}'
-			});
-			await service.create(report(), reporter as never);
+		it("without any AI, one scam report from a linked verified reporter is triaged severe and hides the listings without suspending", async () => {
+			const { service, flagModel, userModel, listingModel } = setup();
+			await service.create(report("Total scam: he took my deposit and the flat does not exist"), reporter as never);
 
 			expect(flagModel.updateOne).toHaveBeenCalledWith(
 				expect.anything(),
-				{ $set: { triage: { category: "FRAUD_SCAM", severity: "high", summary: "Landlord asked for a deposit by wire transfer.", provider: "gemini" } } }
+				{ $set: { triage: { category: "FRAUD_SCAM", severity: "high", summary: "", provider: "rules" } } }
 			);
 			expect(userModel.updateOne).not.toHaveBeenCalled();
 			expect(listingModel.updateMany).toHaveBeenCalledWith(
@@ -130,40 +122,40 @@ describe("FlagsService", () => {
 		});
 
 		it("hides the listings only once per reporter in 30 days, however often the same account reports", async () => {
-			const { service, listingModel } = setup({ answer: '{"category":"FRAUD_SCAM","severity":"high","summary":"Scam."}', severeFromReporter: 2 });
+			const { service, listingModel } = setup({ severeFromReporter: 2 });
 			await service.create(report(), reporter as never);
 			expect(listingModel.updateMany).not.toHaveBeenCalled();
 		});
 
 		it("does not count a conversation the reported account never wrote in (applying alone creates one)", async () => {
-			const { service, userModel, conversationModel } = setup({ answer: null, verifiedReporters: 3, reportedSpoke: false });
+			const { service, userModel, conversationModel } = setup({ verifiedReporters: 3, reportedSpoke: false });
 			await service.create(report("Rude messages"), reporter as never);
 			expect(conversationModel.distinct).not.toHaveBeenCalled();
 			expect(userModel.updateOne).not.toHaveBeenCalled();
 		});
 
 		it("counts open reports only, so a lifted suspension is not undone by the next report", async () => {
-			const { service, flagModel } = setup({ answer: null });
+			const { service, flagModel } = setup();
 			await service.create(report("Rude messages"), reporter as never);
 			expect(flagModel.distinct).toHaveBeenCalledWith("createdBy", expect.objectContaining({ status: FlagStatus.UNDER_REVIEW }));
 		});
 
 		it("ignores a severe report from someone who never dealt with the account", async () => {
-			const { service, userModel, listingModel } = setup({ answer: '{"category":"FRAUD_SCAM","severity":"high","summary":"Scam."}', verifiedReporters: 3, linked: false });
+			const { service, userModel, listingModel } = setup({ verifiedReporters: 3, linked: false });
 			await service.create(report(), reporter as never);
 			expect(userModel.updateOne).not.toHaveBeenCalled();
 			expect(listingModel.updateMany).not.toHaveBeenCalled();
 		});
 
 		it("does nothing on a severe report from an unverified reporter", async () => {
-			const { service, userModel, listingModel } = setup({ answer: '{"category":"THREATS_VIOLENCE","severity":"high","summary":"Threat."}', verifiedReporters: 0 });
-			await service.create(report(), { ...reporter, isVerified: false } as never);
+			const { service, userModel, listingModel } = setup({ verifiedReporters: 0 });
+			await service.create(report("He threatened me with a knife"), { ...reporter, isVerified: false } as never);
 			expect(userModel.updateOne).not.toHaveBeenCalled();
 			expect(listingModel.updateMany).not.toHaveBeenCalled();
 		});
 
-		it("suspends after reports from 3 distinct linked verified reporters in 30 days, even with the AI down", async () => {
-			const { service, flagModel, userModel, listingModel, notifications } = setup({ answer: null, verifiedReporters: 3 });
+		it("suspends after reports from 3 distinct linked verified reporters in 30 days, whatever the report says", async () => {
+			const { service, flagModel, userModel, listingModel, notifications } = setup({ verifiedReporters: 3 });
 			await service.create(report("Rude messages"), reporter as never);
 			expect(flagModel.updateOne).not.toHaveBeenCalled();
 			expect(flagModel.distinct).toHaveBeenCalledWith("createdBy", expect.objectContaining({ createdAt: { $gte: expect.any(Date) } }));
@@ -176,20 +168,17 @@ describe("FlagsService", () => {
 		});
 
 		it("does not suspend on 3 verified reporters when only 2 dealt with the account", async () => {
-			const { service, userModel, conversationModel } = setup({ answer: null, verifiedReporters: 3 });
+			const { service, userModel, conversationModel } = setup({ verifiedReporters: 3 });
 			conversationModel.distinct.mockReturnValue(exec([new Types.ObjectId(reported), reporter._id]));
 			await service.create(report("Rude messages"), reporter as never);
 			expect(userModel.updateOne).not.toHaveBeenCalled();
 		});
 
-		it("drops an off-list category and blanks a summary carrying contact details (injection-safe)", async () => {
-			const bad = setup({ answer: '{"category":"IGNORE_RULES","severity":"high","summary":"x"}' });
-			await bad.service.create(report(), reporter as never);
-			expect(bad.flagModel.updateOne).not.toHaveBeenCalled();
-
-			const leaky = setup({ answer: '{"category":"SPAM","severity":"low","summary":"Call 07700 900123 or pay to sort code 12-34-56"}' });
-			await leaky.service.create(report(), reporter as never);
-			expect(leaky.flagModel.updateOne.mock.calls[0][1].$set.triage.summary).toBe("");
+		it("a report naming no threat or scam stores no triage and hides nothing", async () => {
+			const { service, flagModel, listingModel } = setup();
+			await service.create(report("Rude messages, he never replies on time"), reporter as never);
+			expect(flagModel.updateOne).not.toHaveBeenCalled();
+			expect(listingModel.updateMany).not.toHaveBeenCalled();
 		});
 
 		it("lifts a suspension, and 404s for an account that is not suspended", async () => {

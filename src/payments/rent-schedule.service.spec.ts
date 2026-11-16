@@ -1,6 +1,6 @@
 import { Types } from "mongoose";
 import { RentScheduleService } from "./rent-schedule.service";
-import { PaymentStatus, PlanFrequency } from "./payment.enums";
+import { PaymentKind, PaymentStatus, PlanFrequency } from "./payment.enums";
 
 describe("RentScheduleService.extend", () => {
 	// Periodic tenancy: no end date, so the first schedule stops after 12 months (2027-11-01).
@@ -160,5 +160,51 @@ describe("RentScheduleService.regenerate", () => {
 			.sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime())
 			.map(row => `${row.dueDate.toISOString().slice(0, 7)}x${row.coversMonths}`);
 		expect(schedule).toEqual(["2026-09x1", "2026-10x1", "2026-11x1", "2026-12x3", "2027-03x6"]);
+	});
+});
+
+describe("RentScheduleService.applyHoldingCredit", () => {
+	const application = new Types.ObjectId();
+	const tenancy = {
+		_id: new Types.ObjectId(),
+		landlord: new Types.ObjectId(),
+		tenants: [new Types.ObjectId()],
+		startDate: new Date("2026-12-01T00:00:00Z"),
+		endDate: new Date("2027-11-30T00:00:00Z"),
+		monthlyRent: 69500,
+		application
+	};
+	const tenant = tenancy.tenants[0];
+
+	it("takes a holding deposit paid after acceptance off the first unpaid rent, once", async () => {
+		const rent = [
+			{ _id: new Types.ObjectId(), amount: 69500, dueDate: new Date("2026-12-01T00:00:00Z") },
+			{ _id: new Types.ObjectId(), amount: 69500, dueDate: new Date("2027-01-01T00:00:00Z") }
+		];
+		const applied: { holdingDepositCredit: number }[] = [];
+		const query = (rows: unknown[]) => ({ sort: () => query(rows), lean: () => ({ exec: () => Promise.resolve(rows) }) });
+		const paymentModel = {
+			find: jest.fn((filter: Record<string, any>) =>
+				filter.kind === PaymentKind.HOLDING_DEPOSIT ? query([{ amount: 15000 }])
+					: filter.holdingDepositCredit ? query(applied)
+						: query(rent.filter(row => row.amount === 69500))
+			),
+			updateOne: jest.fn((filter: { _id: Types.ObjectId }, update: { $set: { amount: number; holdingDepositCredit: number } }) => {
+				const row = rent.find(item => item._id.equals(filter._id))!;
+				row.amount = update.$set.amount;
+				applied.push({ holdingDepositCredit: update.$set.holdingDepositCredit });
+				return Promise.resolve({ modifiedCount: 1 });
+			})
+		};
+		const service = new RentScheduleService({} as any, paymentModel as any);
+		const now = new Date("2026-11-16T09:00:00Z");
+
+		await service.applyHoldingCredit(tenancy, tenant, now);
+		await service.applyHoldingCredit(tenancy, tenant, now);
+
+		expect(rent.map(row => row.amount)).toEqual([54500, 69500]);
+		expect(paymentModel.updateOne).toHaveBeenCalledTimes(1);
+		expect(paymentModel.updateOne.mock.calls[0][0]).toMatchObject({ status: PaymentStatus.SCHEDULED, providerRef: null, amount: 69500 });
+		expect(paymentModel.updateOne.mock.calls[0][1].$set).toMatchObject({ amount: 54500, holdingDepositCredit: 15000 });
 	});
 });

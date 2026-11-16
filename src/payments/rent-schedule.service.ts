@@ -155,6 +155,32 @@ export class RentScheduleService {
 		return this.insert(tenancy, tenant, instalments, today);
 	}
 
+	/**
+	 * Puts a holding deposit that was paid after the schedule was built (late webhook) toward the
+	 * next unpaid rent. Only rows no payment was started on and autopay can't have tried yet.
+	 */
+	applyHoldingCredit(tenancy: TenancyForSchedule, tenant: Types.ObjectId, now: Date = new Date()) {
+		return this.serialized(tenancy, tenant, async () => {
+			let credit = await this.unusedHoldingCredit(tenancy, tenant);
+			if (credit === 0) return;
+			const rows = await this.paymentModel
+				.find({ tenancy: tenancy._id, tenant, kind: { $ne: PaymentKind.HOLDING_DEPOSIT }, status: PaymentStatus.SCHEDULED, providerRef: null, dueDate: { $gt: now } })
+				.sort({ dueDate: 1 })
+				.lean()
+				.exec();
+			for (const row of rows) {
+				if (credit === 0) break;
+				const applied = Math.min(credit, row.amount);
+				const amount = row.amount - applied;
+				const result = await this.paymentModel.updateOne(
+					{ _id: row._id, status: PaymentStatus.SCHEDULED, providerRef: null, amount: row.amount },
+					{ $set: { amount, ...computeFee(amount), holdingDepositCredit: (row.holdingDepositCredit ?? 0) + applied } }
+				);
+				if (result.modifiedCount > 0) credit -= applied;
+			}
+		});
+	}
+
 	private async insert(
 		tenancy: TenancyForSchedule,
 		tenant: Types.ObjectId,

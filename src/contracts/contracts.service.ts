@@ -10,9 +10,9 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
-import { Contract, ContractStatus, ContractTemplateKind, DeductionStatus } from "./contract.schema";
+import { Contract, ContractStatus, ContractTemplateKind, DeductionResponse, DeductionStatus } from "./contract.schema";
 import { CreateContractDto } from "./dto/create-contract.dto";
-import { TenanciesService, isTenant } from "../tenancies/tenancies.service";
+import { TenanciesService, TenancyLean, isTenant } from "../tenancies/tenancies.service";
 import { DocumentSource, TenancyDocumentType } from "../tenancies/tenancy.enums";
 import { NotificationsService } from "../notifications/notifications.service";
 import { NotificationKind } from "../notifications/notification-kind.enum";
@@ -213,10 +213,26 @@ export class ContractsService {
 			...contract.deductions.responses.filter(response => !response.user.equals(tenant._id)),
 			{ user: tenant._id, accepted: dto.accept, note: dto.note?.trim() || undefined, at: new Date() }
 		];
+		const updated = await this.settleDeductions(contract, tenancy, responses);
+		if (!updated) throw new BadRequestException("The deductions changed. Reload and check them again.");
+		return updated;
+	}
+
+	/**
+	 * Saves the responses and settles the deductions: one dispute makes them DISPUTED, every live tenant's yes ACCEPTED.
+	 * Null when another answer landed first.
+	 */
+	private async settleDeductions(
+		contract: Pick<Contract, "deductions"> & { _id: Types.ObjectId },
+		tenancy: TenancyLean,
+		responses: DeductionResponse[]
+	) {
+		const deductions = contract.deductions!;
 		const agreed = new Set(responses.filter(response => response.accepted).map(response => response.user.toString()));
+		const live = await this.liveTenants(tenancy.tenants);
 		const status = responses.some(response => !response.accepted)
 			? DeductionStatus.DISPUTED
-			: tenancy.tenants.every(id => agreed.has(id.toString()))
+			: live.length && live.every(id => agreed.has(id.toString()))
 				? DeductionStatus.ACCEPTED
 				: DeductionStatus.PROPOSED;
 		const updated = await this.contractModel
@@ -224,16 +240,16 @@ export class ContractsService {
 				// Only answers to the proposal and responses this tenant saw count: a concurrent answer makes this one retry.
 				{
 					_id: contract._id,
-					"deductions.proposedAt": contract.deductions.proposedAt,
+					"deductions.proposedAt": deductions.proposedAt,
 					"deductions.status": DeductionStatus.PROPOSED,
-					"deductions.responses": contract.deductions.responses
+					"deductions.responses": deductions.responses
 				},
 				{ $set: { "deductions.responses": responses, "deductions.status": status } },
 				{ new: true }
 			)
 			.lean()
 			.exec();
-		if (!updated) throw new BadRequestException("The deductions changed. Reload and check them again.");
+		if (!updated) return null;
 		if (status !== DeductionStatus.PROPOSED) {
 			await this.notifications.notify({
 				user: tenancy.landlord,
@@ -244,7 +260,7 @@ export class ContractsService {
 						? "Ask the deposit scheme to release the deposit."
 						: "Talk it through with them, or the deposit scheme's free dispute service will decide.",
 				...notificationTarget("landlord", NotificationTargetKind.CONTRACTS, tenancy._id),
-				dedupeKey: `deductions-${status}:${contract._id.toString()}:${contract.deductions.proposedAt.getTime()}`
+				dedupeKey: `deductions-${status}:${contract._id.toString()}:${deductions.proposedAt.getTime()}`
 			});
 		}
 		return updated;
@@ -367,10 +383,17 @@ export class ContractsService {
 		return updated;
 	}
 
+	/** A tenant who deleted their account stays on the tenancy as a record but can never sign or answer, so they must not block signing or deductions. */
+	private async liveTenants(tenants: Types.ObjectId[]) {
+		if (!this.userModel) return tenants;
+		const gone = await this.userModel.find({ _id: { $in: tenants }, deletedAt: { $ne: null } }, { _id: 1 }).lean().exec();
+		return tenants.filter(id => !gone.some(user => user._id.equals(id)));
+	}
+
 	/** The agreement also reaches each tenant's inbox. A mail failure never undoes the send. */
 	private async emailContractSent(tenantIds: Types.ObjectId[], title: string) {
 		if (!this.mail || !this.userModel) return;
-		const users = await this.userModel.find({ _id: { $in: tenantIds } }, { email: 1, name: 1 }).lean().exec();
+		const users = await this.userModel.find({ _id: { $in: tenantIds }, deletedAt: null }, { email: 1, name: 1 }).lean().exec();
 		const { link } = notificationTarget("student", NotificationTargetKind.CONTRACTS);
 		await Promise.all(
 			users.map(user =>
@@ -433,7 +456,7 @@ export class ContractsService {
 		if (!this.mail || !this.userModel) return;
 		const landlordId = tenancy.landlord.toString();
 		const users = await this.userModel
-			.find({ _id: { $in: [...tenancy.tenants, tenancy.landlord] } }, { email: 1, name: 1 })
+			.find({ _id: { $in: [...tenancy.tenants, tenancy.landlord] }, deletedAt: null }, { email: 1, name: 1 })
 			.lean()
 			.exec();
 		await Promise.all(
@@ -476,8 +499,16 @@ export class ContractsService {
 			.lean()
 			.exec();
 		const current = withSignature ?? (await this.find(contractId));
+		return (await this.completeSigning(current, tenancy, now)) ?? this.find(contractId);
+	}
 
-		if (current.status === ContractStatus.SENT && allTenantsSigned(tenancy, current.signatures)) {
+	/** Flips a SENT contract to SIGNED once every live tenant has signed, then files and announces it. Null otherwise. */
+	private async completeSigning(
+		contract: Pick<Contract, "status" | "signatures" | "title" | "url" | "key"> & { _id: Types.ObjectId },
+		tenancy: TenancyLean,
+		now = new Date()
+	) {
+		if (contract.status === ContractStatus.SENT && allTenantsSigned({ ...tenancy, tenants: await this.liveTenants(tenancy.tenants) }, contract.signatures)) {
 			const signed = await this.contractModel
 				.findOneAndUpdate(
 					{ _id: contract._id, status: ContractStatus.SENT },
@@ -518,7 +549,27 @@ export class ContractsService {
 				return signed;
 			}
 		}
-		return this.find(contractId);
+		return null;
+	}
+
+	/**
+	 * Once a tenant deletes their account, signing and deductions stop waiting for them:
+	 * re-checks their tenancies' contracts. Run after the soft delete, so nothing is sent to them.
+	 */
+	async settleForDeletedTenant(userId: Types.ObjectId) {
+		const tenancies = await this.tenancyModel.find({ tenants: userId }).lean().exec();
+		for (const tenancy of tenancies) {
+			const contracts = await this.contractModel
+				.find({ tenancy: tenancy._id, $or: [{ status: ContractStatus.SENT }, { "deductions.status": DeductionStatus.PROPOSED }] })
+				.lean()
+				.exec();
+			for (const contract of contracts) {
+				await this.completeSigning(contract, tenancy);
+				if (contract.deductions?.status === DeductionStatus.PROPOSED) {
+					await this.settleDeductions(contract, tenancy, contract.deductions.responses);
+				}
+			}
+		}
 	}
 
 	private async find(contractId: string) {

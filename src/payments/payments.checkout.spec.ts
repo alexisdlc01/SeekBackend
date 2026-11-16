@@ -25,6 +25,7 @@ describe("PaymentsService.checkout (Stripe)", () => {
 	const calls: { url: string; body: URLSearchParams; key?: string }[] = [];
 	const openOffer = { stage: "OFFERED", offerExpiresAt: new Date(Date.now() + 7 * 24 * 3_600_000) };
 	let offer: Record<string, unknown> = openOffer;
+	let landlordUser: Record<string, unknown> = { stripeAccountId: "acct_123" };
 	let lastPaymentModel: { updateOne: jest.Mock; find?: jest.Mock };
 	const realFetch = global.fetch;
 
@@ -47,7 +48,7 @@ describe("PaymentsService.checkout (Stripe)", () => {
 		const planModel = { findOne: jest.fn().mockReturnValue(lean({ autopay })) };
 		const userModel = {
 			findById: jest.fn((id: Types.ObjectId) =>
-				lean(id.equals(landlord) ? { stripeAccountId: "acct_123" } : { email: "maya@example.com", name: "Maya" })
+				lean(id.equals(landlord) ? landlordUser : { email: "maya@example.com", name: "Maya" })
 			),
 			updateOne: jest.fn().mockResolvedValue({})
 		};
@@ -87,6 +88,18 @@ describe("PaymentsService.checkout (Stripe)", () => {
 		const session = calls.find(call => call.url.endsWith("/checkout/sessions"))!.body;
 		expect(Number(session.get("expires_at"))).toBe(Math.floor(ends.getTime() / 60_000) * 60);
 		offer = openOffer;
+	});
+
+	it("refuses a holding deposit whose landlord has deleted their account or is suspended", async () => {
+		const holding = { ...payment, kind: PaymentKind.HOLDING_DEPOSIT, tenancy: undefined, application: new Types.ObjectId(), seekFee: 0, payout: 69500 };
+		for (const state of [{ deletedAt: new Date() }, { suspendedAt: new Date() }]) {
+			landlordUser = { stripeAccountId: "acct_123", ...state };
+			await expect(setup({ capabilities: { transfers: "active" } }, false, holding).checkout(payment._id.toString(), { _id: tenant } as any, {}, "mobile"))
+				.rejects.toThrow("no longer on Seek");
+			await expect(setup({ capabilities: { transfers: "active" } }, false, holding).pay(payment._id.toString(), { _id: tenant } as any)).rejects.toThrow("no longer on Seek");
+		}
+		expect(calls).toHaveLength(0);
+		landlordUser = { stripeAccountId: "acct_123" };
 	});
 
 	it("only sends the payer back to Seek: web app, app scheme, and Expo Go or localhost outside production", async () => {
@@ -251,17 +264,21 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 			findById: jest.fn(() => lean({ name: "Maya", stripeCustomerId: "cus_1", stripeAccountId: "acct_123" })),
 			updateOne: jest.fn().mockResolvedValue({})
 		};
-		const tenancyModel = { findById: jest.fn().mockReturnValue({ populate: () => lean({ listing: { propertyTitle: "Cotham Flat" } }) }) };
+		const tenancyModel = {
+			findById: jest.fn().mockReturnValue({ populate: () => lean({ listing: { propertyTitle: "Cotham Flat" } }) }),
+			findOne: jest.fn(() => lean({ _id: tenancy, application: doc.application }))
+		};
+		const rentSchedule = { applyHoldingCredit: jest.fn().mockResolvedValue(undefined) };
 		const notifications = { notify: jest.fn().mockResolvedValue(true) };
 		const config = { get: (key: string) => ({ STRIPE_SECRET_KEY: "sk_test_x", STRIPE_WEBHOOK_SECRET: secret } as Record<string, string>)[key] };
-		const service = new PaymentsService(paymentModel as any, planModel as any, tenancyModel as any, {} as any, userModel as any, {} as any, {} as any, notifications as any, config as any, {} as any);
+		const service = new PaymentsService(paymentModel as any, planModel as any, tenancyModel as any, {} as any, userModel as any, {} as any, rentSchedule as any, notifications as any, config as any, {} as any);
 		const webhook = (event: unknown, key = secret) => {
 			const body = JSON.stringify(event);
 			const t = Math.floor(Date.now() / 1000);
 			return service.handleWebhook(Buffer.from(body), `t=${t},v1=${createHmac("sha256", key).update(`${t}.${body}`).digest("hex")}`);
 		};
 		const refunds = () => stripeCalls.filter(call => call.url.endsWith("/refunds"));
-		return { service, webhook, refunds, notifications, planModel, paymentModel };
+		return { service, webhook, refunds, notifications, planModel, paymentModel, rentSchedule };
 	}
 
 	afterAll(() => {
@@ -293,6 +310,17 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 		expect(doc).toMatchObject({ status: PaymentStatus.PAID, providerRef: "pi_checkout" });
 		expect(notifications.notify.mock.calls.filter(([n]) => n.kind === "RENT_RECEIPT")).toHaveLength(1);
 		expect(refunds()).toHaveLength(0);
+	});
+
+	it("puts a holding deposit whose webhook lands after the offer was accepted toward the tenancy's rent", async () => {
+		const application = new Types.ObjectId();
+		const { webhook, rentSchedule } = setup({ kind: PaymentKind.HOLDING_DEPOSIT, tenancy: undefined, application, amount: 15000 });
+		session.amount_total = 15000;
+		await webhook({ type: "checkout.session.completed", data: { object: { id: "cs_1", payment_intent: "pi_checkout" } } });
+		await webhook({ type: "checkout.session.completed", data: { object: { id: "cs_1", payment_intent: "pi_checkout" } } });
+		expect(doc.status).toBe(PaymentStatus.PAID);
+		expect(rentSchedule.applyHoldingCredit).toHaveBeenCalledTimes(1);
+		expect(rentSchedule.applyHoldingCredit).toHaveBeenCalledWith(expect.objectContaining({ _id: tenancy, application }), tenant);
 	});
 
 	it("rejects a webhook with a bad signature", async () => {

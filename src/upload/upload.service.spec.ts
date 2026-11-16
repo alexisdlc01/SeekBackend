@@ -52,6 +52,18 @@ describe("UploadService private-file authorization", () => {
 		expect((send.mock.calls[0][0] as any).input).toEqual({ Bucket: "private-test", Key: "private/abc/passport.pdf" });
 	});
 
+	it("lets a superuser open a listing's title deed but no other private file", async () => {
+		const { service, listingModel } = setup();
+		const staff = { _id: new Types.ObjectId(), role: Role.SUPERUSER } as any;
+		const key = `private/${new Types.ObjectId().toHexString()}/123e4567-e89b-12d3-a456-426614174000.pdf`;
+		listingModel.exists.mockResolvedValueOnce({ _id: new Types.ObjectId() });
+		await expect(service.getAuthorizedPrivateDownloadUrl(key, staff)).resolves.toBe("https://signed.example/file");
+		expect(listingModel.exists).toHaveBeenCalledWith({ registerOfTitleKey: key });
+
+		listingModel.exists.mockResolvedValueOnce(null);
+		await expect(service.getAuthorizedPrivateDownloadUrl(key, staff)).rejects.toBeInstanceOf(ForbiddenException);
+	});
+
 	it("allows a landlord to download a title document for their listing", async () => {
 		const { service, listingModel, userModel } = setup();
 		listingModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });

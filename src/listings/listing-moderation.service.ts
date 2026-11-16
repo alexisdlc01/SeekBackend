@@ -117,7 +117,7 @@ export class ListingModerationService implements OnApplicationBootstrap, OnModul
 		@Optional() @InjectModel(User.name) private readonly userModel?: Model<User>
 	) {}
 
-	/** Re-decides listings left PENDING (by the old AI check) and the old admin queue (never checked). Disabled under NODE_ENV=test. */
+	/** Re-decides listings left PENDING (by the old AI check), the old admin queue (never checked) and live listings with an expired certificate. Disabled under NODE_ENV=test. */
 	onApplicationBootstrap() {
 		if (this.config.get<string>("NODE_ENV") === "test" || process.env.NODE_ENV === "test") return;
 		this.interval = setInterval(() => void this.retryPending(), RETRY_MS);
@@ -133,7 +133,14 @@ export class ListingModerationService implements OnApplicationBootstrap, OnModul
 		this.running = true;
 		try {
 			const pending = await this.listingModel
-				.find({ isDraft: false, isVerified: false, moderationStatus: { $in: [ModerationStatus.PENDING, null] } })
+				.find({
+					isDraft: false,
+					$or: [
+						{ isVerified: false, moderationStatus: { $in: [ModerationStatus.PENDING, null] } },
+						// A live listing whose gas or EICR certificate has since expired goes back through the rules (and offline).
+						{ isVerified: true, $or: [{ gasSafetyExpiry: { $lt: new Date() } }, { eicrExpiry: { $lt: new Date() } }] }
+					]
+				})
 				.select("_id")
 				.sort({ moderatedAt: 1 })
 				.limit(RETRY_BATCH)

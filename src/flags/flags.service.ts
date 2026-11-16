@@ -1,19 +1,14 @@
-import { BadRequestException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
-import { ThrottlerStorage } from "@nestjs/throttler";
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { CreateFlagDto } from "./dto/create-flag.dto";
 import { ResolveFlagDto } from "./dto/resolve-flag.dto";
-import { Flag, FlagTriage, TriageCategory, TriageSeverity } from "./flags.schema";
+import { Flag, FlagTriage } from "./flags.schema";
 import { Model, Types } from "mongoose";
 import { InjectModel } from "@nestjs/mongoose";
 import { User } from "../users/users.schema";
 import { FlagStatus } from "./enums/flag-status";
 import { Role } from "../auth/role.enum";
-import { LlmClient } from "../ai/llm.client";
-import { UNTRUSTED_DATA_RULE, addsUnsafeDetails } from "../ai/ai.service";
-import { extractJsonObject } from "../ai/search-parser";
 import { Listing } from "../listings/listings.schema";
 import { ModerationStatus } from "../listings/enums/moderation-status.enum";
-import { withinAiQuota } from "../listings/listing-moderation.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { NotificationKind } from "../notifications/notification-kind.enum";
 import { Conversation } from "../conversation/converstaion.schema";
@@ -31,11 +26,12 @@ const SUSPENDED_RESPONSE = "Thanks for your report. We have suspended this accou
 const HIDDEN_AFTER_REPORT = "Your listing needs a new automatic check: edit and resubmit it.";
 const SEVERE_CATEGORIES: FlagTriage["category"][] = ["THREATS_VIOLENCE", "FRAUD_SCAM"];
 
-const TRIAGE_PROMPT =
-	"You triage abuse reports for a UK student-housing app. Classify the report: category is one of " +
-	TriageCategory.join(", ") +
-	"; severity is high for threats of violence, fraud or taking money, medium for harassment or discrimination, low otherwise; " +
-	'summary is one neutral sentence of at most 25 words. Answer with JSON only: {"category": string, "severity": string, "summary": string}.';
+// No AI (product decision): a report is severe when its text names a threat or a scam.
+// shortcut: plain keywords, blind to negation ("not a scam"); the linked-reporter and once-per-30-days limits below cap the harm.
+const SEVERE_REPORT_RULES: [FlagTriage["category"], RegExp][] = [
+	["THREATS_VIOLENCE", /\b(threat\w*|kill|murder|attacked|assault\w*|punch(ed)?|weapon|knife|gun|violen\w*)\b/i],
+	["FRAUD_SCAM", /\b(scam\w*|fraud\w*|stole|stolen|fake (listing|advert|landlord|property|flat|house|room)|wire( the)? (money|deposit)|western union|gift ?cards?|crypto\w*)\b/i]
+];
 
 @Injectable()
 export class FlagsService {
@@ -46,9 +42,7 @@ export class FlagsService {
 		private readonly flagModel: Model<Flag>,
 		@InjectModel(User.name)
 		private readonly userModel: Model<User>,
-		@Optional() private readonly llm?: LlmClient,
 		@Optional() @InjectModel(Listing.name) private readonly listingModel?: Model<Listing>,
-		@Optional() @Inject(ThrottlerStorage) private readonly storage?: ThrottlerStorage,
 		@Optional() private readonly notifications?: NotificationsService,
 		@Optional() @InjectModel(Conversation.name) private readonly conversationModel?: Model<Conversation>,
 		@Optional() @InjectModel(Tenancy.name) private readonly tenancyModel?: Model<Tenancy>,
@@ -80,10 +74,7 @@ export class FlagsService {
 		});
 
 		// No admin email: reports are handled by the rules below, never by a person.
-		const triage = await this.triage(createFlagDto, user).catch((error: Error) => {
-			this.logger.warn(`Flag triage failed for ${flag._id.toString()}: ${error?.message}`);
-			return null;
-		});
+		const triage = this.triage(createFlagDto);
 		if (triage) await this.flagModel.updateOne({ _id: flag._id }, { $set: { triage } }).exec();
 		// The flag is stored: a failed check must not 500 (a retry would duplicate the report).
 		await this.enforce(createFlagDto.reportedUser, user, triage).catch((error: Error) =>
@@ -93,27 +84,10 @@ export class FlagsService {
 		return flag.toObject();
 	}
 
-	/** Category, severity and summary from the AI; null when no AI answered (the count rule still applies). */
-	private async triage(dto: CreateFlagDto, reporter: User): Promise<FlagTriage | null> {
-		if (!this.llm?.isConfigured() || !(await withinAiQuota(this.storage, reporter._id.toString()))) return null;
-		const answer = await this.llm.complete({
-			system: TRIAGE_PROMPT + UNTRUSTED_DATA_RULE,
-			messages: [{ role: "user", content: JSON.stringify({ reporterCategory: dto.category, report: dto.text.slice(0, 4000) }) }],
-			maxTokens: 150,
-			responseSchema: {
-				type: "OBJECT",
-				properties: { category: { type: "STRING" }, severity: { type: "STRING" }, summary: { type: "STRING" } },
-				required: ["category", "severity", "summary"]
-			}
-		});
-		if (!answer) return null;
-		const parsed = extractJsonObject(answer.text) as Partial<Record<keyof FlagTriage, unknown>> | null;
-		const category = TriageCategory.find(value => value === parsed?.category);
-		const severity = TriageSeverity.find(value => value === parsed?.severity);
-		if (!category || !severity) return null;
-		const summary = typeof parsed?.summary === "string" ? parsed.summary.trim().slice(0, 300) : "";
-		// Output filter: no contact or payment details the report text pushed into the summary.
-		return { category, severity, summary: addsUnsafeDetails(summary) ? "" : summary, provider: answer.provider };
+	/** Severe category from the report text; null when no rule matches (the count rule still applies). */
+	private triage(dto: CreateFlagDto): FlagTriage | null {
+		const match = SEVERE_REPORT_RULES.find(([, pattern]) => pattern.test(dto.text));
+		return match ? { category: match[0], severity: "high", summary: "", provider: "rules" } : null;
 	}
 
 	/**

@@ -8,6 +8,7 @@ import { Payment, PaymentSchema } from "../payments/payment.schema";
 import { RentPlan, RentPlanSchema } from "../payments/rent-plan.schema";
 import { RentScheduleService } from "../payments/rent-schedule.service";
 import { Application, ApplicationSchema } from "../application/application.schema";
+import { Contract, ContractSchema } from "../contracts/contract.schema";
 import { Tenancy, TenancySchema } from "./tenancy.schema";
 import { TenanciesController } from "./tenancies.controller";
 import { TenanciesService } from "./tenancies.service";
@@ -20,7 +21,8 @@ import { TenanciesService } from "./tenancies.service";
 			{ name: User.name, schema: UserSchema },
 			{ name: RentPlan.name, schema: RentPlanSchema },
 			{ name: Payment.name, schema: PaymentSchema },
-			{ name: Application.name, schema: ApplicationSchema }
+			{ name: Application.name, schema: ApplicationSchema },
+			{ name: Contract.name, schema: ContractSchema }
 		]),
 		SharedModule,
 		NotificationsModule

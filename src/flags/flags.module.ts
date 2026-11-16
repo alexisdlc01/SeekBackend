@@ -7,9 +7,6 @@ import { SharedModule } from "../shared/shared.module";
 import { User, UserSchema } from "../users/users.schema";
 import { AuthModule } from "../auth/auth.module";
 import { Listing, ListingSchema } from "../listings/listings.schema";
-import { AnthropicClient } from "../ai/anthropic.client";
-import { GeminiClient } from "../ai/gemini.client";
-import { LlmClient } from "../ai/llm.client";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { Conversation, ConversationSchema } from "../conversation/converstaion.schema";
 import { Tenancy, TenancySchema } from "../tenancies/tenancy.schema";
@@ -36,6 +33,6 @@ import { Message, MessageSchema } from "../conversation/message.schema";
 		NotificationsModule
 	],
 	controllers: [FlagsController],
-	providers: [FlagsService, GeminiClient, AnthropicClient, LlmClient]
+	providers: [FlagsService]
 })
 export class FlagsModule {}

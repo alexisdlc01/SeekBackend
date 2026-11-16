@@ -53,7 +53,7 @@ describe("ContractsService deductions", () => {
 	const id = new Types.ObjectId().toString();
 	const tenancy = { _id: new Types.ObjectId(), landlord: new Types.ObjectId(), tenants: [maya, tom], depositAmount: 80000 };
 
-	function setup(contract: Record<string, unknown>) {
+	function setup(contract: Record<string, unknown>, deleted: Types.ObjectId[] = []) {
 		let stored: any = { _id: new Types.ObjectId(), tenancy: tenancy._id, status: ContractStatus.SIGNED, ...contract };
 		const contractModel = {
 			findById: jest.fn(() => lean(stored)),
@@ -79,7 +79,8 @@ describe("ContractsService deductions", () => {
 			{} as any,
 			tenancies as any,
 			notifications as any,
-			{ get: () => "secret" } as any
+			{ get: () => "secret" } as any,
+			{ find: jest.fn(() => lean(deleted.map(_id => ({ _id })))) } as any
 		);
 		return { service, notifications, contractModel, current: () => stored };
 	}
@@ -89,6 +90,13 @@ describe("ContractsService deductions", () => {
 		await expect(
 			service.proposeDeductions(id, { items: [{ description: "Carpet", amount: 160001 }] }, { _id: tenancy.landlord } as any)
 		).rejects.toThrow("more than the £1600.00 deposit");
+	});
+
+	it("does not wait for a co-tenant who deleted their account", async () => {
+		const { service } = setup({}, [tom]);
+		await service.proposeDeductions(id, { items: [{ description: "Carpet", amount: 12000 }] }, { _id: tenancy.landlord } as any);
+		const accepted = await service.respondToDeductions(id, { accept: true }, { _id: maya } as any);
+		expect(accepted!.deductions!.status).toBe(DeductionStatus.ACCEPTED);
 	});
 
 	it("is ACCEPTED only once every tenant agrees, and the landlord is told", async () => {
@@ -180,7 +188,7 @@ describe("ContractsService signed email", () => {
 			)
 		};
 		const userModel = {
-			find: () => lean([
+			find: (filter: any) => lean(filter.deletedAt?.$ne === null ? [] : [
 				{ _id: maya, email: "maya@example.com", name: "Maya" },
 				{ _id: tom, email: "tom@example.com", name: "Tom" },
 				{ _id: landlord, email: "priya@example.com", name: "Priya" }
@@ -208,6 +216,46 @@ describe("ContractsService signed email", () => {
 		const { service, contract, mail } = setup([]);
 		await service.sign(contract._id.toString(), { _id: maya } as any);
 		expect(mail.sendContractSignedEmail).not.toHaveBeenCalled();
+	});
+});
+
+describe("ContractsService after a tenant deletes their account", () => {
+	const lean = <T>(value: T) => ({ lean: () => ({ exec: () => Promise.resolve(value) }) });
+
+	it("completes signing and deductions that only waited for them, without emailing them", async () => {
+		const [maya, tom, landlord] = [new Types.ObjectId(), new Types.ObjectId(), new Types.ObjectId()];
+		const tenancy = { _id: new Types.ObjectId(), landlord, tenants: [maya, tom] };
+		const sent = { _id: new Types.ObjectId(), tenancy: tenancy._id, status: ContractStatus.SENT, title: "Agreement", signatures: [{ user: maya, signedAt: new Date() }] };
+		const deductions = { items: [], total: 12000, status: DeductionStatus.PROPOSED, proposedAt: new Date(), responses: [{ user: maya, accepted: true, at: new Date() }] };
+		const signed = { _id: new Types.ObjectId(), tenancy: tenancy._id, status: ContractStatus.SIGNED, title: "Old agreement", signatures: [], deductions };
+		const contractModel = {
+			find: jest.fn(() => lean([sent, signed])),
+			findOneAndUpdate: jest.fn((filter: any, update: any) =>
+				lean(filter._id.equals(sent._id) ? { ...sent, ...update.$set } : { ...signed, deductions: { ...deductions, status: update.$set["deductions.status"] } })
+			)
+		};
+		const userModel = {
+			// Tom is already soft-deleted when the re-check runs.
+			find: (filter: any) => lean(filter.deletedAt?.$ne === null ? [{ _id: tom }] : [
+				{ _id: maya, email: "maya@example.com", name: "Maya" },
+				{ _id: landlord, email: "priya@example.com", name: "Priya" }
+			])
+		};
+		const notifications = { notify: jest.fn() };
+		const mail = { sendContractSignedEmail: jest.fn().mockResolvedValue(undefined) };
+		const service = new ContractsService(
+			contractModel as any, {} as any, {} as any, { find: () => lean([tenancy]) } as any, {} as any,
+			{ appendDocument: jest.fn() } as any, notifications as any, { get: () => "secret" } as any, userModel as any, mail as any
+		);
+
+		await service.settleForDeletedTenant(tom);
+
+		const sets = contractModel.findOneAndUpdate.mock.calls.map(([, update]: any) => update.$set);
+		expect(sets).toContainEqual(expect.objectContaining({ status: ContractStatus.SIGNED }));
+		expect(sets).toContainEqual(expect.objectContaining({ "deductions.status": DeductionStatus.ACCEPTED }));
+		expect(notifications.notify).toHaveBeenCalledWith(expect.objectContaining({ user: landlord, title: "Everyone has signed" }));
+		expect(notifications.notify).toHaveBeenCalledWith(expect.objectContaining({ user: landlord, title: "Tenants accepted the deductions" }));
+		expect(mail.sendContractSignedEmail.mock.calls.map(([email]: any) => email).sort()).toEqual(["maya@example.com", "priya@example.com"]);
 	});
 });
 

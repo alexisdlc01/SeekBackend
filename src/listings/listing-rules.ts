@@ -65,3 +65,12 @@ export function assertAvailableFromNotPast(date: Date | string): void {
 		throw new BadRequestException("Available-from date is in the past. Pick today or a later date.");
 	}
 }
+
+/** Product rule: the end of availability must be after the move-in date and not already past, else the tenancy gets no rent schedule. */
+export function assertAvailabilityWindow(from?: Date | string | null, until?: Date | string | null): void {
+	if (!until) return;
+	const end = new Date(until).getTime();
+	if (end < new Date().setUTCHours(0, 0, 0, 0) || (from && end <= new Date(from).getTime())) {
+		throw new BadRequestException("Available-until date must be after the available-from date and not in the past.");
+	}
+}
