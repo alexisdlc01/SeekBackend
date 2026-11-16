@@ -88,7 +88,13 @@ describe("getFull senderAuthenticated", () => {
 		const fetch = jest.spyOn(global, "fetch").mockImplementation(async input =>
 			String(input).includes("/attachments")
 				? json({ value: [] })
-				: json({ body: { content: "Hi" }, internetMessageHeaders: [{ name: "Authentication-Results", value: MICROSOFT_PASS }] })
+				: json({
+						body: { content: "Hi" },
+						internetMessageHeaders: [
+							{ name: "Authentication-Results", value: MICROSOFT_PASS },
+							{ name: "X-MS-Exchange-Organization-AuthAs", value: "Anonymous" }
+						]
+					})
 		);
 		expect((await new OutlookClient().getFull("token", meta)).senderAuthenticated).toBe(true);
 		expect(String(fetch.mock.calls[0][0])).toContain("internetMessageHeaders");

@@ -111,11 +111,14 @@ export class OutlookClient implements MailProviderClient {
 		const attachments = await fetchJson<{
 			value?: { "@odata.type"?: string; name?: string; contentType?: string; size?: number; contentBytes?: string }[];
 		}>(`${GRAPH}/messages/${id}/attachments`, { headers: this.headers(accessToken) });
-		// Topmost Authentication-Results: the one Microsoft added on receipt.
-		const results = message.internetMessageHeaders?.find(item => item.name?.toLowerCase() === "authentication-results")?.value;
+		const header = (name: string) => message.internetMessageHeaders?.find(item => item.name?.toLowerCase() === name)?.value;
+		// Trust the topmost Authentication-Results only on external mail received by EOP (AuthAs=Anonymous; Exchange strips
+		// X-MS-Exchange-Organization-* from untrusted senders), where Microsoft always stamps it with compauth; else fail closed.
+		const results = header("x-ms-exchange-organization-authas")?.trim().toLowerCase() === "anonymous" ? header("authentication-results") : undefined;
+		const stamped = results && /(?:^|;)\s*compauth\s*=/i.test(results) ? results : undefined;
 		return {
 			...meta,
-			senderAuthenticated: fromAuthenticated(results, meta.from),
+			senderAuthenticated: fromAuthenticated(stamped, meta.from),
 			sent,
 			body: (message.body?.content ?? "").trim(),
 			attachments: (attachments.value ?? [])

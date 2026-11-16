@@ -27,23 +27,25 @@ export const FREQUENCY_MONTHS: Record<PlanFrequency, number> = {
 };
 
 export const ENGLAND_RENT_IN_ADVANCE_MESSAGE =
-	"Renters' Rights Act: rent in advance is capped at one month for properties in England. Choose a monthly plan.";
+	"The law in England lets you pay at most one month ahead, so only monthly is available here.";
+export const NO_RENT_IN_ADVANCE_MESSAGE = "Paying ahead isn't available for homes here yet, so only monthly is offered.";
 
 /**
  * Frequencies a tenant may choose: the plans the landlord offers on the
- * listing, limited by the nation's law. Monthly always stays (every tenancy
- * starts on it); with no `offered` list only the nation is checked.
+ * listing, limited by the nation's law. Only Scotland allows paying ahead; every
+ * other nation (or none recorded) is monthly only. Monthly always stays; with no
+ * `offered` list only the nation is checked.
  */
 export function allowedFrequencies(nation: Nation | string | undefined, offered?: (PlanFrequency | string)[] | null): PlanFrequency[] {
-	// Listings saved before nations existed are English by default.
-	if (!nation || nation === Nation.ENGLAND) return [PlanFrequency.MONTHLY];
+	if (nation !== Nation.SCOTLAND) return [PlanFrequency.MONTHLY];
 	return Object.values(PlanFrequency).filter(frequency =>
 		frequency === PlanFrequency.MONTHLY || offered === undefined || (offered ?? []).includes(frequency)
 	);
 }
 
 export function restrictionReason(nation: Nation | string | undefined): string | null {
-	return allowedFrequencies(nation).length === 1 ? ENGLAND_RENT_IN_ADVANCE_MESSAGE : null;
+	if (nation === Nation.SCOTLAND) return null;
+	return nation === Nation.ENGLAND ? ENGLAND_RENT_IN_ADVANCE_MESSAGE : NO_RENT_IN_ADVANCE_MESSAGE;
 }
 
 export function assertPlanAllowed(
@@ -51,8 +53,8 @@ export function assertPlanAllowed(
 	frequency: PlanFrequency,
 	offered?: (PlanFrequency | string)[] | null
 ): void {
-	if (allowedFrequencies(nation).length === 1 && frequency !== PlanFrequency.MONTHLY) {
-		throw new BadRequestException(ENGLAND_RENT_IN_ADVANCE_MESSAGE);
+	if (frequency !== PlanFrequency.MONTHLY && nation !== Nation.SCOTLAND) {
+		throw new BadRequestException(restrictionReason(nation));
 	}
 	if (!allowedFrequencies(nation, offered).includes(frequency)) {
 		throw new BadRequestException("Your landlord doesn't offer this rent plan for this property. Choose one of the plans they offer.");

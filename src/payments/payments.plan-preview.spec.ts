@@ -40,7 +40,7 @@ describe("PaymentsService.previewPlan", () => {
 	}
 
 	it("lists kept and new payments in date order, without Seek's fee, and saves nothing", async () => {
-		const { service, paymentModel, planModel, rentSchedule } = setup(Nation.WALES);
+		const { service, paymentModel, planModel, rentSchedule } = setup(Nation.SCOTLAND);
 
 		const rows = await service.previewPlan(tenancy._id.toString(), PlanFrequency.SIX_MONTHS, tenant);
 
