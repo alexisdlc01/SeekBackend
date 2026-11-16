@@ -8,7 +8,7 @@ import { ConnectionStatus, EmailProvider } from "./email-connection.schema";
 
 const lean = <T>(value: T) => ({ lean: () => ({ exec: () => Promise.resolve(value) }), select: () => lean(value) });
 
-function setup(attachment: Record<string, unknown> = {}, role = Role.STUDENT, from = "tenant@example.com") {
+function setup(attachment: Record<string, unknown> = {}, role = Role.STUDENT, from = "tenant@example.com", provider = EmailProvider.DEMO) {
 	const me = { _id: new Types.ObjectId(), role };
 	const tenancyId = new Types.ObjectId();
 	const connectionId = new Types.ObjectId();
@@ -29,11 +29,15 @@ function setup(attachment: Record<string, unknown> = {}, role = Role.STUDENT, fr
 		updateOne: jest.fn().mockResolvedValue({})
 	};
 	const connectionModel = {
-		findById: jest.fn(() => lean({ _id: connectionId, user: me._id, provider: EmailProvider.DEMO, status: ConnectionStatus.CONNECTED }))
+		findById: jest.fn(() => lean({ _id: connectionId, user: me._id, provider, status: ConnectionStatus.CONNECTED }))
 	};
 	const tenancy = { _id: tenancyId, landlord: role === Role.LANDLORD_AGENCY ? me._id : new Types.ObjectId(), listing: new Types.ObjectId(), documents: [] };
-	// The landlord's account address is landlord@example.com.
-	const userModel = { exists: jest.fn(async (q: { $or: { email?: string }[] }) => (q.$or[0].email === "landlord@example.com" ? { _id: tenancy.landlord } : null)) };
+	// The landlord's account address is landlord@example.com; agent@example.com is on their team.
+	const userModel = {
+		exists: jest.fn(async (q: { $or: Record<string, string>[] }) =>
+			q.$or[0].email === "landlord@example.com" || q.$or[1]["team.email"] === "agent@example.com" ? { _id: tenancy.landlord } : null
+		)
+	};
 	const listingModel = { findById: jest.fn(() => lean({ propertyTitle: "Flat 1" })) };
 	const tenancies = { findForMember: jest.fn().mockResolvedValue(tenancy), appendDocument: jest.fn().mockResolvedValue(undefined) };
 	const service = new ConnectorsService(
@@ -49,7 +53,11 @@ function setup(attachment: Record<string, unknown> = {}, role = Role.STUDENT, fr
 		{} as any,
 		{} as any
 	);
-	return { service, me, email, messageModel, tenancies };
+	// A real mailbox: the attachment is re-read from Gmail, with what Gmail says about the sender.
+	const getFull = jest.fn(async () => ({ attachments: [{ name: "Tenancy-agreement.pdf", mimeType: "application/pdf", size: 10, load: async () => Buffer.from("%PDF") }], senderAuthenticated: false, sent: false }));
+	Object.assign(service as any, { clients: { [EmailProvider.GMAIL]: { getFull } }, accessToken: async () => "token" });
+	jest.spyOn(service as any, "storeFile").mockResolvedValue({ url: "https://files.example/a.pdf", key: "k" });
+	return { service, me, email, messageModel, tenancies, getFull };
 }
 
 describe("ConnectorsService.fileAttachment authorisation", () => {
@@ -107,6 +115,41 @@ describe("ConnectorsService.fileAttachment document type", () => {
 		Object.assign(email, { outgoing: true, to: ["tenant@example.com"] });
 		await service.fileAttachment(me, email._id.toString(), 0);
 		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "TENANCY_AGREEMENT" }));
+	});
+
+	it("Gmail, landlord's mailbox: a forged From of their team without a DMARC pass files as Other", async () => {
+		const { service, me, email, tenancies } = setup({}, Role.LANDLORD_AGENCY, "agent@example.com", EmailProvider.GMAIL);
+		await service.fileAttachment(me, email._id.toString(), 0);
+		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "OTHER" }));
+	});
+
+	it("Gmail, landlord's mailbox: their team's mail with a DMARC pass keeps the contract type", async () => {
+		const { service, me, email, tenancies, getFull } = setup({}, Role.LANDLORD_AGENCY, "agent@example.com", EmailProvider.GMAIL);
+		getFull.mockResolvedValue({ ...(await getFull()), senderAuthenticated: true });
+		await service.fileAttachment(me, email._id.toString(), 0);
+		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "TENANCY_AGREEMENT" }));
+	});
+
+	it("Gmail, tenant's mailbox: the landlord's contract files as Other even with a DMARC pass (the tenant controls the headers)", async () => {
+		const { service, me, email, tenancies, getFull } = setup({}, Role.STUDENT, "landlord@example.com", EmailProvider.GMAIL);
+		getFull.mockResolvedValue({ ...(await getFull()), senderAuthenticated: true });
+		await service.fileAttachment(me, email._id.toString(), 0);
+		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "OTHER" }));
+	});
+
+	it("Gmail: the landlord's own sent mail (SENT label) keeps the contract type without any authentication header", async () => {
+		const { service, me, email, tenancies, getFull } = setup({}, Role.LANDLORD_AGENCY, "landlord@example.com", EmailProvider.GMAIL);
+		Object.assign(email, { outgoing: true, to: ["tenant@example.com"] });
+		getFull.mockResolvedValue({ ...(await getFull()), sent: true });
+		await service.fileAttachment(me, email._id.toString(), 0);
+		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "TENANCY_AGREEMENT" }));
+	});
+
+	it("Gmail: an incoming mail forging the mailbox's own address as From files as Other, even if stored as outgoing", async () => {
+		const { service, me, email, tenancies } = setup({}, Role.LANDLORD_AGENCY, "landlord@example.com", EmailProvider.GMAIL);
+		Object.assign(email, { outgoing: true });
+		await service.fileAttachment(me, email._id.toString(), 0);
+		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "OTHER" }));
 	});
 
 	it("files a tenant's own agreement sent to a deposit scheme as Other", async () => {

@@ -62,7 +62,7 @@ export class CreateBillDto {
 	@IsMongoId({ each: true })
 	splitBetween?: string[];
 
-	@ApiPropertyOptional({ enum: BillSource, default: BillSource.MANUAL })
+	@ApiPropertyOptional({ enum: BillSource, description: "Accepted but ignored: client-created bills are always MANUAL." })
 	@IsOptional()
 	@IsEnum(BillSource)
 	source?: BillSource;

@@ -3,6 +3,7 @@ import { ConnectorsService } from "./connectors.service";
 
 describe("fileBill", () => {
 	const tenancy = { _id: new Types.ObjectId(), tenants: [] };
+	const owner = new Types.ObjectId();
 	const classification = { counterpartName: "Hyperoptic" } as any;
 	const email = (id: string, receivedAt: string, internetMessageId: string | null = null) =>
 		({ providerMessageId: id, internetMessageId, from: "bills@hyperoptic.test", fromName: "Hyperoptic", subject: "Your broadband invoice", body: "Total: £30.00", receivedAt: new Date(receivedAt) }) as any;
@@ -19,7 +20,7 @@ describe("fileBill", () => {
 			exists: jest.fn(async (q: any) => rows.find(r => matches(r, q)) ?? null),
 			create: jest.fn(async (doc: any) => rows.push({ ...doc, createdAt: new Date() }))
 		};
-		return { rows, file: (mail: any) => service.fileBill({ tenancy, listing: null }, classification, mail) };
+		return { rows, file: (mail: any) => service.fileBill({ tenancy, listing: null }, classification, mail, owner) };
 	}
 
 	it("files a fixed monthly bill whose subject has no month, every month", async () => {
@@ -27,6 +28,12 @@ describe("fileBill", () => {
 		await file(email("m1", "2026-09-01T09:00:00Z"));
 		await file(email("m2", "2026-10-01T09:00:00Z"));
 		expect(rows).toHaveLength(2);
+	});
+
+	it("records the mailbox owner as addedBy", async () => {
+		const { rows, file } = setup();
+		await file(email("m1", "2026-09-01T09:00:00Z"));
+		expect(rows[0]).toMatchObject({ source: "EMAIL", addedBy: owner });
 	});
 
 	it("does not file the same email twice (two attachments)", async () => {

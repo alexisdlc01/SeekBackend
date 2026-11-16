@@ -7,7 +7,8 @@ import {
 	TokenSet,
 	expiryFrom,
 	fetchJson,
-	formBody
+	formBody,
+	fromAuthenticated
 } from "./mail-provider";
 
 const GRAPH = "https://graph.microsoft.com/v1.0/me";
@@ -26,6 +27,7 @@ interface GraphMessage {
 	ccRecipients?: GraphAddress[];
 	parentFolderId?: string;
 	body?: { contentType?: string; content?: string };
+	internetMessageHeaders?: { name?: string; value?: string }[];
 }
 
 /** Outlook / Microsoft 365 through Microsoft Graph (Mail.Read + Mail.Send). */
@@ -82,13 +84,8 @@ export class OutlookClient implements MailProviderClient {
 			$orderby: "receivedDateTime desc"
 		});
 		// /me/messages spans every folder; Gmail's query drops spam and trash, so do the same here.
-		const excluded = new Set(
-			await Promise.all(
-				["junkemail", "deleteditems"].map(async folder =>
-					(await fetchJson<{ id: string }>(`${GRAPH}/mailFolders/${folder}?$select=id`, { headers: this.headers(accessToken) })).id
-				)
-			)
-		);
+		const [junk, deleted, sentItems] = await Promise.all(["junkemail", "deleteditems", "sentitems"].map(folder => this.folderId(accessToken, folder)));
+		const excluded = new Set([junk, deleted]);
 		const messages: GraphMessage[] = [];
 		let url: string | undefined = `${GRAPH}/messages?${params.toString()}`;
 		while (url && messages.length < limit) {
@@ -101,19 +98,25 @@ export class OutlookClient implements MailProviderClient {
 			}
 			url = page["@odata.nextLink"];
 		}
-		return messages.map(message => this.toMeta(message));
+		return messages.map(message => ({ ...this.toMeta(message), sent: message.parentFolderId === sentItems }));
 	}
 
 	async getFull(accessToken: string, meta: MailMeta): Promise<MailFull> {
 		const id = encodeURIComponent(meta.providerMessageId);
-		const message = await fetchJson<GraphMessage>(`${GRAPH}/messages/${id}?$select=body`, {
+		const message = await fetchJson<GraphMessage>(`${GRAPH}/messages/${id}?$select=body,internetMessageHeaders,parentFolderId`, {
 			headers: { ...this.headers(accessToken), Prefer: 'outlook.body-content-type="text", IdType="ImmutableId"' }
 		});
+		// Sync already knows it from listRecent: look the folder up only for a re-read (fileAttachment).
+		const sent = meta.sent ?? message.parentFolderId === (await this.folderId(accessToken, "sentitems"));
 		const attachments = await fetchJson<{
 			value?: { "@odata.type"?: string; name?: string; contentType?: string; size?: number; contentBytes?: string }[];
 		}>(`${GRAPH}/messages/${id}/attachments`, { headers: this.headers(accessToken) });
+		// Topmost Authentication-Results: the one Microsoft added on receipt.
+		const results = message.internetMessageHeaders?.find(item => item.name?.toLowerCase() === "authentication-results")?.value;
 		return {
 			...meta,
+			senderAuthenticated: fromAuthenticated(results, meta.from),
+			sent,
 			body: (message.body?.content ?? "").trim(),
 			attachments: (attachments.value ?? [])
 				.filter(item => item["@odata.type"] === "#microsoft.graph.fileAttachment" && item.name)
@@ -147,6 +150,10 @@ export class OutlookClient implements MailProviderClient {
 	async revoke() {
 		// Microsoft has no per-token revoke endpoint for this flow; deleting the
 		// stored tokens is what disconnects the mailbox.
+	}
+
+	private async folderId(accessToken: string, wellKnownName: string) {
+		return (await fetchJson<{ id: string }>(`${GRAPH}/mailFolders/${wellKnownName}?$select=id`, { headers: this.headers(accessToken) })).id;
 	}
 
 	private headers(accessToken: string) {

@@ -9,6 +9,7 @@ import {
 	expiryFrom,
 	fetchJson,
 	formBody,
+	fromAuthenticated,
 	replySubject
 } from "./mail-provider";
 
@@ -26,6 +27,7 @@ interface GmailMessage {
 	id: string;
 	threadId: string;
 	snippet?: string;
+	labelIds?: string[];
 	internalDate?: string;
 	payload?: GmailPart;
 }
@@ -36,6 +38,10 @@ function decode(data: string | undefined) {
 
 function header(message: GmailMessage, name: string) {
 	return message.payload?.headers?.find(item => item.name.toLowerCase() === name.toLowerCase())?.value ?? "";
+}
+
+function isSent(message: GmailMessage) {
+	return !!message.labelIds?.includes("SENT");
 }
 
 function walk(part: GmailPart | undefined, visit: (part: GmailPart) => void) {
@@ -167,7 +173,10 @@ export class GmailClient implements MailProviderClient {
 				html = decode(part.body?.data).toString("utf8");
 			}
 		});
-		return { ...meta, body: (plain || stripHtml(html)).trim(), attachments };
+		// header() returns the first match, i.e. the topmost one; it must be Gmail's own (authserv-id mx.google.com).
+		const results = header(message, "Authentication-Results");
+		const senderAuthenticated = fromAuthenticated(/^\s*mx\.google\.com\s*;/i.test(results) ? results : undefined, meta.from);
+		return { ...meta, body: (plain || stripHtml(html)).trim(), attachments, senderAuthenticated, sent: isSent(message) };
 	}
 
 	async send(accessToken: string, mail: OutgoingMail) {
@@ -237,7 +246,8 @@ export class GmailClient implements MailProviderClient {
 			to: [...parseAddressList(header(message, "To")), ...parseAddressList(header(message, "Cc"))],
 			subject: header(message, "Subject"),
 			snippet: message.snippet ?? "",
-			receivedAt: message.internalDate ? new Date(Number(message.internalDate)) : new Date()
+			receivedAt: message.internalDate ? new Date(Number(message.internalDate)) : new Date(),
+			sent: isSent(message)
 		};
 	}
 }

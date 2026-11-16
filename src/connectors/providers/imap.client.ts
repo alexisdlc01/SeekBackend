@@ -103,6 +103,8 @@ export function parseFetchHeaders(text: string): MailFull[] {
 			subject: headers.subject ?? "",
 			snippet: "",
 			receivedAt: Number.isNaN(receivedAt.getTime()) ? new Date() : receivedAt,
+			// Only INBOX is read, so nothing here is this mailbox's sent mail, whatever From says.
+			sent: false,
 			// shortcut: headers only (no body, no attachments); add a MIME parser when IMAP sync needs them.
 			body: "",
 			attachments: []

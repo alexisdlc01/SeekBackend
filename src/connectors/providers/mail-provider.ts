@@ -9,6 +9,8 @@ export interface MailMeta {
 	subject: string;
 	snippet: string;
 	receivedAt: Date;
+	/** True when the provider files it as sent from this mailbox (Gmail SENT label, Outlook Sent Items); never deduced from From. */
+	sent?: boolean;
 }
 
 export interface MailAttachment {
@@ -22,6 +24,8 @@ export interface MailAttachment {
 export interface MailFull extends MailMeta {
 	body: string;
 	attachments: MailAttachment[];
+	/** True only when the receiving provider authenticated the From domain (see fromAuthenticated). Missing = not authenticated. */
+	senderAuthenticated?: boolean;
 }
 
 export interface TokenSet {
@@ -89,4 +93,27 @@ export function expiryFrom(expiresInSeconds: unknown): Date | null {
 export function replySubject(subject: string) {
 	const clean = subject.trim() || "Your message";
 	return /^re:/i.test(clean) ? clean : `Re: ${clean}`;
+}
+
+/**
+ * True when an Authentication-Results header shows the From domain passed DMARC, or a DKIM signature of the From domain itself passed.
+ * Pass the topmost Authentication-Results: the receiving provider prepends its own, so any the sender wrote sit below it.
+ * Missing or unparseable header = false (fail closed).
+ */
+export function fromAuthenticated(authenticationResults: string | undefined, fromEmail: string) {
+	const domain = fromEmail.trim().toLowerCase().split("@")[1];
+	if (!authenticationResults || !domain) return false;
+	// Quoted strings (e.g. a quoted local-part in smtp.mailfrom) may hold ";", "(" or "dmarc=pass": empty them first.
+	let text = authenticationResults.replace(/"(?:[^"\\]|\\.)*"/g, '""');
+	// Comments like "(google.com: domain of ... designates ...)" may hold anything: drop them, innermost first.
+	while (/\([^()]*\)/.test(text)) text = text.replace(/\([^()]*\)/g, " ");
+	return text.split(";").some(part => {
+		const result = /^\s*(dmarc|dkim)\s*=\s*(\w+)/i.exec(part);
+		if (!result || result[2].toLowerCase() !== "pass") return false;
+		const prop = (name: string) => new RegExp(`(?:^|\\s)${name}\\s*=\\s*"?([^\\s";]+)`, "i").exec(part)?.[1].toLowerCase();
+		// No SPF: without DMARC its sending infrastructure is shared (an include of M365 lets anyone on it pass).
+		if (result[1].toLowerCase() === "dmarc") return prop("header\\.from") === domain;
+		// Microsoft writes header.d=, Gmail header.i=@domain.
+		return prop("header\\.d") === domain || prop("header\\.i")?.split("@").pop() === domain;
+	});
 }

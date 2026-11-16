@@ -205,6 +205,19 @@ describe("ConnectorsService settings", () => {
 		}
 	});
 
+	it("Gmail: a mail forging the mailbox's address as From, without the SENT label, is stored as incoming", async () => {
+		const { service, userId } = setup();
+		jest.spyOn(service, "contactBook").mockResolvedValue({ byEmail: new Map(), byUser: new Map() });
+		const forged = { ...mail("1", "maya@example.com", "Your tenancy agreement"), sent: false };
+		Object.assign(service as any, { clients: { [EmailProvider.GMAIL]: { listRecent: jest.fn().mockResolvedValue([forged]) } }, accessToken: async () => "token" });
+		const store = jest.spyOn(service as any, "store").mockResolvedValue(0);
+		const connection = { _id: new Types.ObjectId(), user: userId, provider: EmailProvider.GMAIL, emailAddress: "maya@example.com" };
+		await service.syncConnection(connection as any);
+		expect(store).toHaveBeenCalledTimes(1);
+		// Fifth argument: outgoing.
+		expect(store.mock.calls[0][4]).toBe(false);
+	});
+
 	it("imports a window bigger than one page, and keeps lastSyncAt when the per-sync cap is hit", async () => {
 		const run = async (count: number) => {
 			const many = Array.from({ length: count }, (_, i) => mail(String(i + 1), "lettings@holloway-lets.co.uk", "Your tenancy agreement"));
@@ -332,8 +345,11 @@ describe("ConnectorsService settings", () => {
 		const classification = { housing: true, category: "BILLS", counterpartName: "", contact: null };
 		const fromLandlord = { ...classification, contact: { role: "LANDLORD", userId: landlordId.toString(), tenancyId: null } };
 		const withFile = (subject: string, name: string) => ({ ...mail("9", "hello@octopus.energy", subject), body: "Total: £214.00", attachments: [{ name, mimeType: "application/pdf", size: 10 }] });
+		// What Gmail/Outlook report when the From domain passed DMARC.
+		const authenticated = (subject: string, name: string) => ({ ...withFile(subject, name), senderAuthenticated: true });
 
-		function storeSetup(toggles: Partial<Record<string, boolean>>, role = "STUDENT", from: any = classification) {
+		// `mailbox`: whose connected mailbox the email was read from (a tenant's by default).
+		function storeSetup(toggles: Partial<Record<string, boolean>>, role = "STUDENT", from: any = classification, mailbox = new Types.ObjectId()) {
 			const { service, userModel, connectionModel } = setup();
 			const created = { _id: new Types.ObjectId(), toObject: () => ({ attachments: [{ name: "x" }] }) };
 			(service as any).messageModel = { create: jest.fn().mockResolvedValue(created), updateOne: jest.fn().mockResolvedValue({}), deleteOne: jest.fn().mockResolvedValue({}) };
@@ -342,7 +358,7 @@ describe("ConnectorsService settings", () => {
 			const fileDocument = jest.spyOn(service as any, "fileDocument").mockResolvedValue(undefined);
 			const fileBill = jest.spyOn(service as any, "fileBill").mockResolvedValue(true);
 			const run = (mailFull: any) =>
-				(service as any).store({ _id: new Types.ObjectId() }, { _id: new Types.ObjectId(), role }, mailFull, from, false, {
+				(service as any).store({ _id: new Types.ObjectId(), user: mailbox }, { _id: mailbox, role }, mailFull, from, false, {
 					...allOn,
 					...toggles
 				});
@@ -368,21 +384,35 @@ describe("ConnectorsService settings", () => {
 			const off = storeSetup({ copySignedContracts: false });
 			await off.run(withFile("Tenancy agreement", "Tenancy-agreement.pdf"));
 			expect(off.fileDocument).not.toHaveBeenCalled();
-			const on = storeSetup({}, "STUDENT", fromLandlord);
-			await on.run(withFile("Tenancy agreement", "Tenancy-agreement.pdf"));
+			const on = storeSetup({}, "LANDLORD_AGENCY", fromLandlord, landlordId);
+			await on.run(authenticated("Tenancy agreement", "Tenancy-agreement.pdf"));
 			expect(on.fileDocument).toHaveBeenCalledWith(tenancy, "TENANCY_AGREEMENT", "Tenancy-agreement.pdf", expect.anything());
 		});
 
+		it("landlord's mailbox: a contract 'from the team' is a plain document unless the provider authenticated the sender", async () => {
+			const forged = storeSetup({}, "LANDLORD_AGENCY", fromLandlord, landlordId);
+			await forged.run(withFile("Tenancy agreement", "Tenancy-agreement.pdf"));
+			await forged.run({ ...withFile("Deposit certificate", "Deposit-certificate.pdf"), senderAuthenticated: false });
+			expect(forged.fileDocument.mock.calls.map(call => call[1])).toEqual(["OTHER", "OTHER"]);
+		});
+
+		it("tenant's mailbox: even an authenticated contract from the landlord is a plain document (the tenant controls the headers)", async () => {
+			const tenant = storeSetup({}, "STUDENT", fromLandlord);
+			await tenant.run(authenticated("Tenancy agreement", "Tenancy-agreement.pdf"));
+			await tenant.run(authenticated("Deposit certificate", "Deposit-certificate.pdf"));
+			expect(tenant.fileDocument.mock.calls.map(call => call[1])).toEqual(["OTHER", "OTHER"]);
+		});
+
 		it("files a contract or certificate from anyone but the landlord or their team as a plain document", async () => {
-			const stranger = storeSetup({});
-			await stranger.run(withFile("Your tenancy agreement", "Tenancy-agreement.pdf"));
-			await stranger.run(withFile("Gas safety", "gas-safety.pdf"));
+			const stranger = storeSetup({}, "LANDLORD_AGENCY", classification, landlordId);
+			await stranger.run(authenticated("Your tenancy agreement", "Tenancy-agreement.pdf"));
+			await stranger.run(authenticated("Gas safety", "gas-safety.pdf"));
 			expect(stranger.fileDocument.mock.calls.map(call => call[1])).toEqual(["OTHER", "OTHER"]);
 			expect(stranger.userModel.exists.mock.calls[0][0]).toMatchObject({ _id: landlordId, $or: [{ email: "hello@octopus.energy" }, { "team.email": "hello@octopus.energy" }] });
 
-			const team = storeSetup({});
+			const team = storeSetup({}, "LANDLORD_AGENCY", classification, landlordId);
 			team.userModel.exists.mockResolvedValue({ _id: landlordId });
-			await team.run(withFile("Your tenancy agreement", "Tenancy-agreement.pdf"));
+			await team.run(authenticated("Your tenancy agreement", "Tenancy-agreement.pdf"));
 			expect(team.fileDocument.mock.calls[0][1]).toBe("TENANCY_AGREEMENT");
 		});
 

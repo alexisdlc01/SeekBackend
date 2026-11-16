@@ -50,6 +50,7 @@ export class BillsService {
 			.find({ tenancy: new Types.ObjectId(tenancyId) })
 			.sort({ dueDate: -1, createdAt: -1 })
 			.populate("paidBy", "name")
+			.populate("addedBy", "name")
 			.lean()
 			.exec();
 		const viewerId = viewer._id.toString();
@@ -64,7 +65,8 @@ export class BillsService {
 			throw new BadRequestException("A bill can only be split between tenants of this tenancy.");
 		}
 		// A tenant adding a manual expense has fronted it: their own share is paid in the same write.
-		const source = dto.source ?? BillSource.MANUAL;
+		// Never trust a client-sent source: only the mailbox sync creates EMAIL bills, so a housemate can't pass a request off as a utility.
+		const source = BillSource.MANUAL;
 		const viewerId = viewer._id.toString();
 		const payer = !dto.includedInRent && source === BillSource.MANUAL && tenantIds.includes(viewerId) ? viewerId : null;
 		const paidShares = payer && split.includes(payer) ? [payer] : [];
@@ -140,8 +142,11 @@ export class BillsService {
 		const shares = (bill.includedInRent ? people.map(user => ({ user, amount: 0 })) : splitPence(bill.amount, people)).map(
 			share => ({ ...share, paid: settled(share.user) })
 		);
+		const adder = bill.addedBy as unknown as { _id?: Types.ObjectId; name?: string } | Types.ObjectId | null;
 		return {
 			...bill,
+			addedBy: adder && "_id" in adder && adder._id ? adder._id.toString() : (adder?.toString() ?? null),
+			addedByName: (adder && "name" in adder ? adder.name : null) ?? null,
 			paidBy: payerId ? payerId.toString() : null,
 			paidByName: (payer && "name" in payer ? payer.name : null) ?? null,
 			shares,

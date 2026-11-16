@@ -97,14 +97,14 @@ describe("BillsService.create", () => {
 		]);
 	});
 
-	it("leaves emailed bills without a payer", async () => {
-		const { service } = setup();
+	it("ignores a client-sent EMAIL source: stored MANUAL with the sender as payer", async () => {
+		const { service, billModel } = setup();
 		const view = await service.create(
 			{ tenancy: tenancy._id.toString(), provider: "Octopus", category: "ENERGY" as any, amount: 6000, source: "EMAIL" as any },
 			{ _id: maya, name: "Maya" } as any
 		);
-		expect(view.paidBy).toBeNull();
-		expect(view.shares.every(share => !share.paid)).toBe(true);
+		expect(billModel.create).toHaveBeenCalledWith(expect.objectContaining({ source: "MANUAL", paidBy: maya }));
+		expect(view.paidBy).toBe(maya.toString());
 	});
 });
 

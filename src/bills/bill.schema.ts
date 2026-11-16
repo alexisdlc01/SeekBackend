@@ -75,6 +75,10 @@ export class Bill {
 	@Prop({ type: SchemaTypes.ObjectId, ref: "User", default: null })
 	paidBy: Types.ObjectId | null;
 
+	@ApiProperty({ type: String, nullable: true, description: "Mailbox owner whose synced inbox this bill came from (EMAIL bills only)." })
+	@Prop({ type: SchemaTypes.ObjectId, ref: "User", default: null })
+	addedBy?: Types.ObjectId | null;
+
 	@ApiProperty({ enum: BillStatus })
 	@Prop({ enum: BillStatus, default: BillStatus.DUE })
 	status: BillStatus;

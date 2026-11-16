@@ -45,6 +45,9 @@ export class BillViewDto extends Bill {
 	@ApiProperty({ type: String, nullable: true, description: "Name of the tenant in paidBy." })
 	paidByName: string | null;
 
+	@ApiProperty({ type: String, nullable: true, description: "Name of the user in addedBy." })
+	addedByName: string | null;
+
 	@ApiProperty({ type: [BillShareDto] })
 	shares: BillShareDto[];
 

@@ -9,15 +9,17 @@ describe("OutlookClient.listRecent", () => {
 			const url = String(input);
 			if (url.includes("/mailFolders/junkemail")) return json({ id: "junk" });
 			if (url.includes("/mailFolders/deleteditems")) return json({ id: "bin" });
+			if (url.includes("/mailFolders/sentitems")) return json({ id: "sent" });
 			return json({
 				value: [
 					{ id: "spam", conversationId: "c1", parentFolderId: "junk" },
 					{ id: "gone", conversationId: "c2", parentFolderId: "bin" },
-					{ id: "ok", conversationId: "c3", parentFolderId: "inbox" }
+					{ id: "ok", conversationId: "c3", parentFolderId: "inbox" },
+					{ id: "mine", conversationId: "c4", parentFolderId: "sent" }
 				]
 			});
 		});
 		const metas = await new OutlookClient().listRecent("token", new Date(0), 50);
-		expect(metas.map(m => m.providerMessageId)).toEqual(["ok"]);
+		expect(metas.map(m => [m.providerMessageId, m.sent])).toEqual([["ok", false], ["mine", true]]);
 	});
 });
