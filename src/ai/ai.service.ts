@@ -8,7 +8,7 @@ import { ListingsService, ListingWithCoordinates } from "../listings/listings.se
 import { ListingFilterDto } from "../listings/dto/listing-filter.dto";
 import { Listing } from "../listings/listings.schema";
 import { Nation } from "../listings/enums/nation.enum";
-import { Tenancy } from "../tenancies/tenancy.schema";
+import { isConfirmedTenancyAgreement, Tenancy } from "../tenancies/tenancy.schema";
 import { DepositScheme, TenancyDocumentType, TenancyStatus } from "../tenancies/tenancy.enums";
 import { TenanciesService } from "../tenancies/tenancies.service";
 import { depositCapPence, depositProtectionDeadline, depositProtectionWindow } from "../tenancies/compliance";
@@ -472,7 +472,9 @@ export class AiService {
 	}
 
 	private hasDocument(tenancy: TenancyLean, type: TenancyDocumentType) {
-		return (tenancy.documents ?? []).some(doc => doc.type === type);
+		return (tenancy.documents ?? []).some(doc =>
+			type === TenancyDocumentType.TENANCY_AGREEMENT ? isConfirmedTenancyAgreement(doc) : doc.type === type
+		);
 	}
 
 	private depositAdvice(user: Viewer, tenancy: TenancyLean | null, listing: ListingLean | null, now: Date, question?: string): AdviceDraft {

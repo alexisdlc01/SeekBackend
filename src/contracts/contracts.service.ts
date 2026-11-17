@@ -524,7 +524,8 @@ export class ContractsService {
 					title: contract.title,
 					url: contract.url,
 					key: contract.key,
-					source: DocumentSource.SEEK
+					source: DocumentSource.SEEK,
+					confirmedByLandlord: true
 				});
 				await this.notifications.notify({
 					user: tenancy.landlord,

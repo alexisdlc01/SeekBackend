@@ -17,7 +17,7 @@ import type Redis from "ioredis";
 import { User } from "../users/users.schema";
 import { Role } from "../auth/role.enum";
 import { DocumentStatus, DocumentType } from "../users/types/document-type";
-import { Tenancy } from "../tenancies/tenancy.schema";
+import { isOfficialInventory, Tenancy } from "../tenancies/tenancy.schema";
 import { DocumentSource, TenancyDocumentType, TenancyStatus } from "../tenancies/tenancy.enums";
 import { TENANT_DOCUMENT_TYPES, TenanciesService } from "../tenancies/tenancies.service";
 import { Application } from "../application/application.schema";
@@ -1090,7 +1090,13 @@ export class ConnectorsService {
 				filed += 1;
 			} else if (type && target) {
 				const confirmedByLandlord = type !== TenancyDocumentType.TENANCY_AGREEMENT || connection.user.toString() === target.tenancy.landlord.toString();
-				await this.fileDocument(target.tenancy, type, attachment.name, file, confirmedByLandlord);
+				await this.fileDocument(
+					target.tenancy,
+					type,
+					attachment.name,
+					{ ...file, uploadedBy: user._id, uploaderRole: user.role },
+					confirmedByLandlord
+				);
 				attachments[index].filedAs = `${target.label} › ${folderFor(type)}`;
 				filed += 1;
 			} else if (target && (await this.fileBill(target, classification, mail, user._id))) {
@@ -1171,9 +1177,10 @@ export class ConnectorsService {
 		return (landlordMailbox || allowTenantMailbox) && proven && (await this.fromTenancyLandlord(tenancy, from, classification));
 	}
 
-	/** True when the sender is the tenancy's landlord, one of their team, or a deposit scheme. */
+	/** True when the authenticated From address is the tenancy's landlord, one of their team, or a deposit scheme. */
 	private async fromTenancyLandlord(tenancy: Tenancy, from: string, classification: Classification) {
 		if (classification.reason === "Deposit scheme") return true;
+		// The contact book is built from this same From address; trustedSender separately requires provider authentication.
 		if (classification.contact?.role === "LANDLORD" && classification.contact.userId === tenancy.landlord.toString()) return true;
 		const sender = from.trim().toLowerCase();
 		return !!(await this.userModel.exists({ _id: tenancy.landlord, $or: [{ email: sender }, { "team.email": sender }] }));
@@ -1200,11 +1207,17 @@ export class ConnectorsService {
 		tenancy: Tenancy & { _id: Types.ObjectId },
 		type: TenancyDocumentType,
 		fileName: string,
-		file: { url: string; key: string | null },
+		file: { url: string; key: string | null; uploadedBy?: Types.ObjectId; uploaderRole?: Role },
 		confirmedByLandlord = true
 	) {
 		const title = documentTitle(fileName);
-		const already = (tenancy.documents ?? []).some(doc => doc.type === type && doc.title === title);
+		const already = (tenancy.documents ?? []).some(doc =>
+			doc.type === type &&
+			doc.title === title &&
+			(type === TenancyDocumentType.TENANCY_AGREEMENT
+				? !confirmedByLandlord || doc.confirmedByLandlord !== false
+				: type !== TenancyDocumentType.INVENTORY || isOfficialInventory(doc))
+		);
 		if (already) return;
 		await this.tenancies.appendDocument(tenancy._id, {
 			type,
@@ -1212,7 +1225,9 @@ export class ConnectorsService {
 			url: file.url,
 			...(file.key ? { key: file.key } : {}),
 			source: DocumentSource.EMAIL,
-			confirmedByLandlord
+			confirmedByLandlord,
+			...(file.uploadedBy ? { uploadedBy: file.uploadedBy } : {}),
+			...(file.uploaderRole ? { uploaderRole: file.uploaderRole } : {})
 		});
 	}
 
@@ -1235,6 +1250,7 @@ export class ConnectorsService {
 		// Judged fresh from the provider's headers below, never stored: emails synced before this check need no migration.
 		let authenticated = this.senderAuthenticated(connection, {});
 		let sent = false;
+		let authenticatedFrom = email.from;
 		if (connection.provider !== EmailProvider.DEMO) {
 			source = undefined;
 			try {
@@ -1243,6 +1259,7 @@ export class ConnectorsService {
 				source = full.attachments.find(a => a.name === attachment.name && a.size === (attachment.size ?? a.size));
 				authenticated = this.senderAuthenticated(connection, full);
 				sent = full.sent === true;
+				authenticatedFrom = full.from || email.from;
 			} catch (error) {
 				if (error instanceof ServiceUnavailableException) throw error;
 				this.logger.warn(`Re-reading attachment via ${connection.provider} failed: ${(error as Error).message}`);
@@ -1254,20 +1271,21 @@ export class ConnectorsService {
 
 		const found = documentTypeFor(attachment.name, email.subject) ?? TenancyDocumentType.OTHER;
 		// Same rule as store(): anyone can email "Re: tenancy agreement", so only a proven landlord, team or deposit-scheme sender files as the real thing.
+		const landlordMailbox = connection.user.toString() === tenancy.landlord.toString();
 		const trusted =
-			TENANT_DOCUMENT_TYPES.has(found) ||
-			// Judge the sender only: a sent email's recipients (e.g. a deposit scheme) say nothing about who wrote the file.
+			(TENANT_DOCUMENT_TYPES.has(found) && found !== TenancyDocumentType.INVENTORY) ||
+			// A tenant's SENT label proves only that the tenant sent the message; it never authenticates the landlord as its author.
 			(await this.trustedSender(
 				connection,
 				tenancy,
-				email.from,
+				authenticatedFrom,
 				classifyEmail({ ...email, outgoing: false }, new Map()),
-				authenticated || sent,
+				authenticated || (landlordMailbox && sent),
 				found === TenancyDocumentType.TENANCY_AGREEMENT
 			));
 		const type = trusted ? found : TenancyDocumentType.OTHER;
 		const confirmedByLandlord = type !== TenancyDocumentType.TENANCY_AGREEMENT || connection.user.toString() === tenancy.landlord.toString();
-		await this.fileDocument(tenancy, type, attachment.name, file, confirmedByLandlord);
+		await this.fileDocument(tenancy, type, attachment.name, { ...file, uploadedBy: user._id, uploaderRole: user.role }, confirmedByLandlord);
 		let home = "My home";
 		if (user.role === Role.LANDLORD_AGENCY) {
 			const listing = await this.listingModel.findById(tenancy.listing).select("propertyTitle streetAddress").lean().exec();

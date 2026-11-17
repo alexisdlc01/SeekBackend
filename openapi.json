@@ -2375,6 +2375,73 @@
         ]
       }
     },
+    "/tenancies/{id}/documents/{docId}/confirm": {
+      "patch": {
+        "operationId": "TenanciesController_confirmDocument",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "docId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenancy"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Confirm that a tenancy agreement imported from a tenant's mailbox is genuine.",
+        "tags": [
+          "Tenancies"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
     "/notifications": {
       "get": {
         "operationId": "NotificationsController_list",
@@ -9384,6 +9451,19 @@
             "type": "boolean",
             "default": true,
             "description": "False when a tenancy agreement came from a tenant-controlled mailbox and has not been confirmed by the landlord."
+          },
+          "uploadedBy": {
+            "type": "string",
+            "description": "Account that uploaded or imported the document."
+          },
+          "uploaderRole": {
+            "type": "string",
+            "enum": [
+              "SUPERUSER",
+              "STUDENT",
+              "LANDLORD_AGENCY"
+            ],
+            "description": "Role of the uploader, used to distinguish tenant evidence from landlord documents."
           },
           "addedAt": {
             "type": "string",

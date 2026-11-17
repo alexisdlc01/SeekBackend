@@ -418,6 +418,12 @@ describe("ConnectorsService settings", () => {
 			expect(owner.fileDocument).toHaveBeenCalledWith(tenancy, "TENANCY_AGREEMENT", "Tenancy-agreement.pdf", expect.anything(), true);
 		});
 
+		it("files mail-imported inventory from a student mailbox as Other", async () => {
+			const tenant = storeSetup({}, "STUDENT", fromLandlord);
+			await tenant.run(authenticated("Check-in inventory", "Check-in-inventory.pdf"));
+			expect(tenant.fileDocument.mock.calls[0][1]).toBe("OTHER");
+		});
+
 		it("encrypts imported email bodies and snippets before writing them", async () => {
 			const ctx = storeSetup({});
 			await ctx.run(withFile("Your October statement", "statement.pdf"));

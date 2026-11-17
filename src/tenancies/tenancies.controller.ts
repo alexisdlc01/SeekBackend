@@ -162,4 +162,19 @@ export class TenanciesController {
 	) {
 		return this.tenanciesService.addDocument(id, body, user);
 	}
+
+	@TeamAccess(TeamScope.TENANCIES)
+	@Patch(":id/documents/:docId/confirm")
+	@LandlordAgency()
+	@ApiOperation({ summary: "Confirm that a tenancy agreement imported from a tenant's mailbox is genuine." })
+	@ApiResponse({ status: 200, type: Tenancy })
+	@ApiResponse({ status: 403, type: ErrorDto })
+	@ApiResponse({ status: 404, type: ErrorDto })
+	async confirmDocument(
+		@Param("id", ParseObjectIdPipe) id: string,
+		@Param("docId", ParseObjectIdPipe) docId: string,
+		@CurrentUser() user: User
+	) {
+		return this.tenanciesService.confirmDocument(id, docId, user);
+	}
 }

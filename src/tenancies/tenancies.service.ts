@@ -431,9 +431,24 @@ export class TenanciesService {
 			url: dto.url,
 			key: dto.key,
 			source: dto.source ?? DocumentSource.UPLOAD,
+			uploadedBy: new Types.ObjectId(viewer._id.toString()),
+			uploaderRole: viewer.role,
 			...(type === TenancyDocumentType.INVENTORY ? { stage: dto.stage ?? InventoryStage.CHECK_IN } : {})
 		});
 		return this.getDetail(id, viewer);
+	}
+
+	async confirmDocument(id: string, documentId: string, landlord: Viewer) {
+		const tenancy = await this.findForLandlord(id, landlord);
+		const document = (tenancy.documents ?? []).find(item => item._id?.toString() === documentId);
+		if (!document || document.type !== TenancyDocumentType.TENANCY_AGREEMENT) {
+			throw new NotFoundException("Tenancy agreement not found.");
+		}
+		await this.tenancyModel.updateOne(
+			{ _id: tenancy._id, "documents._id": new Types.ObjectId(documentId) },
+			{ $set: { "documents.$.confirmedByLandlord": true } }
+		);
+		return this.getDetail(id, landlord);
 	}
 
 	async appendDocument(
