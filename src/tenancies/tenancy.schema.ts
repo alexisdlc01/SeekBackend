@@ -4,6 +4,7 @@ import { SchemaTypes, Types } from "mongoose";
 import {
 	DepositScheme,
 	DocumentSource,
+	InventoryStage,
 	TenancyDocumentType,
 	TenancyStatus
 } from "./tenancy.enums";
@@ -32,6 +33,14 @@ export class TenancyDocument {
 	@ApiProperty({ enum: DocumentSource })
 	@Prop({ enum: DocumentSource, default: DocumentSource.UPLOAD })
 	source: DocumentSource;
+
+	@ApiProperty({ enum: InventoryStage, required: false })
+	@Prop({ enum: InventoryStage })
+	stage?: InventoryStage;
+
+	@ApiProperty({ default: true, description: "False when a tenancy agreement came from a tenant-controlled mailbox and has not been confirmed by the landlord." })
+	@Prop({ default: true })
+	confirmedByLandlord?: boolean;
 
 	@ApiProperty({ type: String, format: "date-time" })
 	@Prop({ default: Date.now })
@@ -117,6 +126,10 @@ export class Tenancy {
 	})
 	@Prop({ type: Date, default: null })
 	depositReceivedAt?: Date | null;
+
+	@ApiProperty({ required: false, maxLength: 1000, description: "Instructions for paying this tenancy by bank transfer." })
+	@Prop({ trim: true, maxlength: 1000 })
+	bankTransferInstructions?: string;
 
 	@ApiProperty({
 		type: String,

@@ -33,3 +33,8 @@ export enum DocumentSource {
 	UPLOAD = "UPLOAD",
 	SEEK = "SEEK"
 }
+
+export enum InventoryStage {
+	CHECK_IN = "CHECK_IN",
+	CHECK_OUT = "CHECK_OUT"
+}

@@ -130,11 +130,11 @@ describe("ConnectorsService.fileAttachment document type", () => {
 		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "TENANCY_AGREEMENT" }));
 	});
 
-	it("Gmail, tenant's mailbox: the landlord's contract files as Other even with a DMARC pass (the tenant controls the headers)", async () => {
+	it("Gmail, tenant's mailbox: an authenticated landlord contract keeps its contract type", async () => {
 		const { service, me, email, tenancies, getFull } = setup({}, Role.STUDENT, "landlord@example.com", EmailProvider.GMAIL);
 		getFull.mockResolvedValue({ ...(await getFull()), senderAuthenticated: true });
 		await service.fileAttachment(me, email._id.toString(), 0);
-		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "OTHER" }));
+		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "TENANCY_AGREEMENT", confirmedByLandlord: false }));
 	});
 
 	it("Gmail: the landlord's own sent mail (SENT label) keeps the contract type without any authentication header", async () => {
@@ -142,7 +142,7 @@ describe("ConnectorsService.fileAttachment document type", () => {
 		Object.assign(email, { outgoing: true, to: ["tenant@example.com"] });
 		getFull.mockResolvedValue({ ...(await getFull()), sent: true });
 		await service.fileAttachment(me, email._id.toString(), 0);
-		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "TENANCY_AGREEMENT" }));
+		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "TENANCY_AGREEMENT", confirmedByLandlord: true }));
 	});
 
 	it("Gmail: an incoming mail forging the mailbox's own address as From files as Other, even if stored as outgoing", async () => {

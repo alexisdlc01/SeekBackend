@@ -40,7 +40,7 @@ import {
 	threadKeyFor
 } from "./housing-filter";
 import { DEMO_FILE_BASE, DemoContext, UNIVERSITY_DOMAINS, demoMailbox } from "./demo-mailbox";
-import { decryptToken, deriveDevelopmentKey, encryptToken, parseEncryptionKey } from "./token-crypto";
+import { decryptStoredText, decryptToken, deriveDevelopmentKey, encryptToken, isEncryptedStoredText, parseEncryptionKey } from "./token-crypto";
 import { MailAttachment, MailFull, MailMeta, MailProviderClient, ProviderError, replySubject } from "./providers/mail-provider";
 import { GmailClient } from "./providers/gmail.client";
 import { OutlookClient } from "./providers/outlook.client";
@@ -188,6 +188,25 @@ export class ConnectorsService {
 		if (key) return key;
 		if (this.isProduction) return null;
 		return deriveDevelopmentKey(this.config.getOrThrow<string>("JWT_ACCESS_TOKEN_SECRET"));
+	}
+
+	/** Email bodies and snippets are encrypted at rest; old plaintext rows remain readable. */
+	decryptEmailBody(body: string): string {
+		if (!body || !isEncryptedStoredText(body)) return body ?? "";
+		try {
+			const key = this.encryptionKey();
+			if (!key) throw new Error("Encryption key unavailable");
+			return decryptStoredText(body, key);
+		} catch (error) {
+			this.logger.warn(`Could not decrypt stored email text: ${(error as Error).name}`);
+			return "";
+		}
+	}
+
+	private encryptEmailBody(body: string): string {
+		const key = this.encryptionKey();
+		if (!key) throw new ServiceUnavailableException("Mailbox connections need CONNECTOR_ENCRYPTION_KEY on this server.");
+		return encryptToken(body, key);
 	}
 
 	private credentials(provider: OAuthProvider) {
@@ -1009,8 +1028,8 @@ export class ConnectorsService {
 				counterpartEmail,
 				counterpartName: classification.counterpartName || mail.fromName || counterpartEmail,
 				subject: mail.subject,
-				snippet: mail.snippet || mail.body.slice(0, 140),
-				body: mail.body,
+				snippet: this.encryptEmailBody(mail.snippet || mail.body.slice(0, 140)),
+				body: this.encryptEmailBody(mail.body),
 				receivedAt: mail.receivedAt,
 				category: classification.category,
 				attachments: mail.attachments.map(attachment => ({
@@ -1039,16 +1058,21 @@ export class ConnectorsService {
 		if (outgoing) return 0;
 		let filed = 0;
 		let trusted: boolean | undefined;
+		let trustedContract: boolean | undefined;
 		const attachments = created.toObject().attachments;
 		for (const [index, attachment] of mail.attachments.entries()) {
 			const found = documentTypeFor(attachment.name, mail.subject);
+			const isContract = found === TenancyDocumentType.TENANCY_AGREEMENT;
 			let type =
 				found && target && toggles.autoFileAttachments && (found !== TenancyDocumentType.TENANCY_AGREEMENT || toggles.copySignedContracts)
 					? found
 					: null;
 			// Anyone can email "tenancy-agreement.pdf": only a proven landlord, team or deposit-scheme sender files it as the real thing.
-			if (type && target && !(trusted ??= await this.trustedSender(connection, target.tenancy, mail.from, classification, this.senderAuthenticated(connection, mail)))) {
-				type = TenancyDocumentType.OTHER;
+			if (type && target) {
+				const senderTrusted = isContract
+					? (trustedContract ??= await this.trustedSender(connection, target.tenancy, mail.from, classification, this.senderAuthenticated(connection, mail), true))
+					: (trusted ??= await this.trustedSender(connection, target.tenancy, mail.from, classification, this.senderAuthenticated(connection, mail)));
+				if (!senderTrusted) type = TenancyDocumentType.OTHER;
 			}
 			const isBill =
 				// A landlord's mailbox holds the landlord's own bills, never the tenants' shares.
@@ -1065,7 +1089,8 @@ export class ConnectorsService {
 				attachments[index].filedAs = "Seek Passport › References";
 				filed += 1;
 			} else if (type && target) {
-				await this.fileDocument(target.tenancy, type, attachment.name, file);
+				const confirmedByLandlord = type !== TenancyDocumentType.TENANCY_AGREEMENT || connection.user.toString() === target.tenancy.landlord.toString();
+				await this.fileDocument(target.tenancy, type, attachment.name, file, confirmedByLandlord);
 				attachments[index].filedAs = `${target.label} › ${folderFor(type)}`;
 				filed += 1;
 			} else if (target && (await this.fileBill(target, classification, mail, user._id))) {
@@ -1131,11 +1156,19 @@ export class ConnectorsService {
 
 	/**
 	 * A sensitive type is shared with co-tenants and the landlord, so its sender must be proven (`proven`: DMARC/DKIM pass, or own sent mail).
-	 * A tenant controls their own mailbox, headers included, so nothing read from it is ever trusted; the demo mailbox is Seek's own.
+	 * Contracts are also accepted in a tenant mailbox when the provider authenticated the landlord or their team as sender.
 	 */
-	private async trustedSender(connection: ConnectionLean, tenancy: Tenancy, from: string, classification: Classification, proven: boolean) {
+	private async trustedSender(
+		connection: ConnectionLean,
+		tenancy: Tenancy,
+		from: string,
+		classification: Classification,
+		proven: boolean,
+		allowTenantMailbox = false
+	) {
 		const landlordMailbox = this.isDemo(connection) || connection.user.toString() === tenancy.landlord.toString();
-		return landlordMailbox && proven && (await this.fromTenancyLandlord(tenancy, from, classification));
+		if (allowTenantMailbox && classification.reason === "Deposit scheme") return false;
+		return (landlordMailbox || allowTenantMailbox) && proven && (await this.fromTenancyLandlord(tenancy, from, classification));
 	}
 
 	/** True when the sender is the tenancy's landlord, one of their team, or a deposit scheme. */
@@ -1167,7 +1200,8 @@ export class ConnectorsService {
 		tenancy: Tenancy & { _id: Types.ObjectId },
 		type: TenancyDocumentType,
 		fileName: string,
-		file: { url: string; key: string | null }
+		file: { url: string; key: string | null },
+		confirmedByLandlord = true
 	) {
 		const title = documentTitle(fileName);
 		const already = (tenancy.documents ?? []).some(doc => doc.type === type && doc.title === title);
@@ -1177,7 +1211,8 @@ export class ConnectorsService {
 			title,
 			url: file.url,
 			...(file.key ? { key: file.key } : {}),
-			source: DocumentSource.EMAIL
+			source: DocumentSource.EMAIL,
+			confirmedByLandlord
 		});
 	}
 
@@ -1222,9 +1257,17 @@ export class ConnectorsService {
 		const trusted =
 			TENANT_DOCUMENT_TYPES.has(found) ||
 			// Judge the sender only: a sent email's recipients (e.g. a deposit scheme) say nothing about who wrote the file.
-			(await this.trustedSender(connection, tenancy, email.from, classifyEmail({ ...email, outgoing: false }, new Map()), authenticated || sent));
+			(await this.trustedSender(
+				connection,
+				tenancy,
+				email.from,
+				classifyEmail({ ...email, outgoing: false }, new Map()),
+				authenticated || sent,
+				found === TenancyDocumentType.TENANCY_AGREEMENT
+			));
 		const type = trusted ? found : TenancyDocumentType.OTHER;
-		await this.fileDocument(tenancy, type, attachment.name, file);
+		const confirmedByLandlord = type !== TenancyDocumentType.TENANCY_AGREEMENT || connection.user.toString() === tenancy.landlord.toString();
+		await this.fileDocument(tenancy, type, attachment.name, file, confirmedByLandlord);
 		let home = "My home";
 		if (user.role === Role.LANDLORD_AGENCY) {
 			const listing = await this.listingModel.findById(tenancy.listing).select("propertyTitle streetAddress").lean().exec();
@@ -1352,8 +1395,8 @@ export class ConnectorsService {
 			counterpartEmail: replyTo.counterpartEmail,
 			counterpartName: replyTo.counterpartName,
 			subject: replySubject(replyTo.subject),
-			snippet: text.replace(/\s+/g, " ").slice(0, 140),
-			body: text,
+			snippet: this.encryptEmailBody(text.replace(/\s+/g, " ").slice(0, 140)),
+			body: this.encryptEmailBody(text),
 			receivedAt: new Date(),
 			category: replyTo.category,
 			attachments: [],

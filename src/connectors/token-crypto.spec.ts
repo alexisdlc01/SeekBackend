@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { decryptToken, deriveDevelopmentKey, encryptToken, parseEncryptionKey } from "./token-crypto";
+import { decryptStoredText, decryptToken, deriveDevelopmentKey, encryptToken, parseEncryptionKey } from "./token-crypto";
 
 describe("connector token encryption", () => {
 	const key = randomBytes(32);
@@ -35,5 +35,11 @@ describe("connector token encryption", () => {
 	it("derives a stable 32-byte development key", () => {
 		expect(deriveDevelopmentKey("dev").length).toBe(32);
 		expect(deriveDevelopmentKey("dev").equals(deriveDevelopmentKey("dev"))).toBe(true);
+	});
+
+	it("round-trips encrypted email text and still reads legacy plaintext", () => {
+		const sealed = encryptToken("Full email body", key);
+		expect(decryptStoredText(sealed, key)).toBe("Full email body");
+		expect(decryptStoredText("Legacy plaintext body", key)).toBe("Legacy plaintext body");
 	});
 });

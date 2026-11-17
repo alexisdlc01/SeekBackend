@@ -9,7 +9,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Contract, ContractStatus } from "../contracts/contract.schema";
 import { Model, Types } from "mongoose";
 import { Tenancy, TenancyDocument } from "./tenancy.schema";
-import { DocumentSource, TenancyDocumentType, TenancyStatus } from "./tenancy.enums";
+import { DocumentSource, InventoryStage, TenancyDocumentType, TenancyStatus } from "./tenancy.enums";
 import { Listing } from "../listings/listings.schema";
 import { User } from "../users/users.schema";
 import { Role } from "../auth/role.enum";
@@ -58,7 +58,7 @@ export function applicationTenancyPeriod(listing: Pick<Listing, "availableFrom" 
 type Viewer = Pick<User, "_id" | "role">;
 
 /** Types only a tenant's own paperwork can carry; the rest are the landlord's word (agreement, certificates). */
-export const TENANT_DOCUMENT_TYPES = new Set([TenancyDocumentType.COUNCIL_TAX_EXEMPTION, TenancyDocumentType.OTHER]);
+export const TENANT_DOCUMENT_TYPES = new Set([TenancyDocumentType.COUNCIL_TAX_EXEMPTION, TenancyDocumentType.INVENTORY, TenancyDocumentType.OTHER]);
 
 export type TenancyLean = Tenancy & { _id: Types.ObjectId };
 
@@ -203,6 +203,7 @@ export class TenanciesService {
 			depositScheme: dto.depositScheme ?? null,
 			depositReference: dto.depositReference,
 			depositReceivedAt: dto.depositReceivedAt ? depositReceivedDate(dto.depositReceivedAt) : null,
+			bankTransferInstructions: dto.bankTransferInstructions?.trim(),
 			depositProtectedAt: dto.depositProtectedAt
 				? new Date(dto.depositProtectedAt)
 				: dto.depositScheme && dto.depositReference
@@ -386,6 +387,15 @@ export class TenanciesService {
 		return this.getDetail(id, landlord);
 	}
 
+	async updateBankTransferInstructions(id: string, bankTransferInstructions: string, landlord: Viewer) {
+		const tenancy = await this.findForLandlord(id, landlord);
+		await this.tenancyModel.updateOne(
+			{ _id: tenancy._id },
+			{ $set: { bankTransferInstructions: bankTransferInstructions.trim() } }
+		);
+		return this.getDetail(id, landlord);
+	}
+
 	/** Starts the 30-day deposit protection clock. */
 	async markDepositReceived(id: string, dto: DepositReceivedDto, landlord: Viewer) {
 		const tenancy = await this.findForLandlord(id, landlord);
@@ -414,12 +424,14 @@ export class TenanciesService {
 		// A housemate's "tenancy agreement" must never show as the contract: only the landlord
 		// (or their team, who act as the landlord) and support file landlord documents.
 		const asLandlord = viewer.role === Role.SUPERUSER || idOf(tenancy.landlord) === viewer._id.toString();
+		const type = asLandlord || TENANT_DOCUMENT_TYPES.has(dto.type) ? dto.type : TenancyDocumentType.OTHER;
 		await this.appendDocument(tenancy._id, {
-			type: asLandlord || TENANT_DOCUMENT_TYPES.has(dto.type) ? dto.type : TenancyDocumentType.OTHER,
+			type,
 			title: dto.title.trim(),
 			url: dto.url,
 			key: dto.key,
-			source: dto.source ?? DocumentSource.UPLOAD
+			source: dto.source ?? DocumentSource.UPLOAD,
+			...(type === TenancyDocumentType.INVENTORY ? { stage: dto.stage ?? InventoryStage.CHECK_IN } : {})
 		});
 		return this.getDetail(id, viewer);
 	}

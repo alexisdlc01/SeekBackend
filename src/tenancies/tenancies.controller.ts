@@ -16,6 +16,7 @@ import { Tenancy } from "./tenancy.schema";
 import { CreateTenancyDto } from "./dto/create-tenancy.dto";
 import { DepositReceivedDto, PrescribedInfoDto, UpdateDepositDto, UpdateEnergyAllowanceDto } from "./dto/update-deposit.dto";
 import { AddTenancyDocumentDto } from "./dto/add-tenancy-document.dto";
+import { UpdateBankTransferInstructionsDto } from "./dto/update-bank-transfer-instructions.dto";
 
 @Controller("tenancies")
 export class TenanciesController {
@@ -102,6 +103,20 @@ export class TenanciesController {
 		@CurrentUser() user: User
 	) {
 		return this.tenanciesService.updateEnergyAllowance(id, body.energyAllowance, user);
+	}
+
+	@TeamAccess(TeamScope.TENANCIES)
+	@Patch(":id/bank-transfer-instructions")
+	@LandlordAgency()
+	@ApiOperation({ summary: "Set the bank-transfer payment instructions without changing deposit protection." })
+	@ApiResponse({ status: 200, type: Tenancy })
+	@ApiResponse({ status: 403, type: ErrorDto })
+	async bankTransferInstructions(
+		@Param("id", ParseObjectIdPipe) id: string,
+		@Body() body: UpdateBankTransferInstructionsDto,
+		@CurrentUser() user: User
+	) {
+		return this.tenanciesService.updateBankTransferInstructions(id, body.bankTransferInstructions, user);
 	}
 
 	@TeamAccess(TeamScope.TENANCIES)

@@ -3,6 +3,9 @@ import { ConfigService } from "@nestjs/config";
 import { Types } from "mongoose";
 import { UploadService } from "./upload.service";
 import { Role } from "../auth/role.enum";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+jest.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: jest.fn().mockResolvedValue("https://signed.example/upload") }));
 
 describe("UploadService private-file authorization", () => {
 	const configValues: Record<string, string> = {
@@ -50,6 +53,24 @@ describe("UploadService private-file authorization", () => {
 		expect(send).not.toHaveBeenCalled();
 		await service.deletePrivateObject("private/abc/passport.pdf");
 		expect((send.mock.calls[0][0] as any).input).toEqual({ Bucket: "private-test", Key: "private/abc/passport.pdf" });
+	});
+
+	it("encrypts server-side private uploads with S3 AES256", async () => {
+		const { service } = setup();
+		const send = jest.spyOn((service as any).s3Client, "send").mockResolvedValue({} as never);
+		await service.putPrivateObject(new Types.ObjectId().toString(), Buffer.from("photo"), "image/jpeg", "jpg");
+		expect((send.mock.calls[0][0] as any).input.ServerSideEncryption).toBe("AES256");
+	});
+
+	it("does not sign an encryption header into public or private presigned uploads", async () => {
+		const { service } = setup();
+		const presign = getSignedUrl as jest.MockedFunction<typeof getSignedUrl>;
+		presign.mockClear();
+		await service.getPresignedUploadUrl("image/jpeg", "public", new Types.ObjectId().toString(), 5);
+		await service.getPresignedUploadUrl("image/jpeg", "private", new Types.ObjectId().toString(), 5);
+		for (const [, command] of presign.mock.calls) {
+			expect((command as any).input).not.toHaveProperty("ServerSideEncryption");
+		}
 	});
 
 	it("lets a superuser open a listing's title deed but no other private file", async () => {

@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { IsEnum, IsOptional, IsString, IsUrl, MaxLength, MinLength } from "class-validator";
-import { DocumentSource, TenancyDocumentType } from "../tenancy.enums";
+import { DocumentSource, InventoryStage, TenancyDocumentType } from "../tenancy.enums";
 
 export class AddTenancyDocumentDto {
 	@ApiProperty({ enum: TenancyDocumentType })
@@ -27,4 +27,9 @@ export class AddTenancyDocumentDto {
 	@IsOptional()
 	@IsEnum(DocumentSource)
 	source?: DocumentSource;
+
+	@ApiPropertyOptional({ enum: InventoryStage, default: InventoryStage.CHECK_IN, description: "Inventory stage; defaults to check-in." })
+	@IsOptional()
+	@IsEnum(InventoryStage)
+	stage?: InventoryStage;
 }

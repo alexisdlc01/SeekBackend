@@ -44,3 +44,12 @@ export function decryptToken(payload: string, key: Buffer): string {
 		decipher.final()
 	]).toString("utf8");
 }
+
+export function isEncryptedStoredText(payload: string): boolean {
+	return /^v1:[A-Za-z0-9+/]{16}:[A-Za-z0-9+/]{22}==:[A-Za-z0-9+/]*={0,2}$/.test(payload);
+}
+
+/** Decrypts values written by encryptToken, while preserving rows stored before encryption was introduced. */
+export function decryptStoredText(payload: string, key: Buffer): string {
+	return isEncryptedStoredText(payload) ? decryptToken(payload, key) : payload;
+}

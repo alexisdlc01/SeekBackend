@@ -126,7 +126,8 @@ export class UploadService {
 				Body: body,
 				ContentType: contentType,
 				ContentLength: body.length,
-				ACL: "private"
+				ACL: "private",
+				ServerSideEncryption: "AES256"
 			})
 		);
 		const url = `https://${this.privateBucket}.s3.${this.configService.get(

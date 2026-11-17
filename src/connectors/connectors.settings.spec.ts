@@ -5,7 +5,7 @@ import { ConnectorsService } from "./connectors.service";
 import { EmailProvider } from "./email-connection.schema";
 import { decodeHeader, isPrivateAddress, parseFetchHeaders } from "./providers/imap.client";
 import * as imap from "./providers/imap.client";
-import { decryptToken, deriveDevelopmentKey } from "./token-crypto";
+import { decryptToken, deriveDevelopmentKey, encryptToken } from "./token-crypto";
 
 const lean = <T>(value: T) => ({ lean: () => ({ exec: () => Promise.resolve(value) }) });
 const selectLean = <T>(value: T) => ({ select: () => lean(value) });
@@ -67,6 +67,18 @@ const mail = (id: string, from: string, subject: string) => ({
 });
 
 describe("ConnectorsService callback provider names", () => {
+	it("keeps legacy plaintext readable and turns undecryptable rows into a safe empty value", () => {
+		const missing = setup({ NODE_ENV: "production" }).service;
+		const missingWarn = jest.spyOn((missing as any).logger, "warn").mockImplementation();
+		const encrypted = encryptToken("private mailbox content", Buffer.alloc(32, 1));
+		expect(missing.decryptEmailBody("Legacy plaintext preview")).toBe("Legacy plaintext preview");
+		expect(missing.decryptEmailBody(encrypted)).toBe("");
+		const wrongKey = setup().service;
+		const wrongKeyWarn = jest.spyOn((wrongKey as any).logger, "warn").mockImplementation();
+		expect(wrongKey.decryptEmailBody(encrypted)).toBe("");
+		expect([...missingWarn.mock.calls, ...wrongKeyWarn.mock.calls].flat().join(" ")).not.toContain("private mailbox content");
+	});
+
 	it("accepts any casing and keeps gmail/outlook canonical", () => {
 		const { service } = setup();
 		expect(service.parseOAuthProvider("gmail")).toBe(EmailProvider.GMAIL);
@@ -352,7 +364,8 @@ describe("ConnectorsService settings", () => {
 		function storeSetup(toggles: Partial<Record<string, boolean>>, role = "STUDENT", from: any = classification, mailbox = new Types.ObjectId()) {
 			const { service, userModel, connectionModel } = setup();
 			const created = { _id: new Types.ObjectId(), toObject: () => ({ attachments: [{ name: "x" }] }) };
-			(service as any).messageModel = { create: jest.fn().mockResolvedValue(created), updateOne: jest.fn().mockResolvedValue({}), deleteOne: jest.fn().mockResolvedValue({}) };
+			const messageModel = { create: jest.fn().mockResolvedValue(created), updateOne: jest.fn().mockResolvedValue({}), deleteOne: jest.fn().mockResolvedValue({}) };
+			(service as any).messageModel = messageModel;
 			jest.spyOn(service as any, "tenancyFor").mockResolvedValue({ tenancy, listing: null, label: "My home" });
 			jest.spyOn(service as any, "storeFile").mockResolvedValue({ url: "https://files.example/x.pdf", key: null });
 			const fileDocument = jest.spyOn(service as any, "fileDocument").mockResolvedValue(undefined);
@@ -362,7 +375,7 @@ describe("ConnectorsService settings", () => {
 					...allOn,
 					...toggles
 				});
-			return { run, fileDocument, fileBill, userModel, connectionModel };
+			return { service, run, fileDocument, fileBill, userModel, connectionModel, messageModel };
 		}
 
 		it("files bills only when reading utility bills is on", async () => {
@@ -386,7 +399,7 @@ describe("ConnectorsService settings", () => {
 			expect(off.fileDocument).not.toHaveBeenCalled();
 			const on = storeSetup({}, "LANDLORD_AGENCY", fromLandlord, landlordId);
 			await on.run(authenticated("Tenancy agreement", "Tenancy-agreement.pdf"));
-			expect(on.fileDocument).toHaveBeenCalledWith(tenancy, "TENANCY_AGREEMENT", "Tenancy-agreement.pdf", expect.anything());
+			expect(on.fileDocument).toHaveBeenCalledWith(tenancy, "TENANCY_AGREEMENT", "Tenancy-agreement.pdf", expect.anything(), true);
 		});
 
 		it("landlord's mailbox: a contract 'from the team' is a plain document unless the provider authenticated the sender", async () => {
@@ -396,11 +409,23 @@ describe("ConnectorsService settings", () => {
 			expect(forged.fileDocument.mock.calls.map(call => call[1])).toEqual(["OTHER", "OTHER"]);
 		});
 
-		it("tenant's mailbox: even an authenticated contract from the landlord is a plain document (the tenant controls the headers)", async () => {
+		it("marks a landlord contract unconfirmed in a tenant mailbox and confirmed in the landlord mailbox", async () => {
 			const tenant = storeSetup({}, "STUDENT", fromLandlord);
 			await tenant.run(authenticated("Tenancy agreement", "Tenancy-agreement.pdf"));
-			await tenant.run(authenticated("Deposit certificate", "Deposit-certificate.pdf"));
-			expect(tenant.fileDocument.mock.calls.map(call => call[1])).toEqual(["OTHER", "OTHER"]);
+			expect(tenant.fileDocument).toHaveBeenCalledWith(tenancy, "TENANCY_AGREEMENT", "Tenancy-agreement.pdf", expect.anything(), false);
+			const owner = storeSetup({}, "LANDLORD_AGENCY", fromLandlord, landlordId);
+			await owner.run(authenticated("Tenancy agreement", "Tenancy-agreement.pdf"));
+			expect(owner.fileDocument).toHaveBeenCalledWith(tenancy, "TENANCY_AGREEMENT", "Tenancy-agreement.pdf", expect.anything(), true);
+		});
+
+		it("encrypts imported email bodies and snippets before writing them", async () => {
+			const ctx = storeSetup({});
+			await ctx.run(withFile("Your October statement", "statement.pdf"));
+			const { body: storedBody, snippet: storedSnippet } = ctx.messageModel.create.mock.calls[0][0];
+			expect(storedBody).toMatch(/^v1:/);
+			expect(storedSnippet).toMatch(/^v1:/);
+			expect(ctx.service.decryptEmailBody(storedBody)).toBe("Total: £214.00");
+			expect(ctx.service.decryptEmailBody(storedSnippet)).toBe("Total: £214.00");
 		});
 
 		it("files a contract or certificate from anyone but the landlord or their team as a plain document", async () => {
