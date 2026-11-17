@@ -1,9 +1,11 @@
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { ApiProperty } from "@nestjs/swagger";
 import { SchemaTypes, Types } from "mongoose";
+import { Role } from "../auth/role.enum";
 import {
 	DepositScheme,
 	DocumentSource,
+	InventoryStage,
 	TenancyDocumentType,
 	TenancyStatus
 } from "./tenancy.enums";
@@ -33,12 +35,37 @@ export class TenancyDocument {
 	@Prop({ enum: DocumentSource, default: DocumentSource.UPLOAD })
 	source: DocumentSource;
 
+	@ApiProperty({ enum: InventoryStage, required: false })
+	@Prop({ enum: InventoryStage })
+	stage?: InventoryStage;
+
+	@ApiProperty({ default: true, description: "False when a tenancy agreement came from a tenant-controlled mailbox and has not been confirmed by the landlord." })
+	@Prop({ default: true })
+	confirmedByLandlord?: boolean;
+
+	@ApiProperty({ type: String, required: false, description: "Account that uploaded or imported the document." })
+	@Prop({ type: SchemaTypes.ObjectId, ref: "User" })
+	uploadedBy?: Types.ObjectId;
+
+	@ApiProperty({ enum: Role, required: false, description: "Role of the uploader, used to distinguish tenant evidence from landlord documents." })
+	@Prop({ enum: Role })
+	uploaderRole?: Role;
+
 	@ApiProperty({ type: String, format: "date-time" })
 	@Prop({ default: Date.now })
 	addedAt: Date;
 }
 
 export const TenancyDocumentSchema = SchemaFactory.createForClass(TenancyDocument);
+
+export function isConfirmedTenancyAgreement(document: Pick<TenancyDocument, "type" | "confirmedByLandlord">) {
+	return document.type === TenancyDocumentType.TENANCY_AGREEMENT && document.confirmedByLandlord !== false;
+}
+
+/** Legacy documents with no recorded uploader are not trusted as the landlord's official inventory. */
+export function isOfficialInventory(document: Pick<TenancyDocument, "type" | "uploaderRole">) {
+	return document.type === TenancyDocumentType.INVENTORY && document.uploaderRole !== undefined && document.uploaderRole !== Role.STUDENT;
+}
 
 /**
  * A let between a landlord and one household. Money is stored in pence.
@@ -117,6 +144,10 @@ export class Tenancy {
 	})
 	@Prop({ type: Date, default: null })
 	depositReceivedAt?: Date | null;
+
+	@ApiProperty({ required: false, maxLength: 1000, description: "Instructions for paying this tenancy by bank transfer." })
+	@Prop({ trim: true, maxlength: 1000 })
+	bankTransferInstructions?: string;
 
 	@ApiProperty({
 		type: String,

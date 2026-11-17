@@ -110,6 +110,29 @@ describe("AiService bills advice", () => {
 	});
 });
 
+describe("AiService contract advice", () => {
+	const none = {} as any;
+	const service = new AiService({ isConfigured: () => false } as any, none, none, none, none, none, none, none, none, none, { get: () => undefined } as any);
+	const user = { _id: "64b000000000000000000011", role: "STUDENT" };
+	const tenancy = {
+		startDate: new Date("2026-09-01T00:00:00Z"),
+		periodic: true,
+		documents: [{ type: "TENANCY_AGREEMENT", confirmedByLandlord: false }]
+	};
+
+	it("does not present an unconfirmed mailbox agreement as the tenancy contract", () => {
+		const unconfirmed = (service as any).contractAdvice(user, tenancy, { propertyTitle: "14 Cotham Grove" });
+		expect(unconfirmed.advice).toContain("No signed agreement is on file yet");
+
+		const confirmed = (service as any).contractAdvice(
+			user,
+			{ ...tenancy, documents: [{ type: "TENANCY_AGREEMENT", confirmedByLandlord: true }] },
+			{ propertyTitle: "14 Cotham Grove" }
+		);
+		expect(confirmed.advice).toContain("The signed agreement is in your documents");
+	});
+});
+
 describe("AiService advice for a home in Scotland", () => {
 	const none = {} as any;
 	const billModel = { find: () => ({ sort() { return this; }, lean() { return this; }, exec: async () => [] }) };

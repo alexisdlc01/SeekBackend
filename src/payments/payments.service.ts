@@ -191,6 +191,7 @@ export class PaymentsService {
 				remindDaysBefore: 3
 			},
 			monthlyRent: tenancy.monthlyRent,
+			bankTransferInstructions: tenancy.bankTransferInstructions,
 			nation: listing?.nation ?? "ENGLAND",
 			allowedFrequencies: allowedFrequencies(listing?.nation, listing?.paymentPlans ?? null),
 			restrictionReason: restrictionReason(listing?.nation),

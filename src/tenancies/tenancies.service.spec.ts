@@ -1,9 +1,17 @@
-import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ExecutionContext, ForbiddenException } from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
 import { Types } from "mongoose";
 import { depositReceivedDate, TenanciesService } from "./tenancies.service";
-import { TenancyDocumentType, TenancyStatus } from "./tenancy.enums";
+import { InventoryStage, TenancyDocumentType, TenancyStatus } from "./tenancy.enums";
 import { ApplicationStage } from "../application/enums/application-stage.enum";
 import { Role } from "../auth/role.enum";
+import { TenanciesController } from "./tenancies.controller";
+import { ROLE_KEY } from "../auth/decorators/role.decorator";
+import { TEAM_SCOPES_KEY } from "../auth/decorators/team-access.decorator";
+import { TeamScope } from "../users/types/team-scope";
+import { RoleGuard } from "../auth/guards/role.guard";
+import { AccessControlService } from "../shared/access-control.service";
+import { isOfficialInventory } from "./tenancy.schema";
 
 const lean = <T>(value: T) => ({ lean: () => ({ exec: () => Promise.resolve(value) }) });
 
@@ -303,6 +311,24 @@ describe("TenanciesService create / accept", () => {
 		expect(tenancyModel.updateOne.mock.calls.at(-1)![1]).toEqual({ $set: { energyAllowance: null } });
 	});
 
+	it("keeps bank-transfer instructions landlord-only and changes no deposit fields", async () => {
+		const { service, tenancyModel } = setup();
+		jest.spyOn(service, "findForLandlord").mockResolvedValue({ _id: new Types.ObjectId(), listing: listingId, monthlyRent: 69500, depositAmount: 50000 } as any);
+		const handler = TenanciesController.prototype.bankTransferInstructions;
+		expect(Reflect.getMetadata(ROLE_KEY, handler)).toEqual([Role.LANDLORD_AGENCY]);
+		expect(Reflect.getMetadata(TEAM_SCOPES_KEY, handler)).toEqual([TeamScope.TENANCIES]);
+		const context = {
+			getHandler: () => handler,
+			getClass: () => TenanciesController,
+			switchToHttp: () => ({ getRequest: () => ({ user: { _id: new Types.ObjectId(), role: Role.STUDENT } }) })
+		} as unknown as ExecutionContext;
+		expect(new RoleGuard(new Reflector(), new AccessControlService()).canActivate(context)).toBe(false);
+		await service.updateBankTransferInstructions("t", "  Pay account 12345678 with your surname  ", landlord);
+		expect(tenancyModel.updateOne.mock.calls.at(-1)![1]).toEqual({
+			$set: { bankTransferInstructions: "Pay account 12345678 with your surname" }
+		});
+	});
+
 	it("files a housemate's agreement or certificate as OTHER, but keeps the landlord's type", async () => {
 		const { service, tenancyModel } = setup();
 		const student = { _id: new Types.ObjectId(), role: Role.STUDENT } as any;
@@ -318,6 +344,70 @@ describe("TenanciesService create / accept", () => {
 		expect(filedType()).toBe(TenancyDocumentType.COUNCIL_TAX_EXEMPTION);
 		await service.addDocument("t", doc(TenancyDocumentType.TENANCY_AGREEMENT), landlord);
 		expect(filedType()).toBe(TenancyDocumentType.TENANCY_AGREEMENT);
+	});
+
+	it("lets a student add a check-out inventory photo to their own tenancy", async () => {
+		const { service, tenancyModel } = setup();
+		const student = { _id: new Types.ObjectId(), role: Role.STUDENT } as any;
+		jest.spyOn(service, "findForMember").mockResolvedValue({ _id: new Types.ObjectId(), landlord: landlordId, tenants: [student._id] } as any);
+		await service.addDocument("t", {
+			type: TenancyDocumentType.INVENTORY,
+			stage: InventoryStage.CHECK_OUT,
+			title: "Bedroom wall",
+			url: "https://x.example/wall.jpg"
+		}, student);
+		const stored = tenancyModel.updateOne.mock.calls.at(-1)![1].$push.documents;
+		expect(stored).toMatchObject({
+			type: TenancyDocumentType.INVENTORY,
+			stage: InventoryStage.CHECK_OUT,
+			uploadedBy: student._id,
+			uploaderRole: Role.STUDENT
+		});
+		expect(isOfficialInventory(stored)).toBe(false);
+	});
+
+	it("defaults an inventory to check-in and never stores a stage on another document type", async () => {
+		const { service, tenancyModel } = setup();
+		jest.spyOn(service, "findForMember").mockResolvedValue({ _id: new Types.ObjectId(), landlord: landlordId, tenants: [] } as any);
+		const baseDocument = { title: "Document", url: "https://x.example/document.pdf" };
+		await service.addDocument("t", { ...baseDocument, type: TenancyDocumentType.INVENTORY }, landlord);
+		const inventory = tenancyModel.updateOne.mock.calls.at(-1)![1].$push.documents;
+		expect(inventory.stage).toBe(InventoryStage.CHECK_IN);
+		expect(inventory).toMatchObject({ uploadedBy: landlord._id, uploaderRole: Role.LANDLORD_AGENCY });
+		expect(isOfficialInventory(inventory)).toBe(true);
+		await service.addDocument("t", { ...baseDocument, type: TenancyDocumentType.GAS_SAFETY, stage: InventoryStage.CHECK_OUT }, landlord);
+		expect(tenancyModel.updateOne.mock.calls.at(-1)![1].$push.documents).not.toHaveProperty("stage");
+	});
+
+	it("lets only the owning landlord confirm an imported tenancy agreement", async () => {
+		const { service, tenancyModel } = setup();
+		const documentId = new Types.ObjectId();
+		jest.spyOn(service, "findForLandlord").mockResolvedValue({
+			_id: new Types.ObjectId(),
+			documents: [{ _id: documentId, type: TenancyDocumentType.TENANCY_AGREEMENT, confirmedByLandlord: false }]
+		} as any);
+
+		await service.confirmDocument("t", documentId.toString(), landlord);
+
+		expect(tenancyModel.updateOne).toHaveBeenCalledWith(
+			expect.objectContaining({ "documents._id": documentId }),
+			{ $set: { "documents.$.confirmedByLandlord": true } }
+		);
+		const handler = TenanciesController.prototype.confirmDocument;
+		expect(Reflect.getMetadata(ROLE_KEY, handler)).toEqual([Role.LANDLORD_AGENCY]);
+		expect(Reflect.getMetadata(TEAM_SCOPES_KEY, handler)).toEqual([TeamScope.TENANCIES]);
+	});
+
+	it("does not confirm a non-contract document", async () => {
+		const { service, tenancyModel } = setup();
+		const documentId = new Types.ObjectId();
+		jest.spyOn(service, "findForLandlord").mockResolvedValue({
+			_id: new Types.ObjectId(),
+			documents: [{ _id: documentId, type: TenancyDocumentType.INVENTORY }]
+		} as any);
+
+		await expect(service.confirmDocument("t", documentId.toString(), landlord)).rejects.toThrow("Tenancy agreement not found");
+		expect(tenancyModel.updateOne).not.toHaveBeenCalled();
 	});
 });
 

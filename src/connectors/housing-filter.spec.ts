@@ -78,6 +78,27 @@ describe("housing email filter", () => {
 	it("does not match look-alike domains", () => {
 		expect(classifyEmail(incoming("x@notoctopus.energy.example.com", "Hi"), contacts).housing).toBe(false);
 	});
+
+	it.each([
+		"Private residential tenancy and landlord registration",
+		"EICR, legionella and HMO licence",
+		"SafeDeposits holding deposit",
+		"Notice to leave and rent increase",
+		"TV licence, broadband and meter reading",
+		"Keys collection for your flat viewing"
+	])("keeps broader UK housing mail: %s", subject => {
+		expect(classifyEmail(incoming("housing@example.com", subject), contacts).housing).toBe(true);
+	});
+
+	it("does not treat a generic billing newsletter as housing mail", () => {
+		expect(classifyEmail(incoming("news@example.com", "Your billing newsletter"), contacts).housing).toBe(false);
+	});
+
+	it("does not treat bare flat, lease or keys marketing phrases as housing mail", () => {
+		for (const subject of ["Flat 30% off", "Car lease deals", "Keys to success"]) {
+			expect(classifyEmail(incoming("news@example.com", subject), contacts).housing).toBe(false);
+		}
+	});
 });
 
 describe("attachment filing", () => {

@@ -130,7 +130,7 @@ export class InboxService {
 			const useEmail = latestEmail && (!seekTime || latestEmail.receivedAt > seekTime);
 			const time = useEmail ? latestEmail.receivedAt : (seekTime ?? conversation.createdAt);
 			const preview = useEmail
-				? `${latestEmail.outgoing ? "You: " : ""}${oneLine(latestEmail.snippet || latestEmail.body)}`
+				? `${latestEmail.outgoing ? "You: " : ""}${oneLine(this.connectors.decryptEmailBody(latestEmail.snippet) || this.connectors.decryptEmailBody(latestEmail.body))}`
 				: lastSeek
 					? `${lastSeek.sender?.toString() === uid.toString() ? "You: " : ""}${oneLine(lastSeek.data)}`
 					: "No messages yet";
@@ -166,7 +166,7 @@ export class InboxService {
 				name,
 				sub: latest.subject || "(no subject)",
 				via: filed ? "Email · auto-filed" : incoming.category === EmailCategory.BILLS ? "Email · bills" : "Email",
-				preview: `${latest.outgoing ? "You: " : ""}${oneLine(latest.snippet || latest.body)}`,
+				preview: `${latest.outgoing ? "You: " : ""}${oneLine(this.connectors.decryptEmailBody(latest.snippet) || this.connectors.decryptEmailBody(latest.body))}`,
 				time: latest.receivedAt.toISOString(),
 				timeLabel: timeLabel(latest.receivedAt, now),
 				category: incoming.category,
@@ -428,7 +428,7 @@ export class InboxService {
 			time: email.receivedAt.toISOString(),
 			timeLabel: timeLabel(email.receivedAt, now),
 			subject: email.subject,
-			text: email.body,
+			text: this.connectors.decryptEmailBody(email.body),
 			attachments: (email.attachments ?? []).map(attachment => ({
 				name: attachment.name,
 				url: attachment.url ?? "",

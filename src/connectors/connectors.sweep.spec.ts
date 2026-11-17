@@ -126,6 +126,9 @@ describe("ConnectorsService reply during a disconnect", () => {
 		const replyTo = { connection: demo._id, from: "landlord@x.co", to: [], subject: "Hi", providerThreadId: "t", providerMessageId: "m", threadKey: "k", counterpartEmail: "landlord@x.co", counterpartName: "L", outgoing: false } as any;
 
 		await service.sendReply({ _id: owner, name: "Maya" } as any, replyTo, "Thanks");
+		const stored = (messageModel as any).create.mock.calls[0][0];
+		expect(stored.snippet).toMatch(/^v1:/);
+		expect(service.decryptEmailBody(stored.snippet)).toBe("Thanks");
 		expect(deleteOne).toHaveBeenCalledWith({ _id: createdId });
 	});
 });

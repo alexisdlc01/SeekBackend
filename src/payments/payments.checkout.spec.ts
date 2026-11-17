@@ -536,7 +536,7 @@ describe("StripeClient.retrieveAccount", () => {
 
 describe("PaymentsService.getPlan", () => {
 	it("says whether a card is saved for autopay without exposing it", async () => {
-		const tenancy = { _id: new Types.ObjectId(), listing: new Types.ObjectId(), monthlyRent: 69500 };
+		const tenancy = { _id: new Types.ObjectId(), listing: new Types.ObjectId(), monthlyRent: 69500, bankTransferInstructions: "Use surname as reference" };
 		const plan = { _id: new Types.ObjectId(), autopay: true };
 		const planModel = { findOne: jest.fn().mockReturnValue(lean(plan)), exists: jest.fn().mockResolvedValue({ _id: plan._id }) };
 		const paymentModel = { find: () => ({ sort: () => ({ limit: () => lean([]) }) }) };
@@ -550,6 +550,7 @@ describe("PaymentsService.getPlan", () => {
 
 		const view = await service.getPlan("t", viewer);
 		expect(view.autopayCardSaved).toBe(true);
+		expect(view.bankTransferInstructions).toBe("Use surname as reference");
 		expect(planModel.exists).toHaveBeenCalledWith({ _id: plan._id, paymentMethodId: { $nin: [null, ""] } });
 		expect(view.plan).not.toHaveProperty("paymentMethodId");
 

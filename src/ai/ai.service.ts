@@ -8,7 +8,7 @@ import { ListingsService, ListingWithCoordinates } from "../listings/listings.se
 import { ListingFilterDto } from "../listings/dto/listing-filter.dto";
 import { Listing } from "../listings/listings.schema";
 import { Nation } from "../listings/enums/nation.enum";
-import { Tenancy } from "../tenancies/tenancy.schema";
+import { isConfirmedTenancyAgreement, Tenancy } from "../tenancies/tenancy.schema";
 import { DepositScheme, TenancyDocumentType, TenancyStatus } from "../tenancies/tenancy.enums";
 import { TenanciesService } from "../tenancies/tenancies.service";
 import { depositCapPence, depositProtectionDeadline, depositProtectionWindow } from "../tenancies/compliance";
@@ -245,6 +245,10 @@ export class AiService {
 		return this.config.get<string>("AI_SEND_EMAIL_CONTENT")?.trim().toLowerCase() === "true";
 	}
 
+	private emailBody(body: string | undefined): string {
+		return this.connectors?.decryptEmailBody(body ?? "") ?? body ?? "";
+	}
+
 	// ---------------------------------------------------------------- search chat
 
 	/** `student` (their Seek Passport documents) adds a per-listing check against the landlord's criteria. */
@@ -468,7 +472,9 @@ export class AiService {
 	}
 
 	private hasDocument(tenancy: TenancyLean, type: TenancyDocumentType) {
-		return (tenancy.documents ?? []).some(doc => doc.type === type);
+		return (tenancy.documents ?? []).some(doc =>
+			type === TenancyDocumentType.TENANCY_AGREEMENT ? isConfirmedTenancyAgreement(doc) : doc.type === type
+		);
 	}
 
 	private depositAdvice(user: Viewer, tenancy: TenancyLean | null, listing: ListingLean | null, now: Date, question?: string): AdviceDraft {
@@ -890,7 +896,7 @@ export class AiService {
 			.lean()
 			.exec();
 		let last = email
-			? { text: `${email.subject}\n${email.body ?? ""}`, from: email.counterpartName || email.fromName || email.from, category: email.category, at: email.receivedAt }
+			? { text: `${email.subject}\n${this.emailBody(email.body)}`, from: email.counterpartName || email.fromName || email.from, category: email.category, at: email.receivedAt }
 			: null;
 		if (seekId && this.messageModel && this.conversationAccess) {
 			const allowed = await this.conversationAccess
@@ -933,7 +939,8 @@ export class AiService {
 			const filed = (email.attachments ?? []).filter(a => a.filedAs);
 			const filedLine = filed.length ? ` ${filed.map(a => `${a.name} was filed in ${a.filedAs}.`).join(" ")}` : "";
 			const from = email.counterpartName || email.fromName || email.from;
-			const text = `${email.subject} ${email.body}`;
+			const body = this.emailBody(email.body);
+			const text = `${email.subject} ${body}`;
 			const next: Partial<Record<EmailCategory, string>> = {
 				[EmailCategory.DEPOSIT]: "Keep the deposit certificate until the tenancy ends and check the reference on the scheme's website.",
 				[EmailCategory.BILLS]: "Check whether this bill is included in the rent before anyone pays it; otherwise split it in household bills.",
@@ -956,7 +963,7 @@ export class AiService {
 				// Metadata only by default; the body (and attachment names) is
 				// sent only when AI_SEND_EMAIL_CONTENT=true.
 				llm: this.sendEmailContent()
-					? { facts: { email: { ...email_, body: (email.body ?? "").slice(0, 4000) }, facts: `${from} wrote on ${email_.date}.${filedLine} ${step}` } }
+					? { facts: { email: { ...email_, body: body.slice(0, 4000) }, facts: `${from} wrote on ${email_.date}.${filedLine} ${step}` } }
 					: { facts: { email: email_, facts: `${from} wrote on ${email_.date}. ${step}` }, suffix: filedLine }
 			};
 		}

@@ -84,9 +84,9 @@ export const GUARANTOR_SERVICES: Record<string, string> = {
 };
 
 const HOUSING_KEYWORDS =
-	/\b(?:tenancy|tenant|tenants|landlord|lettings?|letting agent|deposit|rent|rental|inventory|gas safety|cp12|eicr|epc|council tax|guarantor|viewing|right to rent|boiler|repairs?|maintenance|move[- ]in|move[- ]out|check[- ]in|check[- ]out|house ?share|housing|accommodation|utilit(?:y|ies)|energy bill|water bill|broadband|hmo)\b/i;
+	/\b(?:tenancy|tenant|tenants|landlord|landlord registration|lettings?|letting agent|let agreement|lease agreement|\bprt\b|private residential tenancy|deposit|holding deposit|deposit protection service|tenancy deposit scheme|safe ?deposits|mydeposits|letting protection service|\bdps\b|\btds\b|\blps\b|rent|rental|rent increase|inventory|gas safety|cp12|eicr|epc|legionella|council tax|council tax exemption|guarantor|viewing|right to rent|boiler|repairs?|maintenance|notice to leave|move[- ]in|move[- ]out|check[- ]in|check[- ]out|house ?share|housing|accommodation|accommodation office|halls of residence|utility bills|energy bill|water bill|tv licen[cs]e|broadband|energy supplier|meter reading|utilit(?:y|ies)|keys collection|flat viewing|hmo|hmo licen[cs]e)\b/i;
 
-const STUDENT_KEYWORDS = /\b(?:exemption|student status|enrolment|enrollment|accommodation|certificate)\b/i;
+const STUDENT_KEYWORDS = /\b(?:exemption|student status|enrolment|enrollment|student accommodation|accommodation office|accommodation|halls of residence|council tax exemption|certificate)\b/i;
 
 export function domainOf(email: string): string {
 	return email.toLowerCase().split("@")[1]?.trim() ?? "";

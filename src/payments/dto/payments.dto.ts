@@ -17,6 +17,9 @@ export class RentPlanViewDto {
 	@ApiProperty({ description: "Rent per tenant per month, in pence." })
 	monthlyRent: number;
 
+	@ApiPropertyOptional({ maxLength: 1000, description: "Landlord's instructions for paying by bank transfer." })
+	bankTransferInstructions?: string;
+
 	@ApiProperty({ example: "ENGLAND" })
 	nation: string;
 

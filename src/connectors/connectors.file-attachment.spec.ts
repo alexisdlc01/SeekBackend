@@ -54,7 +54,7 @@ function setup(attachment: Record<string, unknown> = {}, role = Role.STUDENT, fr
 		{} as any
 	);
 	// A real mailbox: the attachment is re-read from Gmail, with what Gmail says about the sender.
-	const getFull = jest.fn(async () => ({ attachments: [{ name: "Tenancy-agreement.pdf", mimeType: "application/pdf", size: 10, load: async () => Buffer.from("%PDF") }], senderAuthenticated: false, sent: false }));
+	const getFull = jest.fn(async () => ({ from, attachments: [{ name: "Tenancy-agreement.pdf", mimeType: "application/pdf", size: 10, load: async () => Buffer.from("%PDF") }], senderAuthenticated: false, sent: false }));
 	Object.assign(service as any, { clients: { [EmailProvider.GMAIL]: { getFull } }, accessToken: async () => "token" });
 	jest.spyOn(service as any, "storeFile").mockResolvedValue({ url: "https://files.example/a.pdf", key: "k" });
 	return { service, me, email, messageModel, tenancies, getFull };
@@ -96,6 +96,22 @@ describe("ConnectorsService.fileAttachment authorisation", () => {
 });
 
 describe("ConnectorsService.fileAttachment document type", () => {
+	it("does not let tenant evidence suppress a later official document with the same title", async () => {
+		const { service, tenancies } = setup();
+		const tenancy = {
+			_id: new Types.ObjectId(),
+			documents: [
+				{ type: "TENANCY_AGREEMENT", title: "Tenancy agreement", confirmedByLandlord: false },
+				{ type: "INVENTORY", title: "Check in inventory", uploaderRole: Role.STUDENT }
+			]
+		};
+
+		await (service as any).fileDocument(tenancy, "TENANCY_AGREEMENT", "Tenancy-agreement.pdf", { url: "https://files.example/contract.pdf", key: null }, true);
+		await (service as any).fileDocument(tenancy, "INVENTORY", "Check-in-inventory.pdf", { url: "https://files.example/inventory.pdf", key: null, uploaderRole: Role.LANDLORD_AGENCY }, true);
+
+		expect(tenancies.appendDocument).toHaveBeenCalledTimes(2);
+	});
+
 	it("files a tenant's 'Re: tenancy agreement' photo in the landlord's mailbox as Other, not as the contract", async () => {
 		const { service, me, email, tenancies } = setup({ name: "photo.jpg", mimeType: "image/jpeg" }, Role.LANDLORD_AGENCY);
 		email.subject = "Re: tenancy agreement";
@@ -130,9 +146,23 @@ describe("ConnectorsService.fileAttachment document type", () => {
 		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "TENANCY_AGREEMENT" }));
 	});
 
-	it("Gmail, tenant's mailbox: the landlord's contract files as Other even with a DMARC pass (the tenant controls the headers)", async () => {
+	it("Gmail, tenant's mailbox: an authenticated landlord contract keeps its contract type", async () => {
 		const { service, me, email, tenancies, getFull } = setup({}, Role.STUDENT, "landlord@example.com", EmailProvider.GMAIL);
 		getFull.mockResolvedValue({ ...(await getFull()), senderAuthenticated: true });
+		await service.fileAttachment(me, email._id.toString(), 0);
+		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "TENANCY_AGREEMENT", confirmedByLandlord: false }));
+	});
+
+	it("Gmail, tenant's mailbox: a SENT label never authenticates a contract", async () => {
+		const { service, me, email, tenancies, getFull } = setup({}, Role.STUDENT, "landlord@example.com", EmailProvider.GMAIL);
+		getFull.mockResolvedValue({ ...(await getFull()), sent: true, senderAuthenticated: false });
+		await service.fileAttachment(me, email._id.toString(), 0);
+		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "OTHER" }));
+	});
+
+	it("Gmail, tenant's mailbox: checks the provider's authenticated From, not the stored sender", async () => {
+		const { service, me, email, tenancies, getFull } = setup({}, Role.STUDENT, "landlord@example.com", EmailProvider.GMAIL);
+		getFull.mockResolvedValue({ ...(await getFull()), from: "attacker@example.com", senderAuthenticated: true });
 		await service.fileAttachment(me, email._id.toString(), 0);
 		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "OTHER" }));
 	});
@@ -142,7 +172,7 @@ describe("ConnectorsService.fileAttachment document type", () => {
 		Object.assign(email, { outgoing: true, to: ["tenant@example.com"] });
 		getFull.mockResolvedValue({ ...(await getFull()), sent: true });
 		await service.fileAttachment(me, email._id.toString(), 0);
-		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "TENANCY_AGREEMENT" }));
+		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "TENANCY_AGREEMENT", confirmedByLandlord: true }));
 	});
 
 	it("Gmail: an incoming mail forging the mailbox's own address as From files as Other, even if stored as outgoing", async () => {
@@ -157,6 +187,15 @@ describe("ConnectorsService.fileAttachment document type", () => {
 		Object.assign(email, { outgoing: true, to: ["disputes@depositprotection.com"] });
 		await service.fileAttachment(me, email._id.toString(), 0);
 		expect(tenancies.appendDocument).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "OTHER" }));
+	});
+
+	it("files inventory from a tenant mailbox as Other, never as the official inventory", async () => {
+		const { service, me, email, tenancies } = setup({ name: "Check-in-inventory.pdf" });
+		await service.fileAttachment(me, email._id.toString(), 0);
+		expect(tenancies.appendDocument).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ type: "OTHER", uploadedBy: me._id, uploaderRole: Role.STUDENT })
+		);
 	});
 });
 

@@ -16,6 +16,7 @@ import { Tenancy } from "./tenancy.schema";
 import { CreateTenancyDto } from "./dto/create-tenancy.dto";
 import { DepositReceivedDto, PrescribedInfoDto, UpdateDepositDto, UpdateEnergyAllowanceDto } from "./dto/update-deposit.dto";
 import { AddTenancyDocumentDto } from "./dto/add-tenancy-document.dto";
+import { UpdateBankTransferInstructionsDto } from "./dto/update-bank-transfer-instructions.dto";
 
 @Controller("tenancies")
 export class TenanciesController {
@@ -105,6 +106,20 @@ export class TenanciesController {
 	}
 
 	@TeamAccess(TeamScope.TENANCIES)
+	@Patch(":id/bank-transfer-instructions")
+	@LandlordAgency()
+	@ApiOperation({ summary: "Set the bank-transfer payment instructions without changing deposit protection." })
+	@ApiResponse({ status: 200, type: Tenancy })
+	@ApiResponse({ status: 403, type: ErrorDto })
+	async bankTransferInstructions(
+		@Param("id", ParseObjectIdPipe) id: string,
+		@Body() body: UpdateBankTransferInstructionsDto,
+		@CurrentUser() user: User
+	) {
+		return this.tenanciesService.updateBankTransferInstructions(id, body.bankTransferInstructions, user);
+	}
+
+	@TeamAccess(TeamScope.TENANCIES)
 	@Patch(":id/deposit-received")
 	@LandlordAgency()
 	@ApiOperation({ summary: "Record the day the deposit was received. The 30-day protection deadline runs from it." })
@@ -146,5 +161,20 @@ export class TenanciesController {
 		@CurrentUser() user: User
 	) {
 		return this.tenanciesService.addDocument(id, body, user);
+	}
+
+	@TeamAccess(TeamScope.TENANCIES)
+	@Patch(":id/documents/:docId/confirm")
+	@LandlordAgency()
+	@ApiOperation({ summary: "Confirm that a tenancy agreement imported from a tenant's mailbox is genuine." })
+	@ApiResponse({ status: 200, type: Tenancy })
+	@ApiResponse({ status: 403, type: ErrorDto })
+	@ApiResponse({ status: 404, type: ErrorDto })
+	async confirmDocument(
+		@Param("id", ParseObjectIdPipe) id: string,
+		@Param("docId", ParseObjectIdPipe) docId: string,
+		@CurrentUser() user: User
+	) {
+		return this.tenanciesService.confirmDocument(id, docId, user);
 	}
 }

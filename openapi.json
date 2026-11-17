@@ -2129,6 +2129,65 @@
         ]
       }
     },
+    "/tenancies/{id}/bank-transfer-instructions": {
+      "patch": {
+        "operationId": "TenanciesController_bankTransferInstructions",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBankTransferInstructionsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenancy"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Set the bank-transfer payment instructions without changing deposit protection.",
+        "tags": [
+          "Tenancies"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
     "/tenancies/{id}/deposit-received": {
       "patch": {
         "operationId": "TenanciesController_depositReceived",
@@ -2303,6 +2362,73 @@
           }
         },
         "summary": "Add a document (agreement, certificate, inventory...) to the tenancy.",
+        "tags": [
+          "Tenancies"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
+    "/tenancies/{id}/documents/{docId}/confirm": {
+      "patch": {
+        "operationId": "TenanciesController_confirmDocument",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "docId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenancy"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Confirm that a tenancy agreement imported from a tenant's mailbox is genuine.",
         "tags": [
           "Tenancies"
         ],
@@ -6469,6 +6595,71 @@
         ]
       }
     },
+    "/payments/plan/{tenancyId}/preview": {
+      "get": {
+        "operationId": "PaymentsController_previewPlan",
+        "parameters": [
+          {
+            "name": "tenancyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "frequency",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "MONTHLY",
+                "SIX_MONTHS",
+                "YEARLY"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RentPlanPreviewItemDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Frequency not allowed (England: monthly only).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "The next payments if the tenant switched to this frequency. Read-only: nothing is saved or charged.",
+        "tags": [
+          "Payments"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
     "/payments/mine": {
       "get": {
         "operationId": "PaymentsController_mine",
@@ -7715,6 +7906,83 @@
           }
         ]
       }
+    },
+    "/inbox/messages/{messageId}/attachments/{index}/file": {
+      "post": {
+        "operationId": "InboxController_fileAttachment",
+        "parameters": [
+          {
+            "name": "messageId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "index",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxAttachmentDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a member of the email's tenancy, or a team member without inbox access.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not one of your own synced emails.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "File an email attachment in the home's documents. Same as the automatic filing, started by you.",
+        "tags": [
+          "Inbox"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
     }
   },
   "info": {
@@ -8313,10 +8581,6 @@
           },
           "notificationPrefs": {
             "$ref": "#/components/schemas/NotificationPrefsInputDto"
-          },
-          "stripeAccountId": {
-            "type": "string",
-            "description": "Stripe Connect account (acct_...) that receives rent payouts. Landlords only. Empty string clears it."
           }
         }
       },
@@ -9176,6 +9440,31 @@
               "SEEK"
             ]
           },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "CHECK_IN",
+              "CHECK_OUT"
+            ]
+          },
+          "confirmedByLandlord": {
+            "type": "boolean",
+            "default": true,
+            "description": "False when a tenancy agreement came from a tenant-controlled mailbox and has not been confirmed by the landlord."
+          },
+          "uploadedBy": {
+            "type": "string",
+            "description": "Account that uploaded or imported the document."
+          },
+          "uploaderRole": {
+            "type": "string",
+            "enum": [
+              "SUPERUSER",
+              "STUDENT",
+              "LANDLORD_AGENCY"
+            ],
+            "description": "Role of the uploader, used to distinguish tenant evidence from landlord documents."
+          },
           "addedAt": {
             "type": "string",
             "format": "date-time"
@@ -9187,6 +9476,7 @@
           "title",
           "url",
           "source",
+          "confirmedByLandlord",
           "addedAt"
         ]
       },
@@ -9270,6 +9560,11 @@
             "format": "date-time",
             "nullable": true,
             "description": "When the deposit reached the landlord. It must be protected within 30 days of this date."
+          },
+          "bankTransferInstructions": {
+            "type": "string",
+            "maxLength": 1000,
+            "description": "Instructions for paying this tenancy by bank transfer."
           },
           "prescribedInfoSentAt": {
             "type": "string",
@@ -9384,6 +9679,11 @@
             "type": "string",
             "format": "date-time",
             "description": "When the deposit was received."
+          },
+          "bankTransferInstructions": {
+            "type": "string",
+            "maxLength": 1000,
+            "description": "Instructions for paying this tenancy by bank transfer."
           }
         },
         "required": [
@@ -9450,6 +9750,19 @@
           "energyAllowance"
         ]
       },
+      "UpdateBankTransferInstructionsDto": {
+        "type": "object",
+        "properties": {
+          "bankTransferInstructions": {
+            "type": "string",
+            "maxLength": 1000,
+            "description": "Instructions for paying this tenancy by bank transfer."
+          }
+        },
+        "required": [
+          "bankTransferInstructions"
+        ]
+      },
       "DepositReceivedDto": {
         "type": "object",
         "properties": {
@@ -9506,6 +9819,15 @@
               "SEEK"
             ],
             "default": "UPLOAD"
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "CHECK_IN",
+              "CHECK_OUT"
+            ],
+            "default": "CHECK_IN",
+            "description": "Inventory stage; defaults to check-in."
           }
         },
         "required": [
@@ -10736,6 +11058,60 @@
           "message"
         ]
       },
+      "PublicUserDto": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "SUPERUSER",
+              "STUDENT",
+              "LANDLORD_AGENCY"
+            ]
+          },
+          "studentVerified": {
+            "type": "boolean",
+            "description": "Proved a university email address (student badge)."
+          },
+          "university": {
+            "type": "string",
+            "nullable": true,
+            "description": "University behind the badge, e.g. \"University of St Andrews\"."
+          },
+          "profilePicUrl": {
+            "type": "string"
+          },
+          "isVerified": {
+            "type": "boolean"
+          },
+          "lastSeen": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "companyName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "_id",
+          "name",
+          "role",
+          "studentVerified",
+          "university",
+          "profilePicUrl",
+          "isVerified",
+          "lastSeen"
+        ]
+      },
       "MessageDto": {
         "type": "object",
         "properties": {
@@ -10743,7 +11119,7 @@
             "type": "string"
           },
           "sender": {
-            "$ref": "#/components/schemas/UserDto"
+            "$ref": "#/components/schemas/PublicUserDto"
           },
           "messageType": {
             "type": "string",
@@ -10814,7 +11190,7 @@
           "users": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/UserDto"
+              "$ref": "#/components/schemas/PublicUserDto"
             }
           },
           "messages": {
@@ -11045,6 +11421,12 @@
             "nullable": true,
             "description": "Deadline for the household to accept the offer (15 days after it was made)."
           },
+          "offerExpiredAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When the last offer lapsed unaccepted; a lapsed household goes to the back of the offer queue."
+          },
           "holdingDeposit": {
             "type": "number",
             "nullable": true,
@@ -11206,7 +11588,11 @@
         "type": "object",
         "properties": {
           "status": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "ACCOUNT_SUSPENDED",
+              "NO_ACTION"
+            ]
           },
           "supportResponse": {
             "type": "string",
@@ -11842,6 +12228,11 @@
             "type": "number",
             "description": "Rent per tenant per month, in pence."
           },
+          "bankTransferInstructions": {
+            "type": "string",
+            "maxLength": 1000,
+            "description": "Landlord's instructions for paying by bank transfer."
+          },
           "nation": {
             "type": "string",
             "example": "ENGLAND"
@@ -11893,6 +12284,44 @@
           "mode",
           "autopayCardSaved",
           "upcoming"
+        ]
+      },
+      "RentPlanPreviewItemDto": {
+        "type": "object",
+        "properties": {
+          "dueDate": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "amount": {
+            "type": "number",
+            "description": "In pence, after any holding deposit credit."
+          },
+          "coversMonths": {
+            "type": "number",
+            "description": "Months of rent this payment covers."
+          },
+          "holdingDepositCredit": {
+            "type": "number",
+            "description": "Holding deposit taken off this payment, in pence."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "SCHEDULED",
+              "PENDING",
+              "PAID",
+              "FAILED",
+              "LATE"
+            ]
+          }
+        },
+        "required": [
+          "dueDate",
+          "amount",
+          "coversMonths",
+          "holdingDepositCredit",
+          "status"
         ]
       },
       "UpdateRentPlanDto": {
@@ -12510,6 +12939,11 @@
             "nullable": true,
             "description": "Tenant who fronted the whole bill (a shared extra); the others owe them their share."
           },
+          "addedBy": {
+            "type": "string",
+            "nullable": true,
+            "description": "Mailbox owner whose synced inbox this bill came from (EMAIL bills only)."
+          },
           "status": {
             "type": "string",
             "enum": [
@@ -12533,6 +12967,11 @@
             "type": "string",
             "nullable": true,
             "description": "Name of the tenant in paidBy."
+          },
+          "addedByName": {
+            "type": "string",
+            "nullable": true,
+            "description": "Name of the user in addedBy."
           },
           "shares": {
             "type": "array",
@@ -12572,10 +13011,12 @@
           "splitBetween",
           "paidShares",
           "paidBy",
+          "addedBy",
           "status",
           "source",
           "paidAt",
           "paidByName",
+          "addedByName",
           "shares",
           "myShare",
           "myPaid",
@@ -12637,7 +13078,7 @@
               "EMAIL",
               "MANUAL"
             ],
-            "default": "MANUAL"
+            "description": "Accepted but ignored: client-created bills are always MANUAL."
           }
         },
         "required": [

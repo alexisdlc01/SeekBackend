@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { Transform } from "class-transformer";
 import {
 	ArrayMaxSize,
 	ArrayMinSize,
@@ -90,4 +91,11 @@ export class CreateTenancyDto {
 	@IsOptional()
 	@IsDateString()
 	depositReceivedAt?: string;
+
+	@ApiPropertyOptional({ maxLength: 1000, description: "Instructions for paying this tenancy by bank transfer." })
+	@IsOptional()
+	@Transform(({ value }) => value?.trim())
+	@IsString()
+	@MaxLength(1000)
+	bankTransferInstructions?: string;
 }
