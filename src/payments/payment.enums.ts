@@ -9,7 +9,8 @@ export enum PaymentStatus {
 	PENDING = "PENDING",
 	PAID = "PAID",
 	FAILED = "FAILED",
-	LATE = "LATE"
+	LATE = "LATE",
+	CANCELLED = "CANCELLED"
 }
 
 /** What a payment is for. */

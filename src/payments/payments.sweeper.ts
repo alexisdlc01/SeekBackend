@@ -39,6 +39,7 @@ export class PaymentsSweeper implements OnApplicationBootstrap, OnModuleDestroy 
 		this.running = true;
 		try {
 			await this.payments.sweep();
+			await this.payments.refundDuePayments();
 			// A stuck lapse clean-up (retried next sweep) must not hold back extendSchedules.
 			await this.applications.expireOffers().catch(error => this.logger.error(`Offer expiry failed: ${(error as Error)?.message}`));
 			await this.payments.extendSchedules();

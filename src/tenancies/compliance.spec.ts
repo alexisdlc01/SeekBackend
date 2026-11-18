@@ -1,5 +1,5 @@
 import { Types } from "mongoose";
-import { depositCapPence, depositProtectionDeadline, listingCompliance, sortCompliance, tenancyCompliance } from "./compliance";
+import { depositCapPence, depositProtectionDeadline, holdingDepositCapPence, listingCompliance, sortCompliance, tenancyCompliance } from "./compliance";
 
 const now = new Date("2026-11-06T00:00:00Z");
 const days = (n: number) => new Date(now.getTime() + n * 24 * 60 * 60 * 1000);
@@ -63,10 +63,12 @@ describe("compliance", () => {
 describe("compliance in Scotland", () => {
 	const listing = { _id: new Types.ObjectId(), propertyTitle: "3 North Street", nation: "SCOTLAND" };
 
-	it("caps the deposit at two months' rent and skips the English holding-deposit cap", () => {
+	it("caps the deposit at two months' rent and the holding deposit at one week", () => {
 		expect(depositCapPence(65000, "SCOTLAND")).toBe(130000);
+		expect(holdingDepositCapPence(65000)).toBe(15000);
 		const items = listingCompliance({ ...listing, monthlyRent: 650, numOfPeople: 1, securityDeposit: 1300, holdingDeposit: 300 });
-		expect(items).toEqual([]);
+		expect(items).toHaveLength(1);
+		expect(items[0]).toMatchObject({ kind: "HOLDING_DEPOSIT_OVER_CAP" });
 	});
 
 	it("counts 30 working days from the start of the tenancy, without a receipt date", () => {

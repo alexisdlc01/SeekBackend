@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, Logger } from "@nestjs/common";
 import { Types } from "mongoose";
 import { PaymentsService } from "./payments.service";
 import { PaymentKind, PaymentStatus, PayoutStatus } from "./payment.enums";
@@ -26,7 +26,7 @@ describe("PaymentsService.checkout (Stripe)", () => {
 	const openOffer = { stage: "OFFERED", offerExpiresAt: new Date(Date.now() + 7 * 24 * 3_600_000) };
 	let offer: Record<string, unknown> = openOffer;
 	let landlordUser: Record<string, unknown> = { stripeAccountId: "acct_123" };
-	let lastPaymentModel: { updateOne: jest.Mock; find?: jest.Mock };
+	let lastPaymentModel: { updateOne: jest.Mock; find?: jest.Mock; findOneAndUpdate: jest.Mock };
 	const realFetch = global.fetch;
 
 	function setup(account: { capabilities: { transfers: string } } | null, autopay: boolean, stored: Record<string, unknown> = payment) {
@@ -43,6 +43,7 @@ describe("PaymentsService.checkout (Stripe)", () => {
 		}) as never;
 		const paymentModel = {
 			findById: jest.fn().mockReturnValue(lean(stored)),
+			findOneAndUpdate: jest.fn().mockReturnValue(lean(null)),
 			updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 })
 		};
 		const planModel = { findOne: jest.fn().mockReturnValue(lean({ autopay })) };
@@ -165,6 +166,7 @@ describe("PaymentsService.checkout (Stripe)", () => {
 		const service = setup({ capabilities: { transfers: "active" } }, false);
 		const held = { ...payment, status: PaymentStatus.PAID, payoutStatus: PayoutStatus.HELD, providerRef: "pi_1" };
 		lastPaymentModel.find = jest.fn().mockReturnValue(lean([held]));
+		lastPaymentModel.findOneAndUpdate.mockReturnValue(lean(held));
 		global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
 			calls.push({ url, body: new URLSearchParams(String(init?.body ?? "")) });
 			const body = url.includes("/accounts/") ? { capabilities: { transfers: "active" } } : url.includes("/payment_intents/") ? { id: "pi_1", latest_charge: "ch_1" } : { id: "tr_1" };
@@ -178,15 +180,105 @@ describe("PaymentsService.checkout (Stripe)", () => {
 		expect(transfer.get("source_transaction")).toBe("ch_1");
 		expect(lastPaymentModel.updateOne).toHaveBeenCalledWith(
 			{ _id: payment._id, payoutStatus: PayoutStatus.HELD },
-			{ $set: { payoutStatus: PayoutStatus.TRANSFERRED, transferRef: "tr_1" } }
+			{ $set: { payoutStatus: PayoutStatus.TRANSFERRED, transferRef: "tr_1", payoutReleaseStartedAt: null } }
 		);
+	});
+
+	it("releases only the used-rent balance of a partially refunded held payment", async () => {
+		const service = setup({ capabilities: { transfers: "active" } }, false);
+		const held = {
+			...payment, status: PaymentStatus.PAID, payoutStatus: PayoutStatus.HELD,
+			providerRef: "pi_1", refundedAmount: 32000, refundedAt: new Date()
+		};
+		lastPaymentModel.find = jest.fn().mockReturnValue(lean([held]));
+		lastPaymentModel.findOneAndUpdate.mockReturnValue(lean(held));
+		global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+			calls.push({ url, body: new URLSearchParams(String(init?.body ?? "")) });
+			const body = url.includes("/accounts/") ? { capabilities: { transfers: "active" } } : url.includes("/payment_intents/") ? { latest_charge: "ch_1" } : { id: "tr_1" };
+			return { ok: true, status: 200, json: async () => body } as Response;
+		}) as never;
+		calls.length = 0;
+
+		await service.releaseHeldPayouts();
+
+		expect(calls.find(call => call.url.endsWith("/transfers"))!.body.get("amount")).toBe("37125");
+		expect(lastPaymentModel.find).toHaveBeenCalledWith(expect.not.objectContaining({ refundedAt: null }));
+	});
+
+	it("pays out nothing after a full refund of held money", async () => {
+		const service = setup({ capabilities: { transfers: "active" } }, false);
+		const held = {
+			...payment, status: PaymentStatus.PAID, payoutStatus: PayoutStatus.HELD,
+			providerRef: "pi_1", refundedAmount: payment.amount, refundedAt: new Date()
+		};
+		lastPaymentModel.find = jest.fn().mockReturnValue(lean([held]));
+		lastPaymentModel.findOneAndUpdate.mockReturnValue(lean(held));
+		calls.length = 0;
+
+		expect(await service.releaseHeldPayouts()).toBe(0);
+		expect(calls.some(call => call.url.endsWith("/transfers"))).toBe(false);
+	});
+
+	it("does not release a row when an atomic refund claim wins the race", async () => {
+		const service = setup({ capabilities: { transfers: "active" } }, false);
+		const held = { ...payment, status: PaymentStatus.PAID, payoutStatus: PayoutStatus.HELD, providerRef: "pi_1" };
+		lastPaymentModel.find = jest.fn().mockReturnValue(lean([held]));
+		lastPaymentModel.findOneAndUpdate.mockReturnValue(lean(null));
+		calls.length = 0;
+
+		expect(await service.releaseHeldPayouts()).toBe(0);
+		const claim = lastPaymentModel.findOneAndUpdate.mock.calls[0][0];
+		expect(claim).toMatchObject({ _id: payment._id, payoutStatus: PayoutStatus.HELD });
+		expect(claim.$or).toContainEqual({ payoutReleaseStartedAt: null, refundDue: { $ne: true } });
+		expect(calls.some(call => call.url.endsWith("/transfers"))).toBe(false);
 	});
 
 	it("never releases a held deposit that is owed back to the student", async () => {
 		const service = setup({ capabilities: { transfers: "active" } }, false);
 		lastPaymentModel.find = jest.fn().mockReturnValue(lean([]));
 		await service.releaseHeldPayouts();
-		expect(lastPaymentModel.find).toHaveBeenCalledWith(expect.objectContaining({ payoutStatus: PayoutStatus.HELD, refundDue: { $ne: true } }));
+		const filter = lastPaymentModel.find.mock.calls[0][0];
+		expect(filter).toMatchObject({ payoutStatus: PayoutStatus.HELD });
+		expect(filter.$or).toContainEqual({ payoutReleaseStartedAt: null, refundDue: { $ne: true } });
+	});
+
+	it("keeps an ambiguous payout locked so a refund cannot cross it", async () => {
+		const service = setup({ capabilities: { transfers: "active" } }, false);
+		const held = { ...payment, status: PaymentStatus.PAID, payoutStatus: PayoutStatus.HELD, providerRef: "pi_1", payoutReleaseStartedAt: new Date() };
+		lastPaymentModel.find = jest.fn().mockReturnValue(lean([held]));
+		lastPaymentModel.findOneAndUpdate.mockReturnValue(lean(held));
+		global.fetch = jest.fn(async (url: string) => {
+			if (url.includes("/accounts/")) return { ok: true, status: 200, json: async () => ({ capabilities: { transfers: "active" } }) } as Response;
+			if (url.includes("/payment_intents/")) return { ok: true, status: 200, json: async () => ({ latest_charge: "ch_1" }) } as Response;
+			throw new Error("timed out");
+		}) as never;
+		const error = jest.spyOn(Logger.prototype, "error").mockImplementation();
+
+		expect(await service.releaseHeldPayouts()).toBe(0);
+		await service.refundDuePayments();
+		expect(lastPaymentModel.updateOne).not.toHaveBeenCalled();
+		expect(error).toHaveBeenCalledTimes(1);
+		expect(error).toHaveBeenCalledWith(expect.stringContaining(payment._id.toString()));
+		error.mockRestore();
+	});
+
+	it("excludes failed refunds from both held-payout release filters", async () => {
+		const service = setup({ capabilities: { transfers: "active" } }, false);
+		const held = { ...payment, status: PaymentStatus.PAID, payoutStatus: PayoutStatus.HELD, providerRef: "pi_1" };
+		lastPaymentModel.find = jest.fn().mockReturnValue(lean([held]));
+		lastPaymentModel.findOneAndUpdate.mockReturnValue(lean(null));
+
+		await service.releaseHeldPayouts();
+
+		expect(lastPaymentModel.find.mock.calls[0][0]).toMatchObject({ refundFailed: { $ne: true } });
+		expect(lastPaymentModel.findOneAndUpdate.mock.calls[0][0]).toMatchObject({ refundFailed: { $ne: true } });
+	});
+
+	it("sweeps only refund rows explicitly marked for automatic handling", async () => {
+		const service = setup({ capabilities: { transfers: "active" } }, false);
+		lastPaymentModel.find = jest.fn().mockReturnValue(lean([]));
+		await service.refundDuePayments();
+		expect(lastPaymentModel.find).toHaveBeenCalledWith(expect.objectContaining({ refundDue: true, autoRefund: true }));
 	});
 
 	it("keys the session on the whole request, so a changed autopay choice opens a new session", async () => {
@@ -351,6 +443,18 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 		const { webhook, notifications } = setup();
 		await webhook({ type: "payment_intent.payment_failed", data: { object: { id: "pi_checkout", amount: 69500, metadata: { paymentId: id.toString() } } } });
 		expect(doc).toMatchObject({ status: PaymentStatus.SCHEDULED, providerRef: "cs_1" });
+		expect(notifications.notify).not.toHaveBeenCalled();
+	});
+
+	it("keeps post-tenancy pending rent cancelled when its Stripe intent later fails", async () => {
+		const { webhook, notifications } = setup({ status: PaymentStatus.CANCELLED, providerRef: "pi_cancelled" });
+
+		await webhook({
+			type: "payment_intent.payment_failed",
+			data: { object: { id: "pi_cancelled", amount: 69500, metadata: { paymentId: id.toString() } } }
+		});
+
+		expect(doc.status).toBe(PaymentStatus.CANCELLED);
 		expect(notifications.notify).not.toHaveBeenCalled();
 	});
 

@@ -124,7 +124,7 @@ export class ApplicationDto {
 		format: "date-time",
 		nullable: true,
 		required: false,
-		description: "Deadline for the household to accept the offer (15 days after it was made)."
+		description: "Deadline for the household to accept the offer."
 	})
 	@Expose()
 	@Type(() => Date)

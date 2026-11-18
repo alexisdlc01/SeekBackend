@@ -173,7 +173,7 @@ export class ListingsService {
 				.select("monthlyRent numOfPeople securityDeposit holdingDeposit nation")
 				.lean()
 				.exec();
-			// Deposit at most 5 weeks' rent (2 months in Scotland), holding deposit at most 1 week's per room.
+				// Deposit at most 5 weeks' rent (2 months in Scotland), holding deposit always at most 1 week's per room.
 			const overCap = listingDepositCompliance({ ...current, ...data, _id: new Types.ObjectId(listingId) } as never);
 			if (overCap.length > 0) {
 				throw new BadRequestException(overCap.map(item => item.message).join(" "));

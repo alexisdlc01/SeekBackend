@@ -241,7 +241,7 @@ export class RentScheduleService {
 		if (!tenancy.application) return 0;
 		const [paid, applied] = await Promise.all([
 			this.paymentModel
-				.find({ application: tenancy.application, tenant, kind: PaymentKind.HOLDING_DEPOSIT, status: PaymentStatus.PAID, refundDue: { $ne: true } }, { amount: 1 })
+					.find({ application: tenancy.application, tenant, kind: PaymentKind.HOLDING_DEPOSIT, status: PaymentStatus.PAID, refundDue: { $ne: true }, refundedAt: null }, { amount: 1 })
 				.lean()
 				.exec(),
 			this.paymentModel

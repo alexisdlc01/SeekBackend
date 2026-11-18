@@ -54,6 +54,12 @@ export function holdingDepositCapPence(monthlyRentPence: number): number {
 	return Math.floor((monthlyRentPence * 12) / 52);
 }
 
+/** One week's rent for one person/room in a shared listing. */
+export function holdingDepositPerPersonCapPence(monthlyRentPence: number, numOfPeople?: number): number {
+	const people = Math.max(1, Number(numOfPeople) || 1);
+	return holdingDepositCapPence(monthlyRentPence / people);
+}
+
 /**
  * The deposit must be protected within 30 days of being received. The clock
  * runs from depositReceivedAt only, never from the start date; null until the
@@ -155,7 +161,6 @@ export function listingDepositCompliance(listing: ListingLike, now: Date = new D
 	if (!Number.isFinite(rent) || rent <= 0) return [];
 	const rentPence = Math.round(rent * 100);
 	const nation = listing.nation;
-	const people = Math.max(1, Number(listing.numOfPeople) || 1);
 	const base = {
 		listing: listing._id.toString(),
 		listingTitle: titleOf(listing),
@@ -174,9 +179,8 @@ export function listingDepositCompliance(listing: ListingLike, now: Date = new D
 	}
 	const holding = Number(listing.holdingDeposit);
 	// holdingDeposit is per room, so compare it with one room's weekly rent.
-	const roomCap = holdingDepositCapPence(Math.round(rentPence / people));
-	// The one-week holding deposit cap is the Tenant Fees Act's; Scotland has no such cap.
-	if (nation !== Nation.SCOTLAND && Number.isFinite(holding) && holding > 0 && Math.round(holding * 100) > roomCap) {
+	const roomCap = holdingDepositPerPersonCapPence(rentPence, Number(listing.numOfPeople));
+	if (Number.isFinite(holding) && holding > 0 && Math.round(holding * 100) > roomCap) {
 		items.push({
 			...base,
 			kind: "HOLDING_DEPOSIT_OVER_CAP",

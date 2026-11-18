@@ -146,6 +146,18 @@ describe("ListingsService", () => {
 		});
 	});
 
+	it("rejects a Scottish holding deposit above one week of per-room rent when the landlord sets it", async () => {
+		const id = new Types.ObjectId();
+		listingModel.findOne = jest.fn().mockReturnValue({
+			select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue({ monthlyRent: 650, numOfPeople: 1, nation: "SCOTLAND" }) }) })
+		});
+		listingModel.findOneAndUpdate = jest.fn();
+
+		await expect(service.updateDraft(id.toString(), makeLandlord(), { holdingDeposit: 150.01 } as never))
+			.rejects.toThrow("one-week cap of £150.00 per room");
+		expect(listingModel.findOneAndUpdate).not.toHaveBeenCalled();
+	});
+
 	describe("viewing slots", () => {
 		const found = (doc: object | null) => ({
 			select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(doc) }) })

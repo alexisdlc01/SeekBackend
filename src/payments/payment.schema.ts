@@ -89,6 +89,14 @@ export class Payment {
 	@Prop({ type: String, default: null })
 	transferRef?: string | null;
 
+	/** Stripe reversal of a released transfer, kept for audit. */
+	@Prop({ type: String, default: null })
+	reversalRef?: string | null;
+
+	/** Internal lease preventing a refund and held-payout release from crossing. */
+	@Prop({ type: Date, default: null })
+	payoutReleaseStartedAt?: Date | null;
+
 	@ApiProperty({ description: "Reminders Seek has sent the tenant for this payment." })
 	@Prop({ default: 0, min: 0 })
 	remindersSent: number;
@@ -100,6 +108,30 @@ export class Payment {
 	@ApiProperty({ description: "A paid holding deposit the landlord must refund within 7 days (Tenant Fees Act), e.g. after declining the household." })
 	@Prop({ default: false })
 	refundDue: boolean;
+
+	/** True only for refunds Seek may perform automatically; legacy refundDue rows stay manual. */
+	@Prop({ default: false })
+	autoRefund: boolean;
+
+	@ApiProperty({ description: "Amount due back to the payer, in pence.", default: 0 })
+	@Prop({ default: 0, min: 0 })
+	refundAmount: number;
+
+	@ApiProperty({ description: "Amount actually refunded, in pence.", default: 0 })
+	@Prop({ default: 0, min: 0 })
+	refundedAmount: number;
+
+	@ApiProperty({ type: String, format: "date-time", nullable: true })
+	@Prop({ type: Date, default: null })
+	refundedAt: Date | null;
+
+	@ApiProperty({ required: false, nullable: true, description: "Stripe refund id, or the simulated refund reference." })
+	@Prop({ type: String, default: null })
+	refundRef: string | null;
+
+	/** Terminal Stripe failure/cancellation: do not retry automatically. */
+	@Prop({ default: false })
+	refundFailed: boolean;
 }
 
 export const PaymentSchema = SchemaFactory.createForClass(Payment);

@@ -1,6 +1,6 @@
 /**
  * Pipeline: NOT_SENT -> SENT -> VIEWED -> OFFERED -> ACCEPTED -> SIGNED.
- * REJECTED can follow any stage before ACCEPTED.
+ * REJECTED can follow any stage before ACCEPTED; WITHDRAWN is an offered household leaving.
  */
 export enum ApplicationStage {
 	SENT = "SENT",
@@ -12,7 +12,8 @@ export enum ApplicationStage {
 	ACCEPTED = "ACCEPTED",
 	/** Every tenant has signed the tenancy agreement. */
 	SIGNED = "SIGNED",
-	REJECTED = "REJECTED"
+	REJECTED = "REJECTED",
+	WITHDRAWN = "WITHDRAWN"
 }
 
 /** Stages in which a landlord is still deciding, so the application is in their inbox. */

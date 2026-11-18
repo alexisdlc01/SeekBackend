@@ -559,8 +559,14 @@ describe("ApplicationService", () => {
 		});
 
 		it("deletes a household left with only deleted accounts", async () => {
-			const find = jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([{ _id: applicationId, conversation: conversationId, owner: userId, applicants: [userId, memberId] }]) });
-			Object.assign(applicationModel, { find, updateOne: jest.fn(), findOneAndDelete: jest.fn().mockResolvedValue(null) });
+			const row = { _id: applicationId, conversation: conversationId, owner: userId, applicants: [userId, memberId], stage: ApplicationStage.SENT };
+			const find = jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([row]) });
+			Object.assign(applicationModel, {
+				find,
+				findById: jest.fn().mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue(row) }) }),
+				updateOne: jest.fn(),
+				findOneAndDelete: jest.fn().mockResolvedValue(null)
+			});
 			Object.assign(service, { userSevice: { getUserById: jest.fn().mockResolvedValue({ deletedAt: new Date() }) } });
 
 			await service.releaseDeletedMember(userId);
@@ -688,6 +694,7 @@ describe("ApplicationService pipeline", () => {
 		paymentModel = {
 			deleteMany: jest.fn().mockResolvedValue({}),
 			updateMany: jest.fn().mockResolvedValue({ matchedCount: 0 }),
+			updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
 			find: jest.fn().mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue([]) }) }),
 			insertMany: jest.fn().mockResolvedValue([]),
 		};
@@ -741,13 +748,12 @@ describe("ApplicationService pipeline", () => {
 	}
 
 	describe("delete", () => {
-		it.each([ApplicationStage.OFFERED, ApplicationStage.ACCEPTED, ApplicationStage.SIGNED])("refuses to delete a %s application", async stage => {
-			applicationModel.exists.mockResolvedValue({ _id: applicationId });
+		it.each([ApplicationStage.ACCEPTED, ApplicationStage.SIGNED])("refuses to delete a %s application", async stage => {
+			applicationModel.findById.mockReturnValue({ lean: () => exec(stored(stage)) });
 			applicationModel.findOneAndDelete = jest.fn();
 
 			await expect(service.delete(applicationId.toString())).rejects.toThrow(ConflictException);
 
-			expect(applicationModel.exists).toHaveBeenCalledWith(expect.objectContaining({ stage: { $in: expect.arrayContaining([stage]) } }));
 			expect(applicationModel.findOneAndDelete).not.toHaveBeenCalled();
 			expect(sharesService.revokeForApplication).not.toHaveBeenCalled();
 		});
@@ -756,6 +762,7 @@ describe("ApplicationService pipeline", () => {
 			const conversationId = new Types.ObjectId();
 			const conversationModel = { updateOne: jest.fn().mockReturnValue({ exec: jest.fn() }) };
 			(service as any).converstaionModel = conversationModel;
+			applicationModel.findById.mockReturnValue({ lean: () => exec(stored(ApplicationStage.VIEWED)) });
 			applicationModel.findOneAndDelete = jest.fn().mockResolvedValue({ conversation: conversationId });
 
 			await service.delete(applicationId.toString());
@@ -763,6 +770,32 @@ describe("ApplicationService pipeline", () => {
 			expect(applicationModel.findOneAndDelete).toHaveBeenCalledWith({ _id: applicationId.toString() });
 			// Closed to new messages, members kept (history + reporting).
 			expect(conversationModel.updateOne).toHaveBeenCalledWith({ _id: conversationId }, { $set: { closedAt: expect.any(Date) } });
+		});
+
+		it("withdraws an offered household and immediately records its simulated holding-deposit refund", async () => {
+			const conversation = new Types.ObjectId();
+			const paid = {
+				_id: new Types.ObjectId(), amount: 15000, status: "PAID", provider: "simulated",
+				providerRef: "sim_paid", refundedAt: null, refundedAmount: 0
+			};
+			applicationModel.findById.mockReturnValue({ lean: () => exec(stored(ApplicationStage.OFFERED, { conversation })) });
+			applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.WITHDRAWN)));
+			paymentModel.updateMany.mockResolvedValue({ matchedCount: 1 });
+			paymentModel.find.mockImplementation((filter: any) => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(filter.refundDue ? [paid] : []) }) }));
+			const conversationModel = { updateOne: jest.fn().mockReturnValue({ exec: jest.fn() }) };
+			(service as any).converstaionModel = conversationModel;
+
+			await service.delete(applicationId.toString());
+
+			expect(applicationModel.findOneAndUpdate).toHaveBeenCalledWith(
+				{ _id: applicationId, stage: ApplicationStage.OFFERED },
+				expect.objectContaining({ $set: expect.objectContaining({ stage: ApplicationStage.WITHDRAWN }) }),
+				{ new: true }
+			);
+			expect(paymentModel.updateOne).toHaveBeenCalledWith(
+				{ _id: paid._id, refundedAt: null },
+				expect.objectContaining({ $set: expect.objectContaining({ refundDue: false, refundedAmount: 15000, refundRef: `sim_refund_${paid._id}` }) })
+			);
 		});
 	});
 
@@ -844,7 +877,7 @@ describe("ApplicationService pipeline", () => {
 		});
 	});
 
-	it("sets a 15 day deadline and copies the holding deposit when an offer is made", async () => {
+	it("sets a 30 day deadline and copies the holding deposit when an offer is made", async () => {
 		queue({ id: applicationId, qualified: true });
 		applicationModel.findById.mockReturnValue(exec(stored(ApplicationStage.VIEWED)));
 		applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.OFFERED, { offeredAt: new Date() })));
@@ -856,12 +889,42 @@ describe("ApplicationService pipeline", () => {
 		const { offeredAt, offerExpiresAt, holdingDeposit, stage } = update.$set;
 		expect(stage).toBe(ApplicationStage.OFFERED);
 		expect(holdingDeposit).toBe(150);
-		expect(offerExpiresAt.getTime() - offeredAt.getTime()).toBe(15 * 24 * 60 * 60 * 1000);
+		expect(offerExpiresAt.getTime() - offeredAt.getTime()).toBe(30 * 24 * 60 * 60 * 1000);
 		expect(notifications.notifyMany).toHaveBeenCalled();
 		// One holding-deposit payment per member, in pence. Seek's fee is on rent only.
 		const [docs] = paymentModel.insertMany.mock.calls[0];
 		expect(docs).toHaveLength(1);
 		expect(docs[0]).toMatchObject({ kind: "HOLDING_DEPOSIT", amount: 15000, seekFee: 0, payout: 15000 });
+	});
+
+	it("caps an existing listing's holding deposit at one week of rent when offering", async () => {
+		queue({ id: applicationId, qualified: true });
+		listingService.findListingById.mockResolvedValue({
+			_id: listingId, landlord: landlordId, propertyTitle: "Cotham Flat",
+			monthlyRent: 520, holdingDeposit: 150, viewingSlots: [future]
+		});
+		applicationModel.findById.mockReturnValue(exec(stored(ApplicationStage.VIEWED)));
+		applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.OFFERED, { offeredAt: new Date() })));
+
+		await service.offer(applicationId.toString());
+
+		expect(applicationModel.findOneAndUpdate.mock.calls[0][1].$set.holdingDeposit).toBe(120);
+		expect(paymentModel.insertMany.mock.calls[0][0][0]).toMatchObject({ amount: 12000, payout: 12000 });
+	});
+
+	it("caps the offer holding deposit at one person's weekly rent", async () => {
+		queue({ id: applicationId, qualified: true });
+		listingService.findListingById.mockResolvedValue({
+			_id: listingId, landlord: landlordId, propertyTitle: "Cotham Flat",
+			monthlyRent: 520, numOfPeople: 2, holdingDeposit: 150, viewingSlots: [future]
+		});
+		applicationModel.findById.mockReturnValue(exec(stored(ApplicationStage.VIEWED)));
+		applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.OFFERED, { offeredAt: new Date() })));
+
+		await service.offer(applicationId.toString());
+
+		expect(applicationModel.findOneAndUpdate.mock.calls[0][1].$set.holdingDeposit).toBe(60);
+		expect(paymentModel.insertMany.mock.calls[0][0][0]).toMatchObject({ amount: 6000, payout: 6000 });
 	});
 
 	it("keeps one payable holding deposit per member when an offer is renewed", async () => {
@@ -963,16 +1026,20 @@ describe("ApplicationService pipeline", () => {
 			});
 		applicationModel.findOneAndUpdate.mockReturnValue(exec(lapsed));
 		paymentModel.updateMany.mockResolvedValue({ matchedCount: 1 });
+		paymentModel.find.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue([{
+			_id: new Types.ObjectId(), amount: 15000, status: "PAID", provider: "simulated",
+			providerRef: "sim_paid", refundedAt: null, refundedAmount: 0
+		}]) }) });
 
 		await service.expireOffers();
 
 		expect(paymentModel.updateMany).toHaveBeenCalledWith(
-			{ application: applicationId, kind: "HOLDING_DEPOSIT" },
-			{ $set: { refundDue: true } },
+			{ application: applicationId, kind: "HOLDING_DEPOSIT", refundDue: { $ne: true }, autoRefund: { $ne: true }, refundedAt: null },
+			{ $set: { refundDue: true, autoRefund: true } },
 		);
 		const [refund] = notifications.notify.mock.calls[0];
 		expect(refund.user).toBe(landlordId);
-		expect(refund.body).toContain("within 7 days");
+		expect(refund.body).toContain("automatic refund");
 	});
 
 	it("claims a lapsed offer first, and a later sweep finishes the clean-up and flags the refund when closing a Checkout session timed out", async () => {
@@ -1003,8 +1070,10 @@ describe("ApplicationService pipeline", () => {
 			await expect(service.expireOffers()).resolves.toBe(0);
 
 			expect(applicationModel.findOneAndUpdate).toHaveBeenCalledTimes(1);
-			expect(paymentModel.updateMany).toHaveBeenCalledWith({ application: applicationId, kind: "HOLDING_DEPOSIT" }, { $set: { refundDue: true } });
-			expect(notifications.notify.mock.calls[0][0].dedupeKey).toBe(`holding-refund:${applicationId.toString()}:${expiresAt.toISOString()}`);
+			expect(paymentModel.updateMany).toHaveBeenCalledWith(
+				{ application: applicationId, kind: "HOLDING_DEPOSIT", refundDue: { $ne: true }, autoRefund: { $ne: true }, refundedAt: null },
+				{ $set: { refundDue: true, autoRefund: true } }
+			);
 			expect(applicationModel.updateOne).toHaveBeenCalledWith({ _id: applicationId, lapseCleanupPending: true }, { $set: { lapseCleanupPending: false } });
 		} finally {
 			expire.mockRestore();
@@ -1022,7 +1091,10 @@ describe("ApplicationService pipeline", () => {
 
 		// Money and shares still cleaned up (idempotent), marker cleared, no student notification.
 		expect(sharesService.revokeForApplication).toHaveBeenCalledWith(applicationId);
-		expect(paymentModel.updateMany).toHaveBeenCalledWith({ application: applicationId, kind: "HOLDING_DEPOSIT" }, { $set: { refundDue: true } });
+		expect(paymentModel.updateMany).toHaveBeenCalledWith(
+			{ application: applicationId, kind: "HOLDING_DEPOSIT", refundDue: { $ne: true }, autoRefund: { $ne: true }, refundedAt: null },
+			{ $set: { refundDue: true, autoRefund: true } }
+		);
 		expect(applicationModel.updateOne).toHaveBeenCalledWith({ _id: applicationId, lapseCleanupPending: true }, { $set: { lapseCleanupPending: false } });
 		expect(notifications.notifyMany).not.toHaveBeenCalled();
 	});
@@ -1131,15 +1203,19 @@ describe("ApplicationService pipeline", () => {
 			exec(stored(ApplicationStage.REJECTED, { listing: { _id: listingId, propertyTitle: "Cotham Flat" } })),
 		);
 		paymentModel.updateMany.mockResolvedValue({ matchedCount: 1 });
+		paymentModel.find.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue([{
+			_id: new Types.ObjectId(), amount: 15000, status: "PAID", provider: "simulated",
+			providerRef: "sim_paid", refundedAt: null, refundedAmount: 0
+		}]) }) });
 		await service.reject(applicationId.toString());
 		expect(paymentModel.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ application: applicationId, status: { $ne: "PAID" } }));
 		expect(paymentModel.updateMany).toHaveBeenCalledWith(
-			{ application: applicationId, kind: "HOLDING_DEPOSIT" },
-			{ $set: { refundDue: true } },
+			{ application: applicationId, kind: "HOLDING_DEPOSIT", refundDue: { $ne: true }, autoRefund: { $ne: true }, refundedAt: null },
+			{ $set: { refundDue: true, autoRefund: true } },
 		);
 		const [refund] = notifications.notify.mock.calls[0];
 		expect(refund.user).toBe(landlordId);
-		expect(refund.body).toContain("within 7 days");
+		expect(refund.body).toContain("automatic refund");
 		expect(refund.link).not.toContain("/student");
 	});
 
@@ -1159,8 +1235,9 @@ describe("ApplicationService pipeline", () => {
 			expect(paymentModel.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ _id: { $nin: [paying._id] } }));
 			const [filter, update] = paymentModel.updateMany.mock.calls[0];
 			expect(filter).not.toHaveProperty("status");
-			expect(update).toEqual({ $set: { refundDue: true } });
-			expect(notifications.notify.mock.calls[0][0].user).toBe(landlordId);
+			expect(filter.refundedAt).toBeNull();
+			expect(update).toEqual({ $set: { refundDue: true, autoRefund: true } });
+			expect(notifications.notify).not.toHaveBeenCalled();
 		} finally {
 			expire.mockRestore();
 			retrieve.mockRestore();
