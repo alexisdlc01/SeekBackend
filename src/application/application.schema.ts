@@ -54,7 +54,7 @@ export class Application {
 	@Prop({ type: Date, default: null })
 	offeredAt?: Date | null;
 
-	/** The household must accept by this date: 15 days after the offer. */
+	/** The household must accept by this date; its length is defined in offer.ts. */
 	@Prop({ type: Date, default: null })
 	offerExpiresAt?: Date | null;
 

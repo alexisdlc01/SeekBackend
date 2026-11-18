@@ -72,7 +72,7 @@ Dates are relative to the day you run the seed.
   offers three viewing slots (two households each); Maya's booking uses the
   middle one.
 - **9 Gloucester Road** (draft two-bed): Leo and Priya are the first qualified
-  household and hold an offer made 13 days ago (15-day window, so it lapses in
+  household and hold an offer made 28 days ago (30-day window, so it lapses in
   2 days), with a £140 holding deposit each (Priya paid, Leo due).
 - Every listing has screening criteria (guarantor rule, references, maximum
   household), a holding deposit under one week's rent per room and, unless it

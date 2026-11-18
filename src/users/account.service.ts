@@ -18,6 +18,7 @@ import { Listing } from "../listings/listings.schema";
 import { ModerationStatus } from "../listings/enums/moderation-status.enum";
 import { ContractsService } from "../contracts/contracts.service";
 import { ApplicationService } from "../application/application.service";
+import { EmailMessage } from "../inbox/email-message.schema";
 
 const MAX_TEAM = 20;
 
@@ -44,6 +45,7 @@ export class AccountService {
 		private readonly connectors: ConnectorsService,
 		private readonly uploads: UploadService,
 		@InjectModel(Listing.name) private readonly listingModel: Model<Listing>,
+		@InjectModel(EmailMessage.name) private readonly messageModel: Model<EmailMessage>,
 		// Looked up at call time: importing ContractsModule here would loop back through AuthModule to UsersModule.
 		private readonly moduleRef?: ModuleRef
 	) {}
@@ -165,7 +167,13 @@ export class AccountService {
 			}
 		}
 		// The payout sweep skips a deleted landlord, so rent Seek still holds for them would never be paid out.
-		const heldPayout = await this.paymentModel.exists({ landlord: userId, status: PaymentStatus.PAID, payoutStatus: PayoutStatus.HELD, refundDue: { $ne: true } });
+		const heldPayout = await this.paymentModel.exists({
+			landlord: userId,
+			status: PaymentStatus.PAID,
+			payoutStatus: PayoutStatus.HELD,
+			refundDue: { $ne: true },
+			$expr: { $gt: [{ $subtract: [{ $subtract: ["$amount", { $ifNull: ["$refundedAmount", 0] }] }, "$seekFee"] }, 0] }
+		});
 		if (heldPayout) {
 			throw new ConflictException("Seek is still holding rent collected for you. Finish setting up payouts so it can be paid out before deleting your account.");
 		}
@@ -175,6 +183,10 @@ export class AccountService {
 			throw new ConflictException("A payment to you is still in progress. Wait for it to complete or expire before deleting your account.");
 		}
 		const deletedAt = new Date();
+		const importedAttachmentKeys = (await this.messageModel.distinct("attachments.key", {
+			user: userId,
+			"attachments.key": { $type: "string" }
+		})).map(String).filter(key => key.startsWith("private/"));
 		const connections = await this.connectionModel
 			.find({ user: userId, status: { $ne: ConnectionStatus.DISCONNECTED } })
 			.select("_id")
@@ -193,15 +205,39 @@ export class AccountService {
 			{ $set: { isVerified: false, moderationStatus: ModerationStatus.NEEDS_CHANGES, moderationReasons: ["This account was deleted."], lastUpdated: deletedAt } }
 		);
 		const profile = await this.userModel.findById(userId).select("documents.key profilePicUrl").lean().exec();
-		const keys = (profile?.documents ?? []).map(doc => doc.key).filter(key => key?.startsWith("private/"));
-		// A file also filed on a tenancy stays: the landlord and co-tenants keep that record.
-		const tenancyKeys = new Set(
-			keys.length ? (await this.tenancyModel.distinct("documents.key", { "documents.key": { $in: keys } })).map(String) : []
-		);
-		for (const key of keys) if (!tenancyKeys.has(key)) await this.uploads.deletePrivateObject(key);
-		// Uploaded avatar (public/<userId>/...): erase the object too. A Google avatar URL is not ours, so it is skipped.
+		const keys = [...new Set([
+			...(profile?.documents ?? []).map(doc => doc.key),
+			...importedAttachmentKeys
+		].filter((key): key is string => !!key?.startsWith("private/")))];
 		const picKey = profile?.profilePicUrl ? publicKeyFromUrl(profile.profilePicUrl) : null;
-		if (picKey && isKeyOwnedBy(picKey, userId.toString())) await this.uploads.deletePublicObject(picKey);
+		const referencedCandidates = picKey ? [...keys, picKey] : keys;
+		// A file referenced anywhere else stays: another account or tenancy still needs it.
+		const tenancyKeys = new Set(
+			referencedCandidates.length ? (await this.tenancyModel.distinct("documents.key", { "documents.key": { $in: referencedCandidates } })).map(String) : []
+		);
+		const contractKeys = new Set(
+			this.moduleRef
+				? await this.moduleRef.get(ContractsService, { strict: false }).referencedDocumentKeys(referencedCandidates)
+				: referencedCandidates
+		);
+		const otherMessageKeys = new Set(
+			referencedCandidates.length
+				? (await this.messageModel.distinct("attachments.key", { user: { $ne: userId }, "attachments.key": { $in: referencedCandidates } })).map(String)
+				: []
+		);
+		for (const key of keys) {
+			if (!tenancyKeys.has(key) && !contractKeys.has(key) && !otherMessageKeys.has(key)) {
+				await this.uploads.deletePrivateObject(key);
+			}
+		}
+		// Uploaded avatar (public/<userId>/...): erase the object too. A Google avatar URL is not ours, so it is skipped.
+		if (
+			picKey
+			&& isKeyOwnedBy(picKey, userId.toString())
+			&& !tenancyKeys.has(picKey)
+			&& !contractKeys.has(picKey)
+			&& !otherMessageKeys.has(picKey)
+		) await this.uploads.deletePublicObject(picKey);
 		const result = await this.userModel.updateOne(
 			{ _id: userId, deletedAt: null },
 			{
@@ -228,9 +264,37 @@ export class AccountService {
 					universityEmail: 1,
 					dateOfBirth: 1,
 					profilePicUrl: 1,
-					universityDetails: 1,
-					university: 1
-				}
+						universityDetails: 1,
+						university: 1,
+						studentVerifiedAt: 1,
+						studentEmailPending: 1,
+						studentEmailCodeHash: 1,
+						studentEmailCodeExpires: 1,
+						studentEmailAttempts: 1,
+						companyName: 1,
+						registrations: 1,
+						notificationPrefs: 1,
+						rentReminderSchedule: 1,
+						connectorSettings: 1,
+						payoutBank: 1,
+						lastSeen: 1,
+						emailVerificationTokenExpires: 1,
+						emailVerificationAttempts: 1,
+						emailVerificationLastSentAt: 1,
+						emailVerificationWindowStartedAt: 1,
+						emailVerificationSendCount: 1,
+						pendingEmailExpires: 1,
+						pendingEmailLastSentAt: 1,
+						pendingEmailWindowStartedAt: 1,
+						pendingEmailSendCount: 1,
+						resetPasswordExpires: 1,
+						resetPasswordLastSentAt: 1,
+						resetPasswordWindowStartedAt: 1,
+						resetPasswordSendCount: 1,
+						weeklySummarySentAt: 1,
+						stripeAccountId: 1,
+						stripeCustomerId: 1
+					}
 			}
 		);
 		if (!result.matchedCount) throw new NotFoundException("Account not found.");

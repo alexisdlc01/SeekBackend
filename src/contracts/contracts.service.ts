@@ -61,6 +61,13 @@ export class ContractsService {
 		private readonly mail?: MailService
 	) {}
 
+	/** S3 keys that contracts still reference, regardless of who uploaded them. */
+	async referencedDocumentKeys(keys: string[]): Promise<string[]> {
+		return keys.length
+			? (await this.contractModel.distinct("key", { key: { $in: keys } })).map(String)
+			: [];
+	}
+
 	/** Drafts Seek's own agreement for the tenancy, following the law of the nation the home is in. */
 	async createDefault(tenancyId: string, landlord: Viewer) {
 		const tenancy = await this.tenancies.findForLandlord(tenancyId, landlord);

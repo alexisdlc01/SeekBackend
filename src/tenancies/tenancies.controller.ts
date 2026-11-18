@@ -17,6 +17,7 @@ import { CreateTenancyDto } from "./dto/create-tenancy.dto";
 import { DepositReceivedDto, PrescribedInfoDto, UpdateDepositDto, UpdateEnergyAllowanceDto } from "./dto/update-deposit.dto";
 import { AddTenancyDocumentDto } from "./dto/add-tenancy-document.dto";
 import { UpdateBankTransferInstructionsDto } from "./dto/update-bank-transfer-instructions.dto";
+import { EndTenancyDto } from "./dto/end-tenancy.dto";
 
 @Controller("tenancies")
 export class TenanciesController {
@@ -176,5 +177,20 @@ export class TenanciesController {
 		@CurrentUser() user: User
 	) {
 		return this.tenanciesService.confirmDocument(id, docId, user);
+	}
+
+	@TeamAccess(TeamScope.TENANCIES)
+	@Patch(":id/end")
+	@LandlordAgency()
+	@ApiOperation({ summary: "End a tenancy early, remove future unpaid rent and refund unused paid rent." })
+	@ApiResponse({ status: 200, type: Tenancy })
+	@ApiResponse({ status: 403, type: ErrorDto })
+	async end(
+		@Param("id", ParseObjectIdPipe) id: string,
+		@Body() body: EndTenancyDto,
+		@CurrentUser() user: User
+	) {
+		const [year, month, day] = body.endDate.split("-").map(Number);
+		return this.tenanciesService.endTenancy(id, new Date(Date.UTC(year, month - 1, day)), user);
 	}
 }

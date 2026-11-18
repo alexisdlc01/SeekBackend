@@ -19,6 +19,7 @@ import { UploadModule } from "../upload/upload.module";
 import { ConnectorsModule } from "../connectors/connectors.module";
 import { DocumentReviewService } from "./document-review.service";
 import { Listing, ListingSchema } from "../listings/listings.schema";
+import { EmailMessage, EmailMessageSchema } from "../inbox/email-message.schema";
 
 @Module({
 	imports: [
@@ -33,7 +34,8 @@ import { Listing, ListingSchema } from "../listings/listings.schema";
 			},
 			{ name: Tenancy.name, schema: TenancySchema },
 			{ name: Payment.name, schema: PaymentSchema },
-			{ name: Listing.name, schema: ListingSchema }
+			{ name: Listing.name, schema: ListingSchema },
+			{ name: EmailMessage.name, schema: EmailMessageSchema }
 		]),
 		SharedModule,
 		RedisModule,

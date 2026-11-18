@@ -19,6 +19,10 @@ import { AddTenancyDocumentDto } from "./dto/add-tenancy-document.dto";
 import { depositCapName, depositCapPence, listingCompliance, sortCompliance, tenancyCompliance } from "./compliance";
 import { RentScheduleService } from "../payments/rent-schedule.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { Payment } from "../payments/payment.schema";
+import { PaymentKind, PaymentStatus } from "../payments/payment.enums";
+import { addMonths, computeFee, startOfUtcDay } from "../payments/schedule";
+import { refundPayment } from "../payments/refund";
 import { NotificationKind } from "../notifications/notification-kind.enum";
 import { notificationTarget, NotificationTargetKind } from "../notifications/links";
 import { isKeyOwnedBy } from "../upload/object-key";
@@ -89,7 +93,8 @@ export class TenanciesService {
 		@InjectModel(Application.name) private readonly applicationModel: Model<Application>,
 		@InjectModel(Contract.name) private readonly contractModel: Model<Contract>,
 		private readonly rentSchedule: RentScheduleService,
-		private readonly notifications: NotificationsService
+		private readonly notifications: NotificationsService,
+		@InjectModel(Payment.name) private readonly paymentModel: Model<Payment>
 	) {}
 
 	/** Loads a tenancy the viewer belongs to (landlord, tenant or Seek staff). */
@@ -451,6 +456,95 @@ export class TenanciesService {
 		return this.getDetail(id, landlord);
 	}
 
+	/** Ends a tenancy and returns the unused part of any paid rent period. */
+	async endTenancy(id: string, endDate: Date, landlord: Viewer) {
+		const tenancy = await this.findForLandlord(id, landlord);
+		const end = startOfUtcDay(endDate);
+		if (tenancy.status !== TenancyStatus.ACTIVE) {
+			if (tenancy.status === TenancyStatus.ENDED) throw new ConflictException("This tenancy has already been ended.");
+			throw new BadRequestException("Only an active tenancy can be ended.");
+		}
+		if (!Number.isFinite(end.getTime()) || end <= startOfUtcDay(tenancy.startDate)) {
+			throw new BadRequestException("The end date must be after the tenancy start date.");
+		}
+		if (end < londonCalendarDay()) {
+			throw new BadRequestException("The end date cannot be in the past.");
+		}
+		if (tenancy.endDate && end > startOfUtcDay(tenancy.endDate)) {
+			throw new BadRequestException("The end date cannot be after the tenancy's current end date.");
+		}
+
+		const ended = await this.tenancyModel.updateOne(
+			{ _id: tenancy._id, status: TenancyStatus.ACTIVE },
+			{ $set: { endDate: end, status: TenancyStatus.ENDED } }
+		);
+		if (ended.modifiedCount === 0) {
+			throw new ConflictException("This tenancy has already been ended.");
+		}
+		await this.paymentModel.updateMany(
+			{
+				tenancy: tenancy._id,
+				kind: { $ne: PaymentKind.HOLDING_DEPOSIT },
+				status: PaymentStatus.PENDING,
+				dueDate: { $gte: end }
+			},
+			[{ $set: { status: PaymentStatus.CANCELLED, refundDue: true, autoRefund: true, refundAmount: "$amount" } }]
+		);
+		await this.paymentModel.deleteMany({
+			tenancy: tenancy._id,
+			kind: { $ne: PaymentKind.HOLDING_DEPOSIT },
+			status: { $nin: [PaymentStatus.PAID, PaymentStatus.PENDING, PaymentStatus.CANCELLED] },
+			dueDate: { $gte: end }
+		});
+		const unpaidSpanning = await this.paymentModel
+			.find({
+				tenancy: tenancy._id,
+				kind: { $ne: PaymentKind.HOLDING_DEPOSIT },
+				status: { $nin: [PaymentStatus.PAID, PaymentStatus.PENDING] },
+				dueDate: { $lt: end }
+			})
+			.lean()
+			.exec();
+		for (const payment of unpaidSpanning) {
+			const unused = earlyEndRefundAmount(payment.amount, new Date(payment.dueDate), payment.coversMonths ?? 1, end, tenancy.startDate);
+			if (unused === 0) continue;
+			const amount = payment.amount - unused;
+			await this.paymentModel.updateOne(
+				{ _id: payment._id, status: { $nin: [PaymentStatus.PAID, PaymentStatus.PENDING] }, amount: payment.amount },
+				{ $set: { amount, ...computeFee(amount) } }
+			);
+		}
+
+		const paidOrPending = await this.paymentModel
+			.find({ tenancy: tenancy._id, kind: { $ne: PaymentKind.HOLDING_DEPOSIT }, status: { $in: [PaymentStatus.PAID, PaymentStatus.PENDING] }, refundedAt: null })
+			.lean()
+			.exec();
+		for (const payment of paidOrPending) {
+			const amount = earlyEndRefundAmount(payment.amount, new Date(payment.dueDate), payment.coversMonths ?? 1, end, tenancy.startDate);
+			if (amount === 0) continue;
+			const claimed = await this.paymentModel
+				.findOneAndUpdate(
+					{
+						_id: payment._id,
+						refundedAt: null,
+						refundDue: { $ne: true },
+						autoRefund: { $ne: true },
+						refundAmount: { $in: [0, null] },
+						refundedAmount: { $in: [0, null] },
+						refundRef: null
+					},
+					{ $set: { refundDue: true, autoRefund: true, refundAmount: amount } },
+					{ new: true }
+				)
+				.lean()
+				.exec();
+			if (claimed?.status === PaymentStatus.PAID) {
+				await refundPayment(this.paymentModel, claimed, process.env.STRIPE_SECRET_KEY, claimed.refundAmount);
+			}
+		}
+		return this.getDetail(id, landlord);
+	}
+
 	async appendDocument(
 		tenancyId: Types.ObjectId | string,
 		document: Omit<TenancyDocument, "addedAt" | "_id">
@@ -555,4 +649,32 @@ export class TenanciesService {
 			);
 		}
 	}
+}
+
+/** The London calendar day containing an instant, represented as a UTC calendar date. */
+export function londonCalendarDay(value: Date = new Date()): Date {
+	const parts = new Intl.DateTimeFormat("en-GB", {
+		timeZone: "Europe/London",
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit"
+	}).formatToParts(value);
+	const part = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find(item => item.type === type)?.value);
+	return new Date(Date.UTC(part("year"), part("month") - 1, part("day")));
+}
+
+/** Daily pro-rata of the part of one rent period after the tenancy end. */
+export function earlyEndRefundAmount(amount: number, dueDate: Date, coversMonths: number, endDate: Date, tenancyStart: Date = dueDate): number {
+	const anchor = startOfUtcDay(tenancyStart);
+	const due = startOfUtcDay(dueDate);
+	const index = Math.max(0, (due.getUTCFullYear() - anchor.getUTCFullYear()) * 12 + due.getUTCMonth() - anchor.getUTCMonth());
+	const start = addMonths(anchor, index);
+	const end = startOfUtcDay(endDate);
+	const periodEnd = addMonths(anchor, index + Math.max(1, coversMonths));
+	if (end >= periodEnd) return 0;
+	if (end <= start) return amount;
+	const day = 24 * 60 * 60 * 1000;
+	const periodDays = Math.round((periodEnd.getTime() - start.getTime()) / day);
+	const unusedDays = Math.round((periodEnd.getTime() - end.getTime()) / day);
+	return Math.floor((amount * unusedDays) / periodDays);
 }

@@ -30,6 +30,8 @@ import { missingDocuments } from "./required-documents";
 import { Payment } from "../payments/payment.schema";
 import { PaymentKind, PaymentStatus } from "../payments/payment.enums";
 import { StripeApiError, StripeClient } from "../payments/stripe";
+import { refundPayment } from "../payments/refund";
+import { holdingDepositPerPersonCapPence } from "../tenancies/compliance";
 
 /** How long a shared invite link stays usable. */
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -143,12 +145,15 @@ export class ApplicationService {
 		applicationId: string,
 	): Promise<void> {
 		if (Types.ObjectId.isValid(applicationId)) {
-			// An offered/accepted/signed application backs a tenancy and its payments; deleting it would reopen the listing.
-			const committed = await this.applicationModel.exists({
-				_id: applicationId,
-				stage: { $in: [ApplicationStage.OFFERED, ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] }
-			});
-			if (committed) throw new ConflictException("An application with an offer, acceptance or signed agreement cannot be deleted.");
+			const current = await this.applicationModel.findById(applicationId).lean().exec();
+			if (current?.stage === ApplicationStage.OFFERED) {
+				await this.withdrawOffer(current);
+				return;
+			}
+			// An accepted/signed application backs a tenancy and its payments; deleting it would orphan them.
+			if (current && [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED].includes(current.stage as ApplicationStage)) {
+				throw new ConflictException("An accepted or signed application cannot be deleted.");
+			}
 			await this.sharesService.revokeForApplication(applicationId);
 		}
 		const deleted = await this.applicationModel.findOneAndDelete({
@@ -157,6 +162,22 @@ export class ApplicationService {
 		// Close the conversation to new messages; members stay so they keep the history and can still report (flags linkedTo).
 		if (deleted?.conversation) {
 			await this.converstaionModel.updateOne({ _id: deleted.conversation }, { $set: { closedAt: new Date() } }).exec();
+		}
+	}
+
+	/** An offered household may withdraw; keep its audit row and return any paid reservation fee. */
+	private async withdrawOffer(application: Application & { _id: Types.ObjectId }) {
+		const withdrawn = await this.applicationModel.findOneAndUpdate(
+			{ _id: application._id, stage: ApplicationStage.OFFERED },
+			{ $set: { stage: ApplicationStage.WITHDRAWN, offerExpiresAt: null, holdingDeposit: null } },
+			{ new: true }
+		).exec();
+		if (!withdrawn) throw new ConflictException("This offer can no longer be withdrawn.");
+		await this.sharesService.revokeForApplication(application._id);
+		await this.dropUnpaidHoldingDeposits(application._id);
+		await this.refundHoldingDeposits(application._id);
+		if (application.conversation) {
+			await this.converstaionModel.updateOne({ _id: application.conversation }, { $set: { closedAt: new Date() } }).exec();
 		}
 	}
 
@@ -439,7 +460,7 @@ export class ApplicationService {
 	}
 
 	/**
-	 * The landlord offers the room to a household. They get 15 days to accept,
+	 * The landlord offers the room to a household. The household gets the configured window to accept,
 	 * and the listing's holding deposit is recorded with the offer.
 	 */
 	async offer(applicationId: string): Promise<ApplicationDto> {
@@ -454,6 +475,9 @@ export class ApplicationService {
 		}
 		await this.assertNextInQueue(current, now);
 		const listing = await this.listingService.findListingById(current.listing.toString());
+		const holdingDeposit = listing.holdingDeposit == null || !Number.isFinite(listing.monthlyRent)
+			? listing.holdingDeposit ?? null
+			: Math.min(listing.holdingDeposit, holdingDepositPerPersonCapPence(Math.round(listing.monthlyRent! * 100), listing.numOfPeople) / 100);
 		const application = await this.applicationModel
 			.findOneAndUpdate({
 				_id: applicationId,
@@ -466,14 +490,14 @@ export class ApplicationService {
 					offeredAt: now,
 					offerExpiredAt: null,
 					offerExpiresAt: new Date(now.getTime() + OFFER_WINDOW_DAYS * 24 * 60 * 60 * 1000),
-					holdingDeposit: listing.holdingDeposit ?? null,
+					holdingDeposit,
 				}
 			}, { new: true })
 			.exec();
 		if (!application) {
 			throw new BadRequestException("This application changed while you were making the offer. Try again.");
 		}
-		await this.createHoldingDeposits(application, listing.holdingDeposit);
+		await this.createHoldingDeposits(application, holdingDeposit);
 		await this.notificationsService.notifyMany(
 			application.applicants.map(applicant => ({
 				user: applicant,
@@ -543,7 +567,7 @@ export class ApplicationService {
 		const valid = Number.isFinite(amount) && amount > 0;
 		const base = { application: application._id, kind: PaymentKind.HOLDING_DEPOSIT };
 		// A deposit flagged refundDue is owed back from an earlier offer: it neither covers nor gets reused for this one.
-		const existing = (await this.paymentModel.find(base).lean().exec()).filter(row => !row.refundDue);
+		const existing = (await this.paymentModel.find(base).lean().exec()).filter(row => !row.refundDue && !row.refundedAt);
 		const paid = new Set(existing.filter(row => row.status === PaymentStatus.PAID).map(row => row.tenant.toString()));
 		const members = new Set(application.applicants.map(applicant => applicant.toString()));
 		const kept = new Map<string, (typeof existing)[number]>();
@@ -583,7 +607,7 @@ export class ApplicationService {
 	}
 
 	/**
-	 * Hourly: an offer nobody accepted in 15 days goes back to the queue. The
+	 * Hourly: an offer nobody accepted within the configured window goes back to the queue. The
 	 * household is told, unpaid holding deposits are dropped, and the landlord
 	 * is pointed at the next qualified household.
 	 */
@@ -636,16 +660,13 @@ export class ApplicationService {
 		const queue = await this.queueFor(application.listing, now);
 		const title = queue.listing?.propertyTitle ?? queue.listing?.streetAddress ?? "the property";
 		// Same as a decline: rows left are PAID or kept because Stripe already took the money.
-		const refunds = await this.paymentModel.updateMany(
-			{ application: application._id, kind: PaymentKind.HOLDING_DEPOSIT },
-			{ $set: { refundDue: true } }
-		);
-		if (refunds.matchedCount > 0) {
+		const refunds = await this.refundHoldingDeposits(application._id);
+		if (refunds.acceptedCount > 0) {
 			await this.notificationsService.notify({
 				user: application.landlord,
 				kind: NotificationKind.OFFER_EXPIRED,
 				title: `Refund the holding deposit for ${title}`,
-				body: "Your offer lapsed after the household paid a holding deposit. The law (Tenant Fees Act) requires you to refund it within 7 days, unless they failed to take reasonable steps to agree the tenancy.",
+				body: "Your offer lapsed after the household paid a holding deposit. Seek has started the automatic refund.",
 				...notificationTarget("landlord", NotificationTargetKind.APPLICATION, application._id, { listing: application.listing }),
 				dedupeKey: `holding-refund:${application._id.toString()}:${key}`
 			});
@@ -656,7 +677,7 @@ export class ApplicationService {
 				user: applicant,
 				kind: NotificationKind.OFFER_EXPIRED,
 				title: `Your offer for ${title} has expired`,
-				body: "It wasn't accepted within 15 days, so you're back in the queue.",
+				body: `It wasn't accepted within ${OFFER_WINDOW_DAYS} days, so you're back in the queue.`,
 				...notificationTarget("student", NotificationTargetKind.APPLICATION, application._id),
 				dedupeKey: `offer-expired:${application._id.toString()}:${key}`
 			}))
@@ -764,6 +785,23 @@ export class ApplicationService {
 		await this.paymentModel.deleteMany({ ...unpaid, _id: { $nin: keep } });
 	}
 
+	/** Flags every retained holding deposit and immediately refunds each settled payment. */
+	private async refundHoldingDeposits(applicationId: Types.ObjectId) {
+		const result = await this.paymentModel.updateMany(
+			{ application: applicationId, kind: PaymentKind.HOLDING_DEPOSIT, refundDue: { $ne: true }, autoRefund: { $ne: true }, refundedAt: null },
+			{ $set: { refundDue: true, autoRefund: true } }
+		);
+		const due = await this.paymentModel
+			.find({ application: applicationId, kind: PaymentKind.HOLDING_DEPOSIT, refundDue: true, autoRefund: true, status: PaymentStatus.PAID, refundedAt: null })
+			.lean()
+			.exec();
+		let acceptedCount = 0;
+		for (const payment of due) {
+			if (await refundPayment(this.paymentModel, payment, process.env.STRIPE_SECRET_KEY)) acceptedCount += 1;
+		}
+		return { ...result, acceptedCount };
+	}
+
 	/** Expires each row's open Checkout session or cancels its PaymentIntent; returns the ids of rows Stripe already took (or is taking) payment on. */
 	private async closeCheckoutSessions(rows: { _id: Types.ObjectId; providerRef?: string | null }[]): Promise<Set<string>> {
 		const paid = new Set<string>();
@@ -811,18 +849,14 @@ export class ApplicationService {
 		const listing = application.listing as unknown as { _id: Types.ObjectId; propertyTitle?: string; streetAddress?: string } | null;
 		await this.sharesService.revokeForApplication(application._id);
 		await this.dropUnpaidHoldingDeposits(application._id);
-		// shortcut: no automatic refund yet; the landlord is told and the row flagged until a refund flow exists.
 		// Rows left here are PAID or kept because Stripe already took the money (webhook not in yet), so flag both.
-		const refunds = await this.paymentModel.updateMany(
-			{ application: application._id, kind: PaymentKind.HOLDING_DEPOSIT },
-			{ $set: { refundDue: true } }
-		);
-		if (refunds.matchedCount > 0) {
+		const refunds = await this.refundHoldingDeposits(application._id);
+		if (refunds.acceptedCount > 0) {
 			await this.notificationsService.notify({
 				user: application.landlord,
 				kind: NotificationKind.APPLICATION_REJECTED,
 				title: `Refund the holding deposit for ${listing?.propertyTitle ?? listing?.streetAddress ?? "this property"}`,
-				body: "You declined a household that paid a holding deposit. The law (Tenant Fees Act) requires you to refund it within 7 days.",
+				body: "You declined a household that paid a holding deposit. Seek has started the automatic refund.",
 				...notificationTarget("landlord", NotificationTargetKind.APPLICATION, application._id, { listing: listing?._id }),
 				dedupeKey: `holding-refund:${application._id.toString()}`
 			});

@@ -68,6 +68,7 @@ import { NotificationKind } from "../notifications/notification-kind.enum";
 import { notificationTarget, NotificationTargetKind } from "../notifications/links";
 import { MailService } from "../auth/mail.service";
 import { ConversationService } from "../conversation/conversation.service";
+import { proportionalRefund, refundPayment, refundStripeCharge } from "./refund";
 
 type Viewer = Pick<User, "_id" | "role">;
 type PaymentLean = Payment & { _id: Types.ObjectId };
@@ -380,7 +381,7 @@ export class PaymentsService {
 			// A declined card on Checkout is retried on the same page: its session stays the reference.
 			if (payment.providerRef?.startsWith("cs_")) return { received: true };
 			const failed = await this.paymentModel.updateOne(
-				{ _id: payment._id, status: { $ne: PaymentStatus.PAID }, providerRef: intent.id },
+				{ _id: payment._id, status: PaymentStatus.PENDING, providerRef: intent.id },
 				{ $set: { status: PaymentStatus.FAILED, provider: PaymentProvider.STRIPE } }
 			);
 			if (failed.modifiedCount > 0) {
@@ -507,9 +508,21 @@ export class PaymentsService {
 	 */
 	async releaseHeldPayouts(landlordId?: Types.ObjectId): Promise<number> {
 		if (this.mode() !== "stripe") return 0;
+		const staleClaim = new Date(Date.now() - 10 * 60 * 1000);
 		const held = (await this.paymentModel
 			// A deposit owed back to the student stays with Seek until it's refunded.
-			.find({ status: PaymentStatus.PAID, payoutStatus: PayoutStatus.HELD, refundDue: { $ne: true }, ...(landlordId ? { landlord: landlordId } : {}) })
+			.find({
+				status: PaymentStatus.PAID,
+				payoutStatus: PayoutStatus.HELD,
+				refundFailed: { $ne: true },
+				$or: [
+					{ payoutReleaseStartedAt: null, refundDue: { $ne: true } },
+					// Recover an interrupted Stripe call under the same idempotency key; a queued refund then reverses it.
+					{ payoutReleaseStartedAt: { $lt: staleClaim } }
+				],
+				$expr: { $gt: [{ $subtract: ["$amount", { $ifNull: ["$refundedAmount", 0] }] }, 0] },
+				...(landlordId ? { landlord: landlordId } : {})
+			})
 			.lean()
 			.exec()) as PaymentLean[];
 		if (held.length === 0) return 0;
@@ -517,31 +530,62 @@ export class PaymentsService {
 		const destinations = new Map<string, string | null>();
 		let released = 0;
 		for (const payment of held) {
-			const key = payment.landlord.toString();
-			if (!destinations.has(key)) destinations.set(key, await this.destinationFor(stripe, payment.landlord));
+			const claimed = await this.paymentModel
+				.findOneAndUpdate(
+					{
+						_id: payment._id,
+						status: PaymentStatus.PAID,
+						payoutStatus: PayoutStatus.HELD,
+						refundFailed: { $ne: true },
+						$or: [
+							{ payoutReleaseStartedAt: null, refundDue: { $ne: true } },
+							{ payoutReleaseStartedAt: { $lt: staleClaim } }
+						]
+					},
+					{ $set: { payoutReleaseStartedAt: new Date() } },
+					{ new: true }
+				)
+				.lean()
+				.exec() as PaymentLean | null;
+			if (!claimed) continue;
+			const payout = proportionalRefund(claimed.amount, claimed.refundedAmount ?? 0, claimed.seekFee).landlordNet;
+			if (payout <= 0) {
+				await this.paymentModel.updateOne({ _id: claimed._id, payoutStatus: PayoutStatus.HELD }, { $set: { payoutReleaseStartedAt: null } });
+				continue;
+			}
+			const key = claimed.landlord.toString();
+			if (!destinations.has(key)) destinations.set(key, await this.destinationFor(stripe, claimed.landlord));
 			const destination = destinations.get(key);
-			if (!destination) continue;
+			if (!destination) {
+				await this.paymentModel.updateOne({ _id: claimed._id, payoutStatus: PayoutStatus.HELD }, { $set: { payoutReleaseStartedAt: null } });
+				continue;
+			}
 			try {
-				const charge = await this.chargeFor(stripe, payment.providerRef);
+				const charge = await this.chargeFor(stripe, claimed.providerRef);
 				const transfer = await stripe.createTransfer(
 					{
-						amount: payment.amount - payment.seekFee,
+						amount: payout,
 						currency: "gbp",
 						destination,
 						// Tied to the original charge, so it doesn't wait for Seek's balance to clear.
 						...(charge ? { source_transaction: charge } : {}),
-						metadata: this.stripeMetadata(payment)
+						metadata: this.stripeMetadata(claimed)
 					},
-					`seek-release-${payment._id.toString()}`
+					`seek-release-${claimed._id.toString()}`
 				);
 				await this.paymentModel.updateOne(
-					{ _id: payment._id, payoutStatus: PayoutStatus.HELD },
-					{ $set: { payoutStatus: PayoutStatus.TRANSFERRED, transferRef: transfer.id } }
+					{ _id: claimed._id, payoutStatus: PayoutStatus.HELD },
+					{ $set: { payoutStatus: PayoutStatus.TRANSFERRED, transferRef: transfer.id, payoutReleaseStartedAt: null } }
 				);
 				released += 1;
 			} catch (error) {
-				// Network errors too: the next run retries under the same idempotency key.
-				this.logger.warn(`Held payment ${payment._id.toString()} not released yet (${error instanceof StripeApiError ? error.status : "network"}): ${(error as Error).message}`);
+				if (error instanceof StripeApiError) {
+					this.logger.warn(`Held payment ${claimed._id.toString()} not released yet (${error.status}): ${error.message}`);
+					await this.paymentModel.updateOne({ _id: claimed._id, payoutStatus: PayoutStatus.HELD }, { $set: { payoutReleaseStartedAt: null } });
+				} else {
+					// shortcut: ambiguous Stripe result keeps the lock; an admin must reconcile in the Stripe dashboard — add automatic reconciliation by transfer metadata if this happens in practice
+					this.logger.error(`Held payment ${claimed._id.toString()} has an ambiguous Stripe payout result: ${(error as Error).message}`);
+				}
 			}
 		}
 		return released;
@@ -920,23 +964,7 @@ export class PaymentsService {
 
 	/** Refunds a whole charge, idempotently per intent. */
 	private async refundCharge(intentId: string, reason: "duplicate" | "requested_by_customer") {
-		try {
-			const stripe = new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!);
-			const intent = await stripe.retrievePaymentIntent(intentId);
-			await stripe.createRefund(
-				{
-					payment_intent: intentId,
-					reason,
-					// A destination charge already went to the landlord: take it back from them, with Seek's fee.
-					...(intent.transfer_data ? { reverse_transfer: true } : {}),
-					...(intent.application_fee_amount ? { refund_application_fee: true } : {})
-				},
-				`seek-refund-${intentId}`
-			);
-		} catch (error) {
-			if (!(error instanceof StripeApiError)) throw error;
-			this.logger.error(`Refund of charge ${intentId} failed (${error.status}): ${error.message}. Refund it in the Stripe dashboard.`);
-		}
+		await refundStripeCharge({ secretKey: this.config.get<string>("STRIPE_SECRET_KEY")!, intentId, reason });
 	}
 
 	/** The landlord's connected account, when Stripe lets it receive destination charges and transfers. */
@@ -1233,6 +1261,22 @@ export class PaymentsService {
 		await this.sweepCompliance(now);
 	}
 
+	/** Retries automatic refunds that could not run before their Stripe payment settled. */
+	async refundDuePayments() {
+		const due = await this.paymentModel
+			.find({ refundDue: true, autoRefund: true, refundFailed: { $ne: true }, status: PaymentStatus.PAID, refundedAt: null })
+			.lean()
+			.exec();
+		for (const payment of due) {
+			await refundPayment(
+				this.paymentModel,
+				payment as PaymentLean,
+				this.config.get<string>("STRIPE_SECRET_KEY"),
+				payment.refundAmount || payment.amount
+			);
+		}
+	}
+
 	/** Keeps a year of rent scheduled for every active tenancy (buildSchedule only goes 12 months ahead). */
 	async extendSchedules(now: Date = new Date()) {
 		const tenancies = await this.tenancyModel
@@ -1349,11 +1393,11 @@ export class PaymentsService {
 						continue;
 					}
 					this.logger.warn(`Autopay failed for payment ${payment._id.toString()} (${error.status})`);
-					await this.paymentModel.updateOne(
+					const failed = await this.paymentModel.updateOne(
 						{ _id: payment._id, status: PaymentStatus.PENDING },
 						{ $set: { status: PaymentStatus.FAILED } }
 					);
-					await this.notifications.notify({
+					if (failed.modifiedCount > 0) await this.notifications.notify({
 						user: payment.tenant,
 						kind: NotificationKind.PAYMENT_FAILED,
 						title: `Autopay of ${formatPence(payment.amount)} didn't go through`,
@@ -1482,7 +1526,10 @@ export class PaymentsService {
 		if (!paid) return null;
 
 		const holding = paid.kind === PaymentKind.HOLDING_DEPOSIT;
-		if (holding && paid.application) {
+		if (paid.refundDue && paid.autoRefund) {
+			await refundPayment(this.paymentModel, paid as PaymentLean, this.config.get<string>("STRIPE_SECRET_KEY"), paid.refundAmount || paid.amount);
+		}
+		if (holding && paid.application && !paid.refundDue) {
 			// Paid after the offer was accepted: the rent schedule was built without this credit.
 			const tenancy = await this.tenancyModel
 				.findOne({ application: paid.application }, { landlord: 1, tenants: 1, startDate: 1, endDate: 1, monthlyRent: 1, application: 1 })

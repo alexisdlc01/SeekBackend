@@ -18,6 +18,7 @@ import { ScheduleViewingDto } from "./dto/viewing.dto";
 import { ApiConflictResponse, ApiCreatedResponse, ApiOkResponse, ApiOperation } from "@nestjs/swagger";
 import { ApplicationDto } from "./dto/application.dto";
 import { RejectApplicationDto } from "./dto/offer.dto";
+import { OFFER_WINDOW_DAYS } from "./offer";
 
 @Controller("application")
 export class ApplicationController {
@@ -98,7 +99,7 @@ export class ApplicationController {
 		return await this.applicationService.approve(id);
 	}
 
-	@ApiOperation({ summary: "Make an offer. The household has 15 days to accept; the holding deposit is recorded." })
+	@ApiOperation({ summary: `Make an offer. The household has ${OFFER_WINDOW_DAYS} days to accept; the holding deposit is recorded.` })
 	@UseGuards(OwnsAppliedListingGuard)
 	@LandlordAgency()
 	@ApiCreatedResponse({ type: ApplicationDto })

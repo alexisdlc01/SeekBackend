@@ -25,7 +25,11 @@ function setup() {
 	const connectors = { disconnect: jest.fn().mockResolvedValue({}) };
 	const uploads = { deletePrivateObject: jest.fn().mockResolvedValue(undefined), deletePublicObject: jest.fn().mockResolvedValue(undefined) };
 	const listingModel = { updateMany: jest.fn().mockResolvedValue({}) };
-	const contracts = { settleForDeletedTenant: jest.fn().mockResolvedValue(undefined) };
+	const messageModel = { distinct: jest.fn().mockResolvedValue([]) };
+	const contracts = {
+		referencedDocumentKeys: jest.fn().mockResolvedValue([]),
+		settleForDeletedTenant: jest.fn().mockResolvedValue(undefined)
+	};
 	const applications = { releaseDeletedMember: jest.fn().mockResolvedValue(undefined) };
 	const service = new AccountService(
 		userModel as any,
@@ -36,9 +40,10 @@ function setup() {
 		connectors as any,
 		uploads as any,
 		listingModel as any,
+		messageModel as any,
 		{ get: (token: { name: string }) => (token.name === "ApplicationService" ? applications : contracts) } as any
 	);
-	return { service, userModel, tenancyModel, paymentModel, shareModel, connectionModel, connectors, uploads, listingModel, contracts, applications };
+	return { service, userModel, tenancyModel, paymentModel, shareModel, connectionModel, connectors, uploads, listingModel, messageModel, contracts, applications };
 }
 
 describe("AccountService team", () => {
@@ -210,7 +215,46 @@ describe("AccountService deleteAccount", () => {
 		expect(uploads.deletePrivateObject).toHaveBeenCalledWith(passport);
 		const update = userModel.updateOne.mock.calls[0][1];
 		expect(update.$set).toMatchObject({ name: "Deleted user", documents: [], referenceRequests: [] });
-		expect(update.$unset).toMatchObject({ dateOfBirth: 1, profilePicUrl: 1, universityDetails: 1, university: 1 });
+		expect(update.$unset).toMatchObject({
+			dateOfBirth: 1, profilePicUrl: 1, universityDetails: 1, university: 1,
+			companyName: 1, registrations: 1, notificationPrefs: 1, rentReminderSchedule: 1,
+			connectorSettings: 1, payoutBank: 1
+		});
+	});
+
+	it("deletes unfiled imported email attachments but keeps one referenced by a tenancy", async () => {
+		const { service, messageModel, tenancyModel, uploads } = setup();
+		const id = new Types.ObjectId();
+		const unfiled = `private/${id}/mail.pdf`;
+		const filed = `private/${id}/agreement.pdf`;
+		messageModel.distinct.mockResolvedValueOnce([unfiled, filed, null]).mockResolvedValueOnce([]);
+		tenancyModel.distinct.mockResolvedValue([filed]);
+
+		await service.deleteAccount(id);
+
+		expect(messageModel.distinct).toHaveBeenCalledWith("attachments.key", { user: id, "attachments.key": { $type: "string" } });
+		expect(uploads.deletePrivateObject).toHaveBeenCalledTimes(1);
+		expect(uploads.deletePrivateObject).toHaveBeenCalledWith(unfiled);
+	});
+
+	it("keeps private objects still referenced by a contract or another email message", async () => {
+		const { service, userModel, messageModel, contracts, uploads } = setup();
+		const id = new Types.ObjectId();
+		const contractKey = `private/${id}/contract.pdf`;
+		const sharedEmailKey = `private/${id}/shared.pdf`;
+		const orphanKey = `private/${id}/orphan.pdf`;
+		userModel.findById.mockReturnValue(selectLean({
+			documents: [{ key: contractKey }, { key: sharedEmailKey }, { key: orphanKey }]
+		}));
+		contracts.referencedDocumentKeys.mockResolvedValue([contractKey]);
+		messageModel.distinct
+			.mockResolvedValueOnce([])
+			.mockResolvedValueOnce([sharedEmailKey]);
+
+		await service.deleteAccount(id);
+
+		expect(uploads.deletePrivateObject).toHaveBeenCalledTimes(1);
+		expect(uploads.deletePrivateObject).toHaveBeenCalledWith(orphanKey);
 	});
 
 	it("erases the uploaded avatar from S3 but not a foreign avatar URL", async () => {

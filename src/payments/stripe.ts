@@ -207,9 +207,18 @@ export class StripeClient {
 		return this.request("POST", "/transfers", params, idempotencyKey);
 	}
 
+	/** Pulls back money previously transferred from Seek to a connected account. */
+	createTransferReversal(transferId: string, params: Record<string, unknown>, idempotencyKey: string): Promise<{ id: string }> {
+		return this.request("POST", `/transfers/${encodeURIComponent(transferId)}/reversals`, params, idempotencyKey);
+	}
+
 	/** Refunds a whole PaymentIntent. */
 	createRefund(params: Record<string, unknown>, idempotencyKey: string): Promise<{ id: string; status: string }> {
 		return this.request("POST", "/refunds", params, idempotencyKey);
+	}
+
+	retrieveRefund(id: string): Promise<{ id: string; status: string }> {
+		return this.request("GET", `/refunds/${encodeURIComponent(id)}`);
 	}
 
 	createCustomer(params: Record<string, unknown>, idempotencyKey: string): Promise<{ id: string }> {

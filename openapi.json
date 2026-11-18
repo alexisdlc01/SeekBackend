@@ -2442,6 +2442,65 @@
         ]
       }
     },
+    "/tenancies/{id}/end": {
+      "patch": {
+        "operationId": "TenanciesController_end",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EndTenancyDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenancy"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "End a tenancy early, remove future unpaid rent and refund unused paid rent.",
+        "tags": [
+          "Tenancies"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
     "/notifications": {
       "get": {
         "operationId": "NotificationsController_list",
@@ -5040,7 +5099,7 @@
             "description": "Not the next qualified household in this listing's first-come queue."
           }
         },
-        "summary": "Make an offer. The household has 15 days to accept; the holding deposit is recorded.",
+        "summary": "Make an offer. The household has 30 days to accept; the holding deposit is recorded.",
         "tags": [
           "Application"
         ],
@@ -9836,6 +9895,19 @@
           "url"
         ]
       },
+      "EndTenancyDto": {
+        "type": "object",
+        "properties": {
+          "endDate": {
+            "type": "string",
+            "format": "date",
+            "description": "The first London calendar day no longer covered by the tenancy."
+          }
+        },
+        "required": [
+          "endDate"
+        ]
+      },
       "Notification": {
         "type": "object",
         "properties": {
@@ -11397,7 +11469,8 @@
               "OFFERED",
               "ACCEPTED",
               "SIGNED",
-              "REJECTED"
+              "REJECTED",
+              "WITHDRAWN"
             ]
           },
           "sentAt": {
@@ -11419,7 +11492,7 @@
             "type": "string",
             "format": "date-time",
             "nullable": true,
-            "description": "Deadline for the household to accept the offer (15 days after it was made)."
+            "description": "Deadline for the household to accept the offer."
           },
           "offerExpiredAt": {
             "type": "string",
@@ -12145,7 +12218,8 @@
               "PENDING",
               "PAID",
               "FAILED",
-              "LATE"
+              "LATE",
+              "CANCELLED"
             ]
           },
           "dueDate": {
@@ -12195,6 +12269,26 @@
           "refundDue": {
             "type": "boolean",
             "description": "A paid holding deposit the landlord must refund within 7 days (Tenant Fees Act), e.g. after declining the household."
+          },
+          "refundAmount": {
+            "type": "number",
+            "description": "Amount due back to the payer, in pence.",
+            "default": 0
+          },
+          "refundedAmount": {
+            "type": "number",
+            "description": "Amount actually refunded, in pence.",
+            "default": 0
+          },
+          "refundedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "refundRef": {
+            "type": "object",
+            "nullable": true,
+            "description": "Stripe refund id, or the simulated refund reference."
           }
         },
         "required": [
@@ -12211,7 +12305,10 @@
           "provider",
           "remindersSent",
           "lastReminderAt",
-          "refundDue"
+          "refundDue",
+          "refundAmount",
+          "refundedAmount",
+          "refundedAt"
         ]
       },
       "RentPlanViewDto": {
@@ -12312,7 +12409,8 @@
               "PENDING",
               "PAID",
               "FAILED",
-              "LATE"
+              "LATE",
+              "CANCELLED"
             ]
           }
         },
@@ -12386,7 +12484,8 @@
               "PENDING",
               "PAID",
               "FAILED",
-              "LATE"
+              "LATE",
+              "CANCELLED"
             ]
           },
           "dueDate": {
@@ -12742,7 +12841,8 @@
               "PENDING",
               "PAID",
               "FAILED",
-              "LATE"
+              "LATE",
+              "CANCELLED"
             ]
           }
         },
@@ -12766,7 +12866,8 @@
               "PENDING",
               "PAID",
               "FAILED",
-              "LATE"
+              "LATE",
+              "CANCELLED"
             ]
           },
           "provider": {

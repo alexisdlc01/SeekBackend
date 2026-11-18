@@ -1,7 +1,9 @@
 import { BadRequestException, ConflictException, ExecutionContext, ForbiddenException } from "@nestjs/common";
+import { plainToInstance } from "class-transformer";
+import { validate } from "class-validator";
 import { Reflector } from "@nestjs/core";
 import { Types } from "mongoose";
-import { depositReceivedDate, TenanciesService } from "./tenancies.service";
+import { depositReceivedDate, earlyEndRefundAmount, TenanciesService } from "./tenancies.service";
 import { InventoryStage, TenancyDocumentType, TenancyStatus } from "./tenancy.enums";
 import { ApplicationStage } from "../application/enums/application-stage.enum";
 import { Role } from "../auth/role.enum";
@@ -12,6 +14,8 @@ import { TeamScope } from "../users/types/team-scope";
 import { RoleGuard } from "../auth/guards/role.guard";
 import { AccessControlService } from "../shared/access-control.service";
 import { isOfficialInventory } from "./tenancy.schema";
+import { EndTenancyDto } from "./dto/end-tenancy.dto";
+import { PaymentStatus } from "../payments/payment.enums";
 
 const lean = <T>(value: T) => ({ lean: () => ({ exec: () => Promise.resolve(value) }) });
 
@@ -40,6 +44,13 @@ describe("TenanciesService create / accept", () => {
 		const contractModel = { exists: jest.fn().mockResolvedValue(null) };
 		const rentSchedule = { ensureDefaultPlans: jest.fn() };
 		const notifications = { notify: jest.fn(), notifyMany: jest.fn() };
+		const paymentModel = {
+			deleteMany: jest.fn().mockResolvedValue({}),
+			find: jest.fn().mockReturnValue(lean([])),
+			findOneAndUpdate: jest.fn().mockReturnValue(lean(null)),
+			updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
+			updateMany: jest.fn().mockResolvedValue({ modifiedCount: 1 })
+		};
 		const service = new TenanciesService(
 			tenancyModel as any,
 			listingModel as any,
@@ -47,10 +58,11 @@ describe("TenanciesService create / accept", () => {
 			applicationModel as any,
 			contractModel as any,
 			rentSchedule as any,
-			notifications as any
+			notifications as any,
+			paymentModel as any
 		);
 		jest.spyOn(service, "getDetail").mockResolvedValue({} as any);
-		return { service, tenancyModel, listingModel, applicationModel, contractModel, rentSchedule, notifications, created };
+		return { service, tenancyModel, listingModel, applicationModel, contractModel, rentSchedule, notifications, paymentModel, created };
 	}
 
 	const base = { listing: listingId.toString(), startDate: "2026-12-01", monthlyRent: 69500 };
@@ -329,6 +341,169 @@ describe("TenanciesService create / accept", () => {
 		});
 	});
 
+	describe("early tenancy end refunds", () => {
+		const tenancyId = new Types.ObjectId();
+		const paid = (amount: number, dueDate: string, coversMonths = 1) => ({
+			_id: new Types.ObjectId(), tenancy: tenancyId, amount, dueDate: new Date(dueDate), coversMonths,
+			kind: "RENT", status: "PAID", provider: "simulated", providerRef: "sim_paid",
+			refundedAt: null, refundedAmount: 0
+		});
+		async function ending(payment: ReturnType<typeof paid>, endDate: string) {
+			const ctx = setup();
+			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE
+			} as any);
+			ctx.paymentModel.find.mockImplementation((filter: any) => lean(filter.status?.$nin ? [] : [payment]));
+			ctx.paymentModel.findOneAndUpdate.mockImplementation((_filter: any, update: any) => lean({ ...payment, ...update.$set }));
+			await ctx.service.endTenancy(tenancyId.toString(), new Date(endDate), landlord);
+			return ctx;
+		}
+
+		it("refunds the unused days when the tenancy ends mid-month", async () => {
+			const payment = paid(62000, "2027-01-01");
+			const { tenancyModel, paymentModel } = await ending(payment, "2027-01-16");
+			expect(earlyEndRefundAmount(payment.amount, payment.dueDate, 1, new Date("2027-01-16"))).toBe(32000);
+			expect(tenancyModel.updateOne).toHaveBeenCalledWith(
+				{ _id: tenancyId, status: TenancyStatus.ACTIVE },
+				{ $set: { endDate: new Date("2027-01-16T00:00:00.000Z"), status: TenancyStatus.ENDED } }
+			);
+			expect(paymentModel.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ dueDate: { $gte: new Date("2027-01-16T00:00:00.000Z") } }));
+			expect(paymentModel.updateOne).toHaveBeenLastCalledWith(
+				{ _id: payment._id, refundedAt: null },
+				expect.objectContaining({ $set: expect.objectContaining({ refundedAmount: 32000, refundDue: false }) })
+			);
+		});
+
+		it("refunds zero when the tenancy ends on the paid period boundary", async () => {
+			const payment = paid(62000, "2027-01-01");
+			const { paymentModel } = await ending(payment, "2027-02-01");
+			expect(earlyEndRefundAmount(payment.amount, payment.dueDate, 1, new Date("2027-02-01"))).toBe(0);
+			expect(paymentModel.updateOne).not.toHaveBeenCalled();
+		});
+
+		it("refunds full unused months plus the current month's unused days on an upfront plan", async () => {
+			const payment = paid(300000, "2027-01-01", 3);
+			const { paymentModel } = await ending(payment, "2027-02-15");
+			expect(earlyEndRefundAmount(payment.amount, payment.dueDate, 3, new Date("2027-02-15"))).toBe(150000);
+			expect(paymentModel.updateOne).toHaveBeenLastCalledWith(
+				{ _id: payment._id, refundedAt: null },
+				expect.objectContaining({ $set: expect.objectContaining({ refundedAmount: 150000 }) })
+			);
+		});
+
+		it("atomically leaves an already claimed payment alone even when another date calculates a different refund", async () => {
+			const payment = paid(62000, "2027-01-01");
+			const ctx = setup();
+			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE
+			} as any);
+			ctx.paymentModel.find.mockImplementation((filter: any) => lean(filter.status?.$nin ? [] : [payment]));
+			ctx.paymentModel.findOneAndUpdate.mockReturnValue(lean(null));
+
+			await ctx.service.endTenancy(tenancyId.toString(), new Date("2027-01-20"), landlord);
+
+			expect(ctx.paymentModel.findOneAndUpdate.mock.calls[0][0]).toMatchObject({
+				_id: payment._id, refundDue: { $ne: true }, autoRefund: { $ne: true }, refundAmount: { $in: [0, null] }
+			});
+			expect(ctx.paymentModel.updateOne).not.toHaveBeenCalled();
+		});
+
+		it("keeps a pending checkout row and flags its future rent for refund after settlement", async () => {
+			const payment = { ...paid(62000, "2027-02-01"), status: "PENDING", provider: "stripe", providerRef: "cs_open" };
+			const ctx = setup();
+			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE
+			} as any);
+			ctx.paymentModel.find.mockImplementation((filter: any) => lean(filter.status?.$nin || filter.status?.$in ? [] : [payment]));
+			ctx.paymentModel.findOneAndUpdate.mockImplementation((_filter: any, update: any) => lean({ ...payment, ...update.$set }));
+
+			await ctx.service.endTenancy(tenancyId.toString(), new Date("2027-01-16"), landlord);
+
+			expect(ctx.paymentModel.updateMany).toHaveBeenCalledWith(
+				expect.objectContaining({ status: PaymentStatus.PENDING, dueDate: { $gte: new Date("2027-01-16T00:00:00.000Z") } }),
+				[{ $set: { status: PaymentStatus.CANCELLED, refundDue: true, autoRefund: true, refundAmount: "$amount" } }]
+			);
+			expect(ctx.paymentModel.deleteMany.mock.calls[0][0].status).toEqual({ $nin: ["PAID", "PENDING", "CANCELLED"] });
+			expect(ctx.paymentModel.findOneAndUpdate).not.toHaveBeenCalled();
+		});
+
+		it("stops before payment changes when another request already ended the tenancy", async () => {
+			const ctx = setup();
+			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE
+			} as any);
+			ctx.tenancyModel.updateOne.mockResolvedValue({ modifiedCount: 0 });
+
+			await expect(ctx.service.endTenancy(tenancyId.toString(), new Date("2027-01-16"), landlord))
+				.rejects.toBeInstanceOf(ConflictException);
+
+			expect(ctx.tenancyModel.updateOne).toHaveBeenCalledWith(
+				{ _id: tenancyId, status: TenancyStatus.ACTIVE },
+				expect.anything()
+			);
+			expect(ctx.paymentModel.deleteMany).not.toHaveBeenCalled();
+			expect(ctx.paymentModel.find).not.toHaveBeenCalled();
+		});
+
+		it("reduces an unpaid period spanning the end date to the days actually used", async () => {
+			const payment = { ...paid(62000, "2027-01-01"), status: "SCHEDULED", seekFee: 620, payout: 61380 };
+			const ctx = setup();
+			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE
+			} as any);
+			ctx.paymentModel.find.mockImplementation((filter: any) => lean(filter.status?.$nin ? [payment] : []));
+
+			await ctx.service.endTenancy(tenancyId.toString(), new Date("2027-01-16"), landlord);
+
+			expect(ctx.paymentModel.updateOne).toHaveBeenCalledWith(
+				{ _id: payment._id, status: { $nin: ["PAID", "PENDING"] }, amount: 62000 },
+				{ $set: { amount: 30000, seekFee: 300, payout: 29700 } }
+			);
+		});
+
+		it("uses the tenancy anchor for a short-month due date", () => {
+			expect(earlyEndRefundAmount(
+				31000,
+				new Date("2027-02-28"),
+				1,
+				new Date("2027-03-15"),
+				new Date("2027-01-31")
+			)).toBe(16000);
+		});
+
+		it("rejects invalid tenancy states and dates while preserving the ownership 403", async () => {
+			const ctx = setup();
+			const active = { _id: tenancyId, landlord: landlordId, startDate: new Date("2030-01-01"), endDate: new Date("2030-12-01"), status: TenancyStatus.ACTIVE };
+			const find = jest.spyOn(ctx.service, "findForLandlord");
+			find.mockResolvedValueOnce({ ...active, status: TenancyStatus.ENDED } as any);
+			await expect(ctx.service.endTenancy(tenancyId.toString(), new Date("2030-06-01"), landlord)).rejects.toBeInstanceOf(ConflictException);
+
+			for (const [tenancy, date] of [
+				[active, "2029-12-31"],
+				[active, "2031-01-01"],
+				[{ ...active, startDate: new Date("2020-01-01"), endDate: null }, "2020-02-01"]
+			] as const) {
+				find.mockResolvedValueOnce(tenancy as any);
+				await expect(ctx.service.endTenancy(tenancyId.toString(), new Date(date), landlord)).rejects.toBeInstanceOf(BadRequestException);
+			}
+
+			find.mockRestore();
+			ctx.tenancyModel.findById.mockReturnValue(lean({ ...active, landlord: new Types.ObjectId() }));
+			await expect(ctx.service.endTenancy(tenancyId.toString(), new Date("2030-06-01"), landlord)).rejects.toBeInstanceOf(ForbiddenException);
+		});
+
+		it("keeps the route landlord-only", () => {
+			const handler = TenanciesController.prototype.end;
+			expect(Reflect.getMetadata(ROLE_KEY, handler)).toEqual([Role.LANDLORD_AGENCY]);
+			expect(Reflect.getMetadata(TEAM_SCOPES_KEY, handler)).toEqual([TeamScope.TENANCIES]);
+		});
+	});
+
+	it("accepts only a YYYY-MM-DD end date", async () => {
+		expect(await validate(plainToInstance(EndTenancyDto, { endDate: "2027-03-15" }))).toHaveLength(0);
+		expect(await validate(plainToInstance(EndTenancyDto, { endDate: "2027-03-15T00:00:00Z" }))).not.toHaveLength(0);
+	});
+
 	it("files a housemate's agreement or certificate as OTHER, but keeps the landlord's type", async () => {
 		const { service, tenancyModel } = setup();
 		const student = { _id: new Types.ObjectId(), role: Role.STUDENT } as any;
@@ -417,7 +592,7 @@ describe("TenanciesService populated tenants", () => {
 		const query: any = { populate, sort: () => query, lean: () => ({ exec: () => Promise.resolve([]) }) };
 		populate.mockReturnValue(query);
 		const tenancyModel = { find: jest.fn().mockReturnValue(query) };
-		const service = new TenanciesService(tenancyModel as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+		const service = new TenanciesService(tenancyModel as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
 
 		await service.listForLandlord(new Types.ObjectId().toString());
 
