@@ -189,6 +189,18 @@ export class MailService {
 		});
 	}
 
+	/** A rent or holding-deposit receipt also reaches the tenant's inbox. */
+	async sendPaymentReceiptEmail(email: string, name: string, title: string, body: string, path: string) {
+		const link = `${this.configService.getOrThrow<string>("FRONTEND_URL").split(",")[0].trim().replace(/\/$/, "")}${path}`;
+		await this.send({
+			from: `Seek <noreply@${this.domain}>`,
+			to: [email],
+			subject: title,
+			text: `Hi ${name}, ${body} View your payments: ${link}`,
+			html: `<p>Hi ${escapeHtml(name)},</p><p>${escapeHtml(body)}</p><p><a href="${escapeHtml(link)}">View payments on Seek</a></p>`
+		});
+	}
+
 	/** The landlord's opt-in weekly digest; the caller skips it when `lines` would be empty. */
 	async sendWeeklySummaryEmail(email: string, name: string, lines: string[]) {
 		await this.send({

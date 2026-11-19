@@ -1620,13 +1620,14 @@ export class PaymentsService {
 				.findOne({ tenancy: paid.tenancy, tenant: paid.tenant }, { notifyEveryPayment: 1 })
 				.lean()
 				.exec();
-		const tenant = await this.userModel.findById(paid.tenant, { name: 1 }).lean().exec();
+		const tenant = await this.userModel.findById(paid.tenant, { name: 1, email: 1 }).lean().exec();
 		if (plan?.notifyEveryPayment !== false) {
-			await this.notifications.notify(
+			const receiptTitle = `Receipt: ${formatPence(paid.amount)} ${holding ? "holding deposit" : "rent"} paid`;
+			const stored = await this.notifications.notify(
 				{
 					user: paid.tenant,
 					kind: NotificationKind.RENT_RECEIPT,
-					title: `Receipt: ${formatPence(paid.amount)} ${holding ? "holding deposit" : "rent"} paid`,
+					title: receiptTitle,
 					body: holding
 						? "Your holding deposit is paid. Your landlord has been notified."
 						: `Rent due ${formatDay(paid.dueDate)} is paid. Your landlord has been notified.`,
@@ -1635,6 +1636,16 @@ export class PaymentsService {
 				},
 				"receiptEveryPayment"
 			);
+			// notify() is false when the pref (or the plan) skipped the receipt: no email then either.
+			if (stored && this.mail && tenant?.email) {
+				const emailBody = holding
+					? `Your payment of ${formatPence(paid.amount)} for your holding deposit went through and was sent to your landlord.`
+					: `Your payment of ${formatPence(paid.amount)} for your rent due ${formatDay(paid.dueDate)} went through and was sent to your landlord.`;
+				const { link } = notificationTarget("student", NotificationTargetKind.PAYMENTS);
+				await this.mail.sendPaymentReceiptEmail(tenant.email, tenant.name ?? "there", receiptTitle, emailBody, link).catch(error =>
+					this.logger.warn(`Payment receipt email to ${paid.tenant.toString()} failed: ${(error as Error).message}`)
+				);
+			}
 		}
 		await this.notifications.notify(
 			{
