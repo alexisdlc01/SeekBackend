@@ -1,4 +1,4 @@
-import { TeamAccess } from "../auth/decorators/team-access.decorator";
+import { ANY_TEAM_SCOPE, TeamAccess } from "../auth/decorators/team-access.decorator";
 import { TeamScope } from "../users/types/team-scope";
 import {
 	Body,
@@ -162,7 +162,8 @@ export class ListingsController {
 		return await this.listingsService.deleteListing(listingId, user);
 	}
 
-	@TeamAccess(TeamScope.LISTINGS)
+	// Read-only: every team member needs the property list (Applicants page); writes stay LISTINGS.
+	@TeamAccess(...ANY_TEAM_SCOPE)
 	@Get("/mine")
 	@LandlordAgency()
 	@ApiMyListingsDocs()
@@ -170,7 +171,7 @@ export class ListingsController {
 		return await this.listingsService.findByLandlord(user._id.toString());
 	}
 
-	@TeamAccess(TeamScope.LISTINGS)
+	@TeamAccess(...ANY_TEAM_SCOPE)
 	@Get("/mine/:id")
 	@OwnsListing()
 	@ApiGetListingDocs()

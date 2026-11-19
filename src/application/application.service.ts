@@ -464,6 +464,7 @@ export class ApplicationService {
 		if (!application) {
 			throw new BadRequestException("Only open applications can be accepted.");
 		}
+		await this.refreshShares(application);
 		const tenancy = await this.createOrReopen(application, current.stage as ApplicationStage);
 		// Only once the tenancy exists (a 409 reopens the offer, whose deposits must stay payable); also on an ACCEPTED retry, in case it failed here.
 		if (current.stage === ApplicationStage.OFFERED || current.stage === ApplicationStage.ACCEPTED) await this.dropUnpaidHoldingDeposits(application._id);
@@ -509,6 +510,7 @@ export class ApplicationService {
 		if (!application) {
 			throw new BadRequestException("This application changed while you were making the offer. Try again.");
 		}
+		await this.refreshShares(application);
 		await this.createHoldingDeposits(application, holdingDeposit);
 		await this.notificationsService.notifyMany(
 			application.applicants.map(applicant => ({
@@ -521,6 +523,16 @@ export class ApplicationService {
 			}))
 		);
 		return this.toDto(application);
+	}
+
+	/** The landlord checks documents before offering or accepting: a fresh 14 days, never reviving a share a student revoked. */
+	private async refreshShares(application: HydratedDocument<Application>) {
+		await this.sharesService.shareForApplication({
+			ownerIds: application.applicants,
+			viewer: application.landlord,
+			listing: application.listing,
+			application: application._id,
+		});
 	}
 
 	/**

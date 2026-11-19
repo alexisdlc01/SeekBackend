@@ -1,3 +1,5 @@
+import { ANY_TEAM_SCOPE, TEAM_SCOPES_KEY } from "../auth/decorators/team-access.decorator";
+import { TeamScope } from "../users/types/team-scope";
 import { ListingsController } from "./listings.controller";
 import { ListingsService } from "./listings.service";
 
@@ -46,5 +48,18 @@ describe("ListingsController", () => {
 
 		await expect(controller.verifyListing("l1")).resolves.toMatchObject({ isVerified: false });
 		expect(moderation.moderate).toHaveBeenCalledWith("l1");
+	});
+});
+
+describe("ListingsController team scopes", () => {
+	const scopes = (name: keyof ListingsController) => Reflect.getMetadata(TEAM_SCOPES_KEY, ListingsController.prototype[name]);
+
+	it("lets any team member read the property list, so the Applicants page is not empty", () => {
+		expect(scopes("myListings")).toEqual(ANY_TEAM_SCOPE);
+		expect(scopes("getListing")).toEqual(ANY_TEAM_SCOPE);
+	});
+
+	it("keeps deleting a listing to the LISTINGS scope", () => {
+		expect(scopes("deleteListing")).toEqual([TeamScope.LISTINGS]);
 	});
 });

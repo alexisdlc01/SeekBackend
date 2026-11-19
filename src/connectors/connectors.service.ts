@@ -53,6 +53,7 @@ type ClientKind = "web" | "mobile";
 type ConnectionLean = EmailConnection & { _id: Types.ObjectId };
 type UserLean = Pick<User, "_id" | "name" | "email" | "role" | "universityDetails"> & {
 	connectorSettings?: User["connectorSettings"];
+	referenceRequests?: User["referenceRequests"];
 };
 const SETTING_KEYS = ["autoFileAttachments", "addReferencesToProfile", "readUtilityBills", "copySignedContracts", "aiDraftReplies"] as const;
 type SettingKey = (typeof SETTING_KEYS)[number];
@@ -689,7 +690,7 @@ export class ConnectorsService {
 	async syncConnection(connection: ConnectionLean): Promise<SyncResult> {
 		const user = await this.userModel
 			.findById(connection.user)
-			.select("name email role universityDetails connectorSettings")
+			.select("name email role universityDetails connectorSettings referenceRequests")
 			.lean()
 			.exec();
 		if (!user) throw new NotFoundException("User not found.");
@@ -1079,7 +1080,11 @@ export class ConnectorsService {
 				user.role !== Role.LANDLORD_AGENCY &&
 				!found && !!target && toggles.readUtilityBills && classification.category === EmailCategory.BILLS && looksLikeBill(attachment.name, mail.subject);
 			// Sender must match a Seek landlord's address (From is not authenticated here, so a spoofed From could pass); housemates and *.ac.uk senders are excluded.
-			const reference = !found && toggles.addReferencesToProfile && user.role !== Role.LANDLORD_AGENCY && classification.contact?.role === "LANDLORD" ? referenceTypeFor(attachment.name, mail.subject) : null;
+			const reference = !found && toggles.addReferencesToProfile && user.role !== Role.LANDLORD_AGENCY
+				? classification.contact?.role === "LANDLORD"
+					? referenceTypeFor(attachment.name, mail.subject)
+					: this.askedReferenceType(connection, user, mail, attachment.mimeType)
+				: null;
 			if (!type && !isBill && !reference) continue;
 			const file = await this.storeFile(connection, user, attachment);
 			if (!file) continue;
@@ -1294,6 +1299,13 @@ export class ConnectorsService {
 		const filed = { ...attachment, url: file.url, key: file.key, filedAs: `${home} › ${folderFor(type)}` };
 		await this.messageModel.updateOne({ _id: email._id }, { $set: { [`attachments.${index}`]: filed } });
 		return filed;
+	}
+
+	/** A referee the student asked through Seek replied with the PDF: only from that exact, SPF/DKIM-authenticated address. */
+	private askedReferenceType(connection: ConnectionLean, user: UserLean, mail: MailFull, mimeType: string): DocumentType | null {
+		if (mimeType !== "application/pdf" || !this.senderAuthenticated(connection, mail)) return null;
+		const from = mail.from.trim().toLowerCase();
+		return user.referenceRequests?.find(request => request.email === from)?.type ?? null;
 	}
 
 	/** Adds a reference to the student's documents, waiting for Seek to verify it; never replaces one they already have. */

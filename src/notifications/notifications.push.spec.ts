@@ -3,6 +3,7 @@ import { Types } from "mongoose";
 import { NotificationsService } from "./notifications.service";
 import { NotificationKind } from "./notification-kind.enum";
 import { PushTokenDto } from "./dto/push-token.dto";
+import { NotificationTargetKind, notificationTarget } from "./links";
 
 const userId = new Types.ObjectId();
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -75,6 +76,12 @@ describe("push notifications", () => {
 				sound: "default"
 			}
 		]);
+	});
+
+	it("opens the notified tenancy's deposit page from a deposit push", async () => {
+		await service.notify({ ...input, ...notificationTarget("student", NotificationTargetKind.COMPLIANCE, "t/1") });
+		await flush();
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body)[0].data.path).toBe("/(app)/deposit?tenancy=t%2F1");
 	});
 
 	it("sends no push when the preference is off", async () => {
