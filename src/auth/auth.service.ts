@@ -629,7 +629,8 @@ export class AuthService {
 			{
 				$set: {
 					password: await hash(body.newPassword, this.bcryptRounds()),
-					refreshSessions: []
+					refreshSessions: [],
+					pushTokens: []
 				}
 			}
 		);
@@ -675,7 +676,7 @@ export class AuthService {
 				{ _id: savedUser._id },
 				unproven
 					? {
-						$set: { isGoogle: true, isVerified: true, refreshSessions: [], team: [] },
+						$set: { isGoogle: true, isVerified: true, refreshSessions: [], pushTokens: [], team: [] },
 						$unset: { password: 1 }
 					}
 					: { $set: { isGoogle: true, isVerified: true } }

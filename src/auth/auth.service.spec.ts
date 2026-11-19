@@ -508,7 +508,7 @@ describe("AuthService", () => {
 		expect(usersService.updateUser).toHaveBeenCalledWith(
 			{ _id: user._id },
 			expect.objectContaining({
-				$set: expect.objectContaining({ refreshSessions: [] })
+				$set: expect.objectContaining({ refreshSessions: [], pushTokens: [] })
 			})
 		);
 	});
@@ -669,7 +669,7 @@ describe("AuthService", () => {
 			expect(usersService.updateUser).toHaveBeenCalledWith(
 				{ _id: squatted._id },
 				{
-					$set: { isGoogle: true, isVerified: true, refreshSessions: [], team: [] },
+					$set: { isGoogle: true, isVerified: true, refreshSessions: [], pushTokens: [], team: [] },
 					$unset: { password: 1 }
 				}
 			);
