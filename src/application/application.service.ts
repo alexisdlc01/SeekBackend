@@ -382,7 +382,8 @@ export class ApplicationService {
 		}
 
 		const listing = await this.listingService.findListingById(application.listing.toString());
-		const slots = (listing.viewingSlots ?? []).map(slot => new Date(slot).getTime());
+		// Lapsed slots stay stored until the landlord next saves the listing; only future ones bind the student.
+		const slots = (listing.viewingSlots ?? []).map(slot => new Date(slot).getTime()).filter(t => t > Date.now());
 		// Students choose from the times the landlord offered; the landlord may
 		// still move a viewing to any time that suits both sides.
 		if (!isLandlord && slots.length > 0 && !slots.includes(when.getTime())) {

@@ -1354,6 +1354,17 @@ describe("ApplicationService pipeline", () => {
 		).resolves.toBeDefined();
 	});
 
+	it("lets a student propose any time once every offered slot has passed", async () => {
+		const student = { _id: studentId, name: "Student" } as User;
+		listingService.findListingById.mockResolvedValueOnce({
+			_id: listingId, landlord: landlordId, viewingSlots: [new Date(Date.now() - 24 * 60 * 60 * 1000)],
+		});
+		applicationModel.findById.mockReturnValue(exec(stored(ApplicationStage.SENT)));
+		await expect(
+			service.scheduleViewing(applicationId.toString(), otherSlot.toISOString(), student),
+		).resolves.toBeDefined();
+	});
+
 	it("moves a sent application to VIEWED once a slot is picked, and refuses a slot another household holds", async () => {
 		const student = { _id: studentId, name: "Student" } as User;
 		const record = stored(ApplicationStage.SENT);

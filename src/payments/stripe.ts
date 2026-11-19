@@ -100,6 +100,7 @@ export interface StripeCheckoutSession {
 	metadata?: Record<string, string>;
 	success_url?: string | null;
 	cancel_url?: string | null;
+	customer_creation?: string | null;
 	/** Expanded on retrieve: the PaymentIntent and its saved payment method. */
 	payment_intent?: string | (StripePaymentIntent & { payment_method?: string | null }) | null;
 }
