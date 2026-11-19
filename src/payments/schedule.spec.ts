@@ -32,7 +32,7 @@ describe("rent schedule", () => {
 	});
 
 	it("allows longer plans in Scotland only", () => {
-		expect(allowedFrequencies(Nation.SCOTLAND)).toHaveLength(3);
+		expect(allowedFrequencies(Nation.SCOTLAND)).toEqual([PlanFrequency.MONTHLY, PlanFrequency.SIX_MONTHS]);
 		expect(allowedFrequencies(Nation.WALES)).toEqual([PlanFrequency.MONTHLY]);
 		expect(allowedFrequencies(Nation.NORTHERN_IRELAND)).toEqual([PlanFrequency.MONTHLY]);
 		expect(restrictionReason(Nation.SCOTLAND)).toBeNull();
@@ -51,10 +51,10 @@ describe("rent schedule", () => {
 	it("offers only the plans the landlord chose, within the nation's law", () => {
 		expect(allowedFrequencies(Nation.SCOTLAND, [PlanFrequency.MONTHLY])).toEqual([PlanFrequency.MONTHLY]);
 		expect(allowedFrequencies(Nation.SCOTLAND, null)).toEqual([PlanFrequency.MONTHLY]);
-		expect(allowedFrequencies(Nation.SCOTLAND, [PlanFrequency.YEARLY])).toEqual([PlanFrequency.MONTHLY, PlanFrequency.YEARLY]);
+		expect(allowedFrequencies(Nation.SCOTLAND, [PlanFrequency.YEARLY])).toEqual([PlanFrequency.MONTHLY]);
 		expect(allowedFrequencies(Nation.WALES, [PlanFrequency.YEARLY])).toEqual([PlanFrequency.MONTHLY]);
 		expect(() => assertPlanAllowed(Nation.SCOTLAND, PlanFrequency.YEARLY, [PlanFrequency.MONTHLY])).toThrow(BadRequestException);
-		expect(() => assertPlanAllowed(Nation.SCOTLAND, PlanFrequency.YEARLY, [PlanFrequency.MONTHLY, PlanFrequency.YEARLY])).not.toThrow();
+		expect(() => assertPlanAllowed(Nation.SCOTLAND, PlanFrequency.YEARLY, [PlanFrequency.MONTHLY, PlanFrequency.YEARLY])).toThrow(BadRequestException);
 	});
 
 	it("clamps month ends", () => {

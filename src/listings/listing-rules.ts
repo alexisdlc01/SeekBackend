@@ -32,7 +32,8 @@ export function resolvePaymentPlans(
 	nation: Nation | string | undefined,
 	requested: PlanFrequency[] | undefined
 ): PlanFrequency[] {
-	const plans = [...new Set(requested ?? [])];
+	// An old listing may still carry YEARLY: drop it silently so editing is never blocked.
+	const plans = [...new Set(requested ?? [])].filter(plan => plan !== PlanFrequency.YEARLY);
 	if (!plans.length) return [PlanFrequency.MONTHLY];
 	for (const plan of plans) assertPlanAllowed(nation, plan);
 	return plans;

@@ -38,7 +38,8 @@ export const NO_RENT_IN_ADVANCE_MESSAGE = "Paying ahead isn't available for home
  */
 export function allowedFrequencies(nation: Nation | string | undefined, offered?: (PlanFrequency | string)[] | null): PlanFrequency[] {
 	if (nation !== Nation.SCOTLAND) return [PlanFrequency.MONTHLY];
-	return Object.values(PlanFrequency).filter(frequency =>
+	// shortcut: blocked until a Scottish solicitor confirms s.89 Rent (Scotland) Act 1984 allows it
+	return Object.values(PlanFrequency).filter(frequency => frequency !== PlanFrequency.YEARLY).filter(frequency =>
 		frequency === PlanFrequency.MONTHLY || offered === undefined || (offered ?? []).includes(frequency)
 	);
 }
@@ -53,6 +54,9 @@ export function assertPlanAllowed(
 	frequency: PlanFrequency,
 	offered?: (PlanFrequency | string)[] | null
 ): void {
+	if (frequency === PlanFrequency.YEARLY) {
+		throw new BadRequestException("The yearly rent plan isn't available. Choose monthly or every six months.");
+	}
 	if (frequency !== PlanFrequency.MONTHLY && nation !== Nation.SCOTLAND) {
 		throw new BadRequestException(restrictionReason(nation));
 	}
