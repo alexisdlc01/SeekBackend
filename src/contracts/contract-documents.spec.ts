@@ -1,7 +1,9 @@
+import { ConflictException } from "@nestjs/common";
 import { Types } from "mongoose";
 import { documentSignature, isValidSignature, renderAgreement, renderPrescribedInformation } from "./contract-documents";
 import { ContractStatus, ContractTemplateKind, DeductionStatus } from "./contract.schema";
 import { ContractsService } from "./contracts.service";
+import { TenancyStatus } from "../tenancies/tenancy.enums";
 
 const data = {
 	kind: ContractTemplateKind.ENGLAND_ASSURED_PERIODIC,
@@ -160,7 +162,7 @@ describe("ContractsService deductions", () => {
 describe("ContractsService send", () => {
 	const lean = <T>(value: T) => ({ lean: () => ({ exec: () => Promise.resolve(value) }) });
 	const maya = new Types.ObjectId();
-	const tenancy = { _id: new Types.ObjectId(), landlord: new Types.ObjectId(), tenants: [maya] };
+	const tenancy = { _id: new Types.ObjectId(), landlord: new Types.ObjectId(), tenants: [maya], status: TenancyStatus.ACTIVE };
 	const contract = { _id: new Types.ObjectId(), tenancy: tenancy._id, status: ContractStatus.DRAFT, title: "Tenancy agreement" };
 
 	it("emails each tenant as well as notifying them, and a mail failure does not undo the send", async () => {
@@ -180,6 +182,20 @@ describe("ContractsService send", () => {
 		expect(sent!.status).toBe(ContractStatus.SENT);
 		expect(notifications.notifyMany).toHaveBeenCalled();
 		expect(mail.sendContractSentEmail).toHaveBeenCalledWith("maya@example.com", "Maya", "Tenancy agreement", "/student/home");
+	});
+
+	it("refuses (409) while invited students have not accepted, leaving the draft unsent", async () => {
+		const contractModel = { findById: () => lean(contract), findOneAndUpdate: jest.fn() };
+		const notifications = { notifyMany: jest.fn() };
+		const pending = { ...tenancy, status: TenancyStatus.PENDING_ACCEPTANCE, tenants: [], pendingTenants: [maya] };
+		const service = new ContractsService(
+			contractModel as any, {} as any, {} as any, {} as any, {} as any,
+			{ findForLandlord: jest.fn().mockResolvedValue(pending) } as any,
+			notifications as any, { get: () => "secret" } as any, {} as any, {} as any
+		);
+		await expect(service.send(contract._id.toString(), { _id: tenancy.landlord } as any)).rejects.toBeInstanceOf(ConflictException);
+		expect(contractModel.findOneAndUpdate).not.toHaveBeenCalled();
+		expect(notifications.notifyMany).not.toHaveBeenCalled();
 	});
 });
 

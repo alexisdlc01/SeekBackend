@@ -1,5 +1,6 @@
 import {
 	BadRequestException,
+	ConflictException,
 	ForbiddenException,
 	HttpException,
 	HttpStatus,
@@ -13,7 +14,7 @@ import { Model, Types } from "mongoose";
 import { Contract, ContractStatus, ContractTemplateKind, DeductionResponse, DeductionStatus } from "./contract.schema";
 import { CreateContractDto } from "./dto/create-contract.dto";
 import { TenanciesService, TenancyLean, isTenant } from "../tenancies/tenancies.service";
-import { DocumentSource, TenancyDocumentType } from "../tenancies/tenancy.enums";
+import { DocumentSource, TenancyDocumentType, TenancyStatus } from "../tenancies/tenancy.enums";
 import { NotificationsService } from "../notifications/notifications.service";
 import { NotificationKind } from "../notifications/notification-kind.enum";
 import { notificationTarget, NotificationTargetKind } from "../notifications/links";
@@ -370,6 +371,10 @@ export class ContractsService {
 		const tenancy = await this.tenancies.findForLandlord(contract.tenancy.toString(), landlord);
 		if (contract.status !== ContractStatus.DRAFT) {
 			throw new BadRequestException("Only a draft contract can be sent.");
+		}
+		// Only accepted tenants can see and sign, and they are told on send.
+		if (tenancy.status !== TenancyStatus.ACTIVE) {
+			throw new ConflictException("A contract can only be sent on an active tenancy: every invited student must accept it first.");
 		}
 		const updated = await this.contractModel
 			.findOneAndUpdate(

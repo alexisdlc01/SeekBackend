@@ -84,6 +84,8 @@ export class LandlordOverviewService {
 
 		const rent = { collected: 0, expected: 0, late: 0, lateAmount: 0, seekFee: 0 };
 		for (const payment of monthPayments) {
+			// Rent cancelled by an early tenancy end is no longer owed.
+			if (payment.status === PaymentStatus.CANCELLED) continue;
 			rent.expected += payment.amount;
 			if (payment.status === PaymentStatus.PAID) {
 				rent.collected += payment.amount;

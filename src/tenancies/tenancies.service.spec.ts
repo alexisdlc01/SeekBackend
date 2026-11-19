@@ -427,6 +427,25 @@ describe("TenanciesService create / accept", () => {
 			expect(ctx.paymentModel.findOneAndUpdate).not.toHaveBeenCalled();
 		});
 
+		it("tells each tenant once about the new end date", async () => {
+			const maya = new Types.ObjectId();
+			const tom = new Types.ObjectId();
+			const ctx = setup();
+			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE, tenants: [maya, tom]
+			} as any);
+
+			await ctx.service.endTenancy(tenancyId.toString(), new Date("2027-01-16"), landlord);
+
+			const sent = ctx.notifications.notifyMany.mock.calls[0][0];
+			expect(sent.map((n: any) => n.user)).toEqual([maya, tom]);
+			expect(sent[0]).toMatchObject({
+				kind: "TENANCY_ENDED",
+				title: "Your tenancy now ends on 16 January 2027",
+				dedupeKey: `tenancy-ended:${tenancyId.toString()}:2027-01-16`
+			});
+		});
+
 		it("stops before payment changes when another request already ended the tenancy", async () => {
 			const ctx = setup();
 			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
