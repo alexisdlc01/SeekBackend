@@ -10022,6 +10022,8 @@
               "VIEWING_SCHEDULED",
               "OFFER_MADE",
               "OFFER_EXPIRED",
+              "OFFER_ACCEPTED",
+              "OFFER_WITHDRAWN",
               "APPLICATION_REJECTED",
               "LISTING_NEEDS_CHANGES",
               "REPORT_ACTIONED"

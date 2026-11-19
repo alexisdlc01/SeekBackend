@@ -177,6 +177,10 @@ export class ContractsService {
 		if (contract.status !== ContractStatus.SIGNED) {
 			throw new BadRequestException("Deductions can only be proposed on a signed agreement.");
 		}
+		// Only a first proposal or one after a dispute: accepted deductions are settled, open ones await the tenants.
+		if (contract.deductions && contract.deductions.status !== DeductionStatus.DISPUTED) {
+			throw new BadRequestException(`These deductions are already ${contract.deductions.status.toLowerCase()}.`);
+		}
 		const total = dto.items.reduce((sum, item) => sum + item.amount, 0);
 		const deposit = tenancy.depositAmount * tenancy.tenants.length;
 		if (total > deposit) {

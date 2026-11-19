@@ -179,6 +179,17 @@ export class ApplicationService {
 		if (application.conversation) {
 			await this.converstaionModel.updateOne({ _id: application.conversation }, { $set: { closedAt: new Date() } }).exec();
 		}
+		const queue = await this.queueFor(application.listing, new Date());
+		const title = queue.listing?.propertyTitle ?? queue.listing?.streetAddress ?? "the property";
+		await this.notificationsService.notify({
+			user: application.landlord,
+			kind: NotificationKind.OFFER_WITHDRAWN,
+			title: `The household withdrew from your offer for ${title}`,
+			body: "They turned the offer down. Any holding deposit they paid is refunded automatically.",
+			...notificationTarget("landlord", NotificationTargetKind.APPLICATION, application._id, { listing: application.listing }),
+			dedupeKey: `offer-withdrawn:${application._id.toString()}`
+		});
+		await this.notifyNextQualified(application, queue.qualified, `Offer withdrawn for ${title}`, `offer-next:${application._id.toString()}:withdrawn`);
 	}
 
 	async getAllMyApplications(userId: string): Promise<ApplicationDto[]> {
@@ -682,7 +693,17 @@ export class ApplicationService {
 				dedupeKey: `offer-expired:${application._id.toString()}:${key}`
 			}))
 		);
-		const next = queue.qualified.find(entry =>
+		await this.notifyNextQualified(application, queue.qualified, `Offer expired for ${title}`, `offer-next:${application._id.toString()}:${key}`);
+	}
+
+	/** The offer is gone (lapsed or withdrawn): point the landlord at the first qualified household still waiting. */
+	private async notifyNextQualified(
+		application: Application & { _id: Types.ObjectId },
+		qualified: Awaited<ReturnType<ApplicationService["queueFor"]>>["qualified"],
+		heading: string,
+		dedupeKey: string
+	) {
+		const next = qualified.find(entry =>
 			entry.id !== application._id.toString()
 			&& !entry.application.offerExpiredAt
 			&& entry.application.stage !== ApplicationStage.OFFERED
@@ -692,10 +713,10 @@ export class ApplicationService {
 			{
 				user: application.landlord,
 				kind: NotificationKind.NEW_QUALIFIED_HOUSEHOLD,
-				title: `Offer expired for ${title}: the next qualified household is waiting`,
+				title: `${heading}: the next qualified household is waiting`,
 				body: `${next.members.length} ${next.members.length === 1 ? "student" : "students"}, first in line. Make them an offer.`,
 				...notificationTarget("landlord", NotificationTargetKind.APPLICATION, next.application._id, { listing: application.listing }),
-				dedupeKey: `offer-next:${application._id.toString()}:${key}`
+				dedupeKey
 			},
 			"newQualifiedHousehold"
 		);
@@ -733,6 +754,15 @@ export class ApplicationService {
 			throw error;
 		}
 		const tenancy = await this.createOrReopen(application, ApplicationStage.OFFERED);
+		const listing = await this.listingService.findListingById(application.listing.toString()).catch(() => null);
+		await this.notificationsService.notify({
+			user: application.landlord,
+			kind: NotificationKind.OFFER_ACCEPTED,
+			title: `Your offer for ${listing?.propertyTitle ?? listing?.streetAddress ?? "your property"} was accepted`,
+			body: "The household accepted. Their tenancy is set up in Seek.",
+			...notificationTarget("landlord", NotificationTargetKind.TENANCY, tenancy._id),
+			dedupeKey: `offer-accepted:${application._id.toString()}`
+		});
 		// The offer is taken: a holding deposit nobody paid can't be paid any more. Not before: a 409 above reopens the offer.
 		await this.dropUnpaidHoldingDeposits(application._id);
 		await this.closeOthers(application);
@@ -1047,6 +1077,8 @@ export class ApplicationService {
 				listing: application.listing,
 				application: application._id,
 			});
+			// The newcomer may complete the household: tell the landlord (deduped per application).
+			await this.notifyIfQualified(application as HydratedDocument<Application>);
 		}
 	}
 

@@ -138,6 +138,17 @@ describe("ContractsService deductions", () => {
 		expect(result!.deductions!.responses).toEqual([]);
 	});
 
+	it("refuses to re-propose deductions the tenants already accepted", async () => {
+		const { service, current } = setup({});
+		const landlord = { _id: tenancy.landlord } as any;
+		await service.proposeDeductions(id, { items: [{ description: "Carpet", amount: 12000 }] }, landlord);
+		await service.respondToDeductions(id, { accept: true }, { _id: maya } as any);
+		await service.respondToDeductions(id, { accept: true }, { _id: tom } as any);
+		await expect(service.proposeDeductions(id, { items: [{ description: "Carpet", amount: 60000 }] }, landlord))
+			.rejects.toThrow("These deductions are already accepted.");
+		expect(current().deductions.total).toBe(12000);
+	});
+
 	it("is DISPUTED as soon as one tenant disagrees", async () => {
 		const { service } = setup({});
 		await service.proposeDeductions(id, { items: [{ description: "Carpet", amount: 12000 }] }, { _id: tenancy.landlord } as any);
