@@ -47,6 +47,7 @@ import { ChangePasswordDto } from "./dto/change-password.dto";
 import { ChangeEmailDto } from "./dto/change-email.dto";
 import { ConfirmEmailChangeDto } from "./dto/confirm-email-change.dto";
 import { Role } from "./role.enum";
+import { signupRoleFromState } from "./strategies/google.strategy";
 
 /** The mobile app is the student app: landlords and agencies sign in on the web. */
 function assertMobileRole(user: User, isMobile: boolean) {
@@ -119,8 +120,8 @@ export class AuthController {
 	@Patch("/resend-otp")
 	@Throttle({ auth: { limit: 5, ttl: 60 * 60_000, blockDuration: 60 * 60_000 } })
 	@ApiResendOtpDocs()
-	async resendOtp(@Body() body: ResendOtpDto) {
-		return this.authService.resendOtp(body.userId);
+	async resendOtp(@Body() body: ResendOtpDto, @Req() request: Request) {
+		return this.authService.resendOtp(body.userId, request.headers.platform === "mobile");
 	}
 
 	@Post("/forgot-password")
@@ -214,7 +215,7 @@ export class AuthController {
 		const requestUser = request.user as GoogleUserDto;
 		const isMobile = request.headers.platform === "mobile";
 
-		const savedUser = await this.authService.createGoogleUser(requestUser);
+		const savedUser = await this.authService.createGoogleUser(requestUser, signupRoleFromState(request.query.state));
 		await this.authService.login(savedUser, response, isMobile);
 		if (!isMobile) {
 			const baseUrl = this.configService.getOrThrow("FRONTEND_URL");
