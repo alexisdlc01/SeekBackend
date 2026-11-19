@@ -10,6 +10,16 @@ import type { StateStore } from "passport-oauth2";
 
 const STATE_COOKIE = "GoogleOAuthState";
 
+/**
+ * Role for an account Google creates, read back from the verified OAuth state.
+ * Only the roles open to public signup; anything else stays a student.
+ */
+export function signupRoleFromState(state: unknown): Role.STUDENT | Role.LANDLORD_AGENCY {
+	return typeof state === "string" && state.endsWith(`.${Role.LANDLORD_AGENCY}`)
+		? Role.LANDLORD_AGENCY
+		: Role.STUDENT;
+}
+
 @Injectable()
 export class GoogleStrategy extends PassportStrategy(Strategy, "google") {
 	constructor(configService: ConfigService) {
@@ -21,7 +31,9 @@ export class GoogleStrategy extends PassportStrategy(Strategy, "google") {
 			// Login-CSRF guard: bind the callback to the browser that started the flow.
 			store: {
 				store(req: Request, callback: (err: Error | null, state: string) => void) {
-					const state = randomBytes(16).toString("hex");
+					// The wanted role rides in the state, which the cookie check below binds to this browser.
+					const role = req.query?.role === Role.LANDLORD_AGENCY ? Role.LANDLORD_AGENCY : Role.STUDENT;
+					const state = `${randomBytes(16).toString("hex")}.${role}`;
 					req.res?.cookie(STATE_COOKIE, state, {
 						httpOnly: true,
 						secure: configService.get("NODE_ENV") === "production",

@@ -33,7 +33,7 @@ export class UploadController {
 	}
 
 	@ApiAccessDocs()
-	@TeamAccess(TeamScope.APPLICATIONS, TeamScope.VIEWINGS_INBOX, TeamScope.TENANCIES)
+	@TeamAccess(TeamScope.APPLICATIONS, TeamScope.VIEWINGS_INBOX, TeamScope.TENANCIES, TeamScope.LISTINGS)
 	@Get("access")
 	@StudentOrLandlordOrSuperuser()
 	async download(

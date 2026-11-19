@@ -30,6 +30,8 @@ const MAX_ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const REFRESH_REUSE_GRACE_MS = 10 * 1000;
+export const SUSPENDED_ACCOUNT_MESSAGE =
+	"Your Seek account is suspended after reports from other users. Contact Seek support if you think this is a mistake.";
 const GENERIC_RESET_RESPONSE =
 	"If an account exists, a password reset link has been sent.";
 
@@ -333,7 +335,8 @@ export class AuthService {
 		return verifiedUser;
 	}
 
-	async resendOtp(userId: string) {
+	/** Mobile gets a new OTP; the web gets a new verification link, like at signup. */
+	async resendOtp(userId: string, isMobile: boolean) {
 		if (!this.isEmailVerificationEnabled()) {
 			throw new BadRequestException("Email verification is currently disabled.");
 		}
@@ -373,13 +376,13 @@ export class AuthService {
 			);
 		}
 
-		const otp = this.generateOtp();
+		const secret = isMobile ? this.generateOtp() : randomBytes(32).toString("hex");
 		const expiresAt = new Date(now.getTime() + this.verificationTtlMs());
 		await this.usersService.updateUser(
 			{ _id: user._id },
 			{
 				$set: {
-					otpVerificationCode: this.hashToken(otp),
+					[isMobile ? "otpVerificationCode" : "emailVerificationToken"]: this.hashToken(secret),
 					emailVerificationTokenExpires: expiresAt,
 					emailVerificationAttempts: 0,
 					emailVerificationLastSentAt: now,
@@ -388,13 +391,17 @@ export class AuthService {
 						: now,
 					emailVerificationSendCount: sendCount + 1
 				},
-				$unset: { emailVerificationToken: 1 }
+				$unset: { [isMobile ? "emailVerificationToken" : "otpVerificationCode"]: 1 }
 			}
 		);
-		await this.mailService.sendOtpEmail(user.email, otp);
+		if (isMobile) {
+			await this.mailService.sendOtpEmail(user.email, secret);
+		} else {
+			await this.mailService.sendVerificationEmail(user.email, secret, user._id.toString());
+		}
 
 		return {
-			message: "Verification code sent.",
+			message: isMobile ? "Verification code sent." : "Verification email sent.",
 			expiresInSeconds: Math.floor(this.verificationTtlMs() / 1000)
 		};
 	}
@@ -655,7 +662,8 @@ export class AuthService {
 		return { message: "Successfully logged out." };
 	}
 
-	async createGoogleUser(user: GoogleUserDto) {
+	/** signupRole applies only to a new account; an existing one keeps its role. */
+	async createGoogleUser(user: GoogleUserDto, signupRole: Role.STUDENT | Role.LANDLORD_AGENCY = Role.STUDENT) {
 		const email = this.normalizeEmail(user.email);
 		let savedUser = await this.usersRepo.getUserByEmail(email);
 		if (!savedUser) {
@@ -663,7 +671,7 @@ export class AuthService {
 				profilePicUrl: user.profilePicUrl,
 				name: user.name,
 				email,
-				role: Role.STUDENT,
+				role: signupRole,
 				isGoogle: true,
 				isVerified: true
 			});
@@ -697,6 +705,10 @@ export class AuthService {
 	}
 
 	private assertCanAuthenticate(user: User) {
+		// Checked here too (not only in JwtStrategy) so sign-in and refresh say why instead of minting dead tokens.
+		if (user.suspendedAt) {
+			throw new ForbiddenException(SUSPENDED_ACCOUNT_MESSAGE);
+		}
 		if (this.isEmailVerificationEnabled() && !user.isVerified) {
 			// userId lets the mobile app reopen the OTP screen (resend-otp needs it).
 			throw new UnauthorizedException({

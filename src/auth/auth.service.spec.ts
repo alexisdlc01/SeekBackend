@@ -8,7 +8,7 @@ import {
 import { hash } from "bcryptjs";
 import { createHash } from "node:crypto";
 import { Types } from "mongoose";
-import { AuthenticatedUser, AuthService } from "./auth.service";
+import { AuthenticatedUser, AuthService, SUSPENDED_ACCOUNT_MESSAGE } from "./auth.service";
 import { Role } from "./role.enum";
 import { User } from "../users/users.schema";
 
@@ -275,7 +275,7 @@ describe("AuthService", () => {
 		});
 		usersRepo.getUserById.mockResolvedValue(pending);
 
-		await expect(service.resendOtp(pending._id.toString())).resolves.toEqual({
+		await expect(service.resendOtp(pending._id.toString(), true)).resolves.toEqual({
 			message: "Verification code sent.",
 			expiresInSeconds: 600
 		});
@@ -303,9 +303,44 @@ describe("AuthService", () => {
 		});
 		usersRepo.getUserById.mockResolvedValue(pending);
 
-		await expect(service.resendOtp(pending._id.toString())).rejects
+		await expect(service.resendOtp(pending._id.toString(), false)).rejects
 			.toMatchObject({ status: 429 });
 		expect(mailService.sendOtpEmail).not.toHaveBeenCalled();
+		expect(mailService.sendVerificationEmail).not.toHaveBeenCalled();
+	});
+
+	it("resends a fresh hashed verification link on the web", async () => {
+		config.AUTH_EMAIL_VERIFICATION_ENABLED = true;
+		const pending = makeUser({ isVerified: false });
+		usersRepo.getUserById.mockResolvedValue(pending);
+
+		await expect(service.resendOtp(pending._id.toString(), false)).resolves
+			.toMatchObject({ message: "Verification email sent." });
+		const [email, rawToken, userId] = mailService.sendVerificationEmail.mock.calls[0];
+		expect([email, userId]).toEqual([pending.email, pending._id.toString()]);
+		expect(usersService.updateUser).toHaveBeenCalledWith(
+			{ _id: pending._id },
+			expect.objectContaining({
+				$set: expect.objectContaining({ emailVerificationToken: tokenHash(rawToken) }),
+				$unset: { otpVerificationCode: 1 }
+			})
+		);
+		expect(mailService.sendOtpEmail).not.toHaveBeenCalled();
+	});
+
+	it("refuses sign-in and refresh to a suspended account with the suspension message", async () => {
+		const password = await hash("Str0ng!Password", 4);
+		const suspended = makeUser({ password, suspendedAt: new Date() });
+		usersRepo.getUserByEmail.mockResolvedValue(suspended);
+		await expect(service.verifyUser("student@example.com", "Str0ng!Password"))
+			.rejects.toThrow(new ForbiddenException(SUSPENDED_ACCOUNT_MESSAGE));
+
+		usersRepo.getUserById.mockResolvedValue({
+			...suspended,
+			refreshSessions: [{ sessionId: "s1", tokenHash: tokenHash("refresh"), expiresAt: new Date(Date.now() + 60_000) }]
+		});
+		await expect(service.verifyUserRefreshToken("refresh", suspended._id.toString(), "s1"))
+			.rejects.toBeInstanceOf(ForbiddenException);
 	});
 
 	it("blocks login for an unverified account unless the flag is disabled", async () => {
@@ -659,6 +694,20 @@ describe("AuthService", () => {
 	});
 
 	describe("Google linking", () => {
+		it("creates a new account with the requested role but never changes an existing one", async () => {
+			usersRepo.getUserByEmail.mockResolvedValueOnce(null);
+			usersRepo.createPaswordless.mockResolvedValue(makeUser({ role: Role.LANDLORD_AGENCY }));
+			await service.createGoogleUser({ email: "new@example.com", name: "New" } as never, Role.LANDLORD_AGENCY);
+			expect(usersRepo.createPaswordless).toHaveBeenCalledWith(expect.objectContaining({ role: Role.LANDLORD_AGENCY }));
+
+			const student = makeUser({ isGoogle: true });
+			usersRepo.getUserByEmail.mockResolvedValueOnce(student);
+			await expect(service.createGoogleUser({ email: student.email, name: "S" } as never, Role.LANDLORD_AGENCY))
+				.resolves.toBe(student);
+			expect(usersRepo.createPaswordless).toHaveBeenCalledTimes(1);
+			expect(usersService.updateUser).not.toHaveBeenCalled();
+		});
+
 		it("drops a squatter's password and sessions when linking an unverified account", async () => {
 			const squatted = makeUser({ isVerified: false, refreshSessions: [{ sessionId: "s" } as never] });
 			usersRepo.getUserByEmail.mockResolvedValue(squatted);
