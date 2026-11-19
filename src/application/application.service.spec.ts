@@ -352,6 +352,7 @@ describe("ApplicationService", () => {
 			conversationModel.updateOne.mockReturnValue({
 				exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
 			});
+			return jest.spyOn(service as any, "notifyIfQualified").mockResolvedValue(undefined);
 		}
 
 		it("adds a joined applicant to both the application and conversation", async () => {
@@ -432,6 +433,18 @@ describe("ApplicationService", () => {
 			expect(sharesService.shareForApplication).toHaveBeenCalledWith(
 				expect.objectContaining({ ownerIds: [joinedUserId.toString()], application: applicationId }),
 			);
+		});
+
+		it("tells the landlord when a newcomer completes a household that already applied", async () => {
+			const notifyIfQualified = mockApplication({ stage: ApplicationStage.SENT });
+			await service.join(applicationId.toString(), new Types.ObjectId().toString(), VALID_INVITE);
+			expect(notifyIfQualified).toHaveBeenCalledWith(expect.objectContaining({ _id: applicationId }));
+		});
+
+		it("does not tell the landlord about a household that has not applied yet", async () => {
+			const notifyIfQualified = mockApplication();
+			await service.join(applicationId.toString(), new Types.ObjectId().toString(), VALID_INVITE);
+			expect(notifyIfQualified).not.toHaveBeenCalled();
 		});
 
 		it("shares the newcomer's documents once a viewing is booked", async () => {
@@ -784,6 +797,7 @@ describe("ApplicationService pipeline", () => {
 			paymentModel.find.mockImplementation((filter: any) => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(filter.refundDue ? [paid] : []) }) }));
 			const conversationModel = { updateOne: jest.fn().mockReturnValue({ exec: jest.fn() }) };
 			(service as any).converstaionModel = conversationModel;
+			queue();
 
 			await service.delete(applicationId.toString());
 
@@ -796,6 +810,21 @@ describe("ApplicationService pipeline", () => {
 				{ _id: paid._id, refundedAt: null },
 				expect.objectContaining({ $set: expect.objectContaining({ refundDue: false, refundedAmount: 15000, refundRef: `sim_refund_${paid._id}` }) })
 			);
+		});
+
+		it("tells the landlord an offered household withdrew and points at the next one in line", async () => {
+			const next = new Types.ObjectId();
+			applicationModel.findById.mockReturnValue({ lean: () => exec(stored(ApplicationStage.OFFERED)) });
+			applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.WITHDRAWN)));
+			queue({ id: next, qualified: true });
+
+			await service.delete(applicationId.toString());
+
+			const [withdrawn] = notifications.notify.mock.calls[0];
+			expect(withdrawn).toMatchObject({ user: landlordId, kind: "OFFER_WITHDRAWN", dedupeKey: `offer-withdrawn:${applicationId}` });
+			const [nextUp, pref] = notifications.notify.mock.calls[1];
+			expect(nextUp).toMatchObject({ user: landlordId, kind: "NEW_QUALIFIED_HOUSEHOLD", target: expect.objectContaining({ id: next.toString() }) });
+			expect(pref).toBe("newQualifiedHousehold");
 		});
 	});
 
@@ -1180,6 +1209,24 @@ describe("ApplicationService pipeline", () => {
 		(service as any).tenanciesService.createFromApplication.mockRejectedValue(new ConflictException("already has a tenancy"));
 		await expect(service.acceptOffer(applicationId.toString())).rejects.toThrow(ConflictException);
 		expect(paymentModel.deleteMany).not.toHaveBeenCalled();
+	});
+
+	it("tells the landlord once when a household accepts the offer", async () => {
+		const tenancyId = new Types.ObjectId();
+		applicationModel.findById.mockReturnValue({ lean: () => exec(stored(ApplicationStage.OFFERED, { offerExpiresAt: future })) });
+		applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.ACCEPTED)));
+		(service as any).tenanciesService.createFromApplication.mockResolvedValue({ _id: tenancyId });
+
+		await expect(service.acceptOffer(applicationId.toString())).resolves.toEqual({ tenancy: tenancyId.toString() });
+
+		expect(notifications.notify).toHaveBeenCalledTimes(1);
+		expect(notifications.notify.mock.calls[0][0]).toMatchObject({
+			user: landlordId,
+			kind: "OFFER_ACCEPTED",
+			title: "Your offer for Cotham Flat was accepted",
+			target: expect.objectContaining({ kind: "TENANCY", id: tenancyId.toString() }),
+			dedupeKey: `offer-accepted:${applicationId}`,
+		});
 	});
 
 	it("stores the reason and tells the household when an application is declined", async () => {
