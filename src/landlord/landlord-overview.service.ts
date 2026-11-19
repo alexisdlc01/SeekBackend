@@ -70,7 +70,7 @@ export class LandlordOverviewService {
 				.lean()
 				.exec(),
 			this.paymentModel
-				.find({ landlord, kind: PaymentKind.HOLDING_DEPOSIT, status: PaymentStatus.PAID, dueDate: { $gte: month.start, $lt: month.end } })
+				.find({ landlord, kind: PaymentKind.HOLDING_DEPOSIT, status: PaymentStatus.PAID, refundedAt: null, dueDate: { $gte: month.start, $lt: month.end } })
 				.select("amount")
 				.lean()
 				.exec(),

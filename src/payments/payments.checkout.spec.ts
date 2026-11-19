@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { BadRequestException, Logger } from "@nestjs/common";
+import { BadRequestException, Logger, ServiceUnavailableException } from "@nestjs/common";
 import { Types } from "mongoose";
 import { PaymentsService } from "./payments.service";
 import { PaymentKind, PaymentProvider, PaymentStatus, PayoutStatus } from "./payment.enums";
@@ -42,7 +42,9 @@ describe("PaymentsService.checkout (Stripe)", () => {
 				: url.includes("/customers")
 					? { id: "cus_1" }
 					: { id: "cs_test_1", url: "https://checkout.stripe.com/c/pay/cs_test_1", status: "open" };
-			return { ok: !(url.includes("/accounts/") && !account), status: 200, json: async () => body } as Response;
+			// Stripe answers 404 "No such account" for a missing account.
+			const missing = url.includes("/accounts/") && !account;
+			return { ok: !missing, status: missing ? 404 : 200, json: async () => body } as Response;
 		}) as never;
 		const paymentModel = {
 			findById: jest.fn().mockReturnValue(lean(stored)),
@@ -722,6 +724,44 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 		expect(notReady.notifications.notify.mock.calls[0][0].body).toContain("autopay didn't run");
 	});
 
+	it("defers autopay without notifying when Stripe can't answer about the account, but still tells a landlord whose account is gone", async () => {
+		const accountAnswers = (status: number) => {
+			const answering = global.fetch;
+			global.fetch = jest.fn(async (url: string, init?: RequestInit) =>
+				url.includes("/accounts/")
+					? ({ ok: false, status, json: async () => ({ error: { message: "Stripe says no" } }) } as Response)
+					: (answering as any)(url, init)) as never;
+		};
+
+		const limited = setup({ dueDate: new Date("2026-11-01T00:00:00Z"), providerRef: null });
+		accountAnswers(429);
+		await expect((limited.service as any).sweepStripeAutopay(new Date("2026-11-07T00:00:00Z"))).resolves.toBeUndefined();
+		expect(stripeCalls.some(call => call.url.endsWith("/payment_intents"))).toBe(false);
+		expect(doc.status).toBe(PaymentStatus.SCHEDULED);
+		// The once-per-payment notice is kept for a real answer.
+		expect(limited.notifications.notify).not.toHaveBeenCalled();
+
+		const gone = setup({ dueDate: new Date("2026-11-01T00:00:00Z"), providerRef: null });
+		accountAnswers(404);
+		await (gone.service as any).sweepStripeAutopay(new Date("2026-11-07T00:00:00Z"));
+		expect(doc.status).toBe(PaymentStatus.SCHEDULED);
+		expect(gone.notifications.notify.mock.calls.map(([n]) => n.dedupeKey)).toEqual([
+			`autopay-skipped:${id.toString()}`,
+			`autopay-skipped:${id.toString()}`
+		]);
+	});
+
+	it("answers 'try again' (503), not CARD_NOT_READY, when Stripe can't answer about the landlord's account", async () => {
+		const { service } = setup({ providerRef: null });
+		const answering = global.fetch;
+		global.fetch = jest.fn(async (url: string, init?: RequestInit) =>
+			url.includes("/accounts/")
+				? ({ ok: false, status: 503, json: async () => ({}) } as Response)
+				: (answering as any)(url, init)) as never;
+		await expect(service.checkout(id.toString(), { _id: tenant } as any, {}, "web")).rejects.toThrow(ServiceUnavailableException);
+		await expect(service.pay(id.toString(), { _id: tenant } as any)).rejects.toThrow(ServiceUnavailableException);
+	});
+
 	it("never charges a card saved on Seek's account before direct charges (no plan customer)", async () => {
 		const { service, planModel } = setup({ dueDate: new Date("2026-11-01T00:00:00Z"), providerRef: null });
 		planModel.find.mockReturnValue(lean([{ tenancy, tenant, paymentMethodId: "pm_platform" } as any]));
@@ -796,6 +836,31 @@ describe("PaymentsService.landlordMonth", () => {
 
 		expect(month.rows[0]).toMatchObject({ kind: PaymentKind.HOLDING_DEPOSIT, property: "Cotham Flat", refundDue: true });
 		expect(month.holdingDepositsCollected).toBe(15000);
+	});
+
+	it("does not count a refunded holding deposit as collected, nor its fee or payout", async () => {
+		const landlord = new Types.ObjectId();
+		const query = (value: unknown) => {
+			const chain: Record<string, unknown> = { exec: () => Promise.resolve(value) };
+			for (const method of ["populate", "sort", "lean", "select", "limit"]) chain[method] = () => chain;
+			return chain;
+		};
+		const refundedAt = new Date();
+		const deposit = {
+			_id: new Types.ObjectId(), kind: PaymentKind.HOLDING_DEPOSIT, tenancy: null, application: { listing: { propertyTitle: "Cotham Flat" } },
+			tenant: { _id: new Types.ObjectId(), name: "Maya" }, landlord, amount: 15000, seekFee: 150, payout: 14850,
+			status: PaymentStatus.PAID, dueDate: new Date(), paidAt: new Date(), refundDue: false, refundedAt, refundedAmount: 15000
+		};
+		const paymentModel = { find: jest.fn().mockReturnValueOnce(query([deposit])).mockReturnValue(query([])) };
+		const service = new PaymentsService(
+			paymentModel as any, { find: jest.fn().mockReturnValue(lean([])) } as any,
+			{} as any, {} as any, {} as any, {} as any, {} as any, {} as any, { get: () => undefined } as any, {} as any
+		);
+
+		const month = await service.landlordMonth(landlord.toString());
+
+		expect(month.rows[0]).toMatchObject({ status: PaymentStatus.PAID, refundDue: false, refundedAt });
+		expect(month).toMatchObject({ holdingDepositsExpected: 15000, holdingDepositsCollected: 0, seekFee: 0, payouts: 0, held: 0 });
 	});
 
 	it("leaves rent cancelled by an early tenancy end out of expected", async () => {

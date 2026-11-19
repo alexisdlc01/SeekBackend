@@ -448,7 +448,8 @@ export class PaymentsService {
 			const paid = payment.status === PaymentStatus.PAID;
 			if (isHolding) {
 				totals.holdingDepositsExpected += payment.amount;
-				if (paid) totals.holdingDepositsCollected += payment.amount;
+				// A refunded deposit went back to the student: it stays PAID with refundedAt set.
+				if (paid && !payment.refundedAt) totals.holdingDepositsCollected += payment.amount;
 			} else if (payment.status !== PaymentStatus.CANCELLED) {
 				// Rent cancelled by an early tenancy end is no longer owed.
 				totals.expected += payment.amount;
@@ -456,9 +457,12 @@ export class PaymentsService {
 			}
 			const held = payment.payoutStatus === PayoutStatus.HELD;
 			if (paid) {
-				totals.seekFee += payment.seekFee;
-				if (held) totals.held += payment.payout;
-				else totals.payouts += payment.payout;
+				// A refund also gives back Seek's fee and the payout pro rata (refund_application_fee + transfer reversal).
+				const kept = payment.refundedAt ? proportionalRefund(payment.amount, payment.refundedAmount ?? payment.amount, payment.seekFee) : null;
+				const payout = kept ? kept.landlordNet : payment.payout;
+				totals.seekFee += kept ? kept.keptSeekFee : payment.seekFee;
+				if (held) totals.held += payout;
+				else totals.payouts += payout;
 			}
 			if (payment.status === PaymentStatus.LATE && !isHolding) {
 				totals.late += 1;
@@ -486,6 +490,7 @@ export class PaymentsService {
 				remindDaysBefore: plan?.remindDaysBefore ?? 3,
 				remindersSent: payment.remindersSent ?? 0,
 				refundDue: payment.refundDue ?? false,
+				refundedAt: payment.refundedAt ?? null,
 				// Rows still to collect show today's 1%, not the rate when they were scheduled.
 				fee: feeFor(payment).seekFee,
 				payout: feeFor(payment).payout,
@@ -513,7 +518,13 @@ export class PaymentsService {
 	private async payoutsOnHold(landlordId: string): Promise<boolean> {
 		if (this.mode() !== "stripe") return false;
 		const stripe = new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!);
-		return !(await this.accountFor(stripe, new Types.ObjectId(landlordId)));
+		try {
+			return !(await this.accountFor(stripe, new Types.ObjectId(landlordId)));
+		} catch (error) {
+			// Stripe couldn't be asked: no "finish setup" banner on a guess, and the Rent page still loads.
+			this.logger.warn(`Payout status for landlord ${landlordId} could not be checked: ${(error as Error).message}`);
+			return false;
+		}
 	}
 
 	/**
@@ -572,7 +583,14 @@ export class PaymentsService {
 				continue;
 			}
 			const key = claimed.landlord.toString();
-			if (!destinations.has(key)) destinations.set(key, await this.accountFor(stripe, claimed.landlord, canTransfer));
+			if (!destinations.has(key)) {
+				// Stripe couldn't be asked: the payout stays held and is retried next run.
+				destinations.set(key, await this.accountFor(stripe, claimed.landlord, canTransfer).catch(error => {
+					if (!(error instanceof StripeApiError)) throw error;
+					this.logger.warn(`Held payouts for landlord ${key} not released: Stripe error ${error.status}`);
+					return null;
+				}));
+			}
 			const destination = destinations.get(key);
 			if (!destination) {
 				await this.paymentModel.updateOne({ _id: claimed._id, payoutStatus: PayoutStatus.HELD }, { $set: { payoutReleaseStartedAt: null } });
@@ -839,8 +857,9 @@ export class PaymentsService {
 			};
 		}
 
-		const account = await this.accountFor(new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!), payment.landlord);
 		try {
+			// Inside the try: a Stripe outage is "try again" (503), not CARD_NOT_READY.
+			const account = await this.accountFor(new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!), payment.landlord);
 			const plan = payment.tenancy
 				? await this.planModel.findOne({ tenancy: payment.tenancy, tenant: payment.tenant }, { autopay: 1 }).lean().exec()
 				: null;
@@ -1048,7 +1067,8 @@ export class PaymentsService {
 			const account = await stripe.retrieveAccount(accountId);
 			return ready(account) ? accountId : null;
 		} catch (error) {
-			if (error instanceof StripeApiError) return null;
+			// Only a definite answer (no such account, access revoked) means "not set up"; a rate limit or outage is rethrown.
+			if (error instanceof StripeApiError && (error.status === 403 || error.status === 404)) return null;
 			throw error;
 		}
 	}
@@ -1395,7 +1415,8 @@ export class PaymentsService {
 			.exec();
 		if (plans.length === 0) return;
 		const stripe = new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!);
-		const accounts = new Map<string, string | null>();
+		// undefined: Stripe couldn't be asked this sweep.
+		const accounts = new Map<string, string | null | undefined>();
 		for (const plan of plans) {
 			// A card saved before direct charges (on Seek's account, no plan customer) is never charged again.
 			if (!plan.stripeCustomerId || !plan.paymentMethodId) continue;
@@ -1405,8 +1426,17 @@ export class PaymentsService {
 				.exec();
 			for (const payment of due as PaymentLean[]) {
 				const key = payment.landlord.toString();
-				if (!accounts.has(key)) accounts.set(key, await this.accountFor(stripe, payment.landlord));
+				if (!accounts.has(key)) {
+					try {
+						accounts.set(key, await this.accountFor(stripe, payment.landlord));
+					} catch (error) {
+						this.logger.warn(`Autopay for landlord ${key} deferred: Stripe account could not be checked (${error instanceof StripeApiError ? error.status : (error as Error).message})`);
+						accounts.set(key, undefined);
+					}
+				}
 				const account = accounts.get(key);
+				// Not notified: the dedupeKey below is used once per payment, and the row stays SCHEDULED for the next sweep.
+				if (account === undefined) continue;
 				if (!account) {
 					// Seek never collects rent itself: the tenant pays another way and the row stays SCHEDULED.
 					this.logger.warn(`Autopay skipped for payment ${payment._id.toString()}: the landlord can't take card payments yet`);
@@ -1546,9 +1576,9 @@ export class PaymentsService {
 
 	private async payWithStripe(payment: PaymentLean) {
 		const previous = this.stripeFor(payment);
-		const account = await this.accountFor(new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!), payment.landlord);
-
 		try {
+			// Inside the try: a Stripe outage is "try again" (503), not CARD_NOT_READY.
+			const account = await this.accountFor(new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!), payment.landlord);
 			// An open Checkout page could still be paid (on its own account): close it first, or let it settle the payment.
 			if (payment.providerRef?.startsWith("cs_")) {
 				const session = await previous.retrieveCheckoutSession(payment.providerRef);

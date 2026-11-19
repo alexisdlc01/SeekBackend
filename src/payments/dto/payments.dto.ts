@@ -311,6 +311,9 @@ export class LandlordPaymentRowDto {
 	@ApiProperty({ description: "A paid holding deposit the landlord must refund within 7 days (Tenant Fees Act)." })
 	refundDue: boolean;
 
+	@ApiProperty({ type: String, format: "date-time", nullable: true, description: "When the payment was refunded to the tenant (it stays PAID). Null if never refunded." })
+	refundedAt: Date | null;
+
 	@ApiProperty({ description: "Seek's 1% fee on this payment, pence." })
 	fee: number;
 
