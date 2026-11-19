@@ -841,11 +841,17 @@ export class PaymentsService {
 
 		const account = await this.accountFor(new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!), payment.landlord);
 		try {
+			const plan = payment.tenancy
+				? await this.planModel.findOne({ tenancy: payment.tenancy, tenant: payment.tenant }, { autopay: 1 }).lean().exec()
+				: null;
+			const saveCard = Boolean(plan?.autopay) && payment.kind !== PaymentKind.HOLDING_DEPOSIT;
 			if (payment.providerRef?.startsWith("cs_")) {
 				const previous = this.stripeFor(payment);
 				const existing = await previous.retrieveCheckoutSession(payment.providerRef);
 				if (existing.status === "open" && existing.url) {
-					if (account && payment.stripeAccountId === account && existing.success_url === successUrl && existing.cancel_url === cancelUrl) {
+					if (account && payment.stripeAccountId === account && existing.success_url === successUrl && existing.cancel_url === cancelUrl
+						// A session opened before autopay was switched on (or off) would not save the card as asked.
+						&& (existing.customer_creation === "always") === saveCard) {
 						return { mode, sessionId: existing.id, url: existing.url, status: payment.status };
 					}
 					// Opened from the other client (web vs app), or its charge would land on another account (Seek's, for a legacy session).
@@ -868,10 +874,6 @@ export class PaymentsService {
 				if (OPEN_INTENT_STATUSES.includes(existing.status)) await previous.cancelPaymentIntent(existing.id);
 			}
 			if (!account) throw new BadRequestException(CARD_NOT_READY);
-			const plan = payment.tenancy
-				? await this.planModel.findOne({ tenancy: payment.tenancy, tenant: payment.tenant }, { autopay: 1 }).lean().exec()
-				: null;
-			const saveCard = Boolean(plan?.autopay) && payment.kind !== PaymentKind.HOLDING_DEPOSIT;
 			// A holding deposit's session closes with its offer. Stripe allows 30 minutes to 24 hours;
 			// whole minutes keep the idempotency key stable across a double tap.
 			const closesAt = offerEnds

@@ -318,6 +318,26 @@ describe("PaymentsService.checkout (Stripe)", () => {
 		expect(lastPaymentModel.find).toHaveBeenCalledWith(expect.objectContaining({ refundDue: true, autoRefund: true }));
 	});
 
+	it("replaces an open session opened before autopay was switched on, so the card gets saved", async () => {
+		const successUrl = "seekapp://pay?checkout=success";
+		const cancelUrl = "seekapp://pay?checkout=cancelled";
+		const service = setup(READY, true, { ...payment, providerRef: "cs_old", stripeAccountId: "acct_123" });
+		global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+			const headers = (init?.headers as Record<string, string> | undefined) ?? {};
+			calls.push({ url, body: new URLSearchParams(String(init?.body ?? "")), account: headers["Stripe-Account"] });
+			const body = url.includes("/accounts/") ? READY
+				: url.includes("/checkout/sessions/cs_old") ? { id: "cs_old", url: "https://checkout.stripe.com/c/pay/cs_old", status: "open", success_url: successUrl, cancel_url: cancelUrl, customer_creation: "if_required" }
+				: { id: "cs_new", url: "https://checkout.stripe.com/c/pay/cs_new", status: "open" };
+			return { ok: true, status: 200, json: async () => body } as Response;
+		}) as never;
+
+		await expect(service.checkout(payment._id.toString(), { _id: tenant } as any, { successUrl, cancelUrl }, "mobile")).resolves.toMatchObject({ sessionId: "cs_new" });
+		expect(calls.find(call => call.url.endsWith("/cs_old/expire"))!.account).toBe("acct_123");
+		const create = calls.find(call => call.url.endsWith("/checkout/sessions"))!;
+		expect(create.account).toBe("acct_123");
+		expect(create.body.get("customer_creation")).toBe("always");
+	});
+
 	it("keys the session on the whole request, so a changed autopay choice opens a new session", async () => {
 		const sessionKey = async (autopay: boolean) => {
 			await setup(READY, autopay).checkout(payment._id.toString(), { _id: tenant } as any, {}, "mobile");
