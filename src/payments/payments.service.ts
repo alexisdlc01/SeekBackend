@@ -1098,8 +1098,8 @@ export class PaymentsService {
 			const frontend = this.config.get<string>("FRONTEND_URL") ?? "";
 			const link = await stripe.createAccountLink({
 				account: accountId,
-				return_url: this.config.get<string>("STRIPE_CONNECT_RETURN_URL") || `${frontend}/landlord/payments?connect=return`,
-				refresh_url: this.config.get<string>("STRIPE_CONNECT_REFRESH_URL") || `${frontend}/landlord/payments?connect=refresh`
+				return_url: this.config.get<string>("STRIPE_CONNECT_RETURN_URL") || `${frontend}/edit-profile?connect=return`,
+				refresh_url: this.config.get<string>("STRIPE_CONNECT_REFRESH_URL") || `${frontend}/edit-profile?connect=refresh`
 			});
 			return { mode: "stripe", accountId, url: link.url };
 		} catch (error) {

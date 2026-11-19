@@ -813,6 +813,8 @@ describe("PaymentsService.connectOnboard (Stripe Accounts v2)", () => {
 		const linkBody = JSON.parse(String(link.init.body));
 		expect(linkBody).toMatchObject({ account: "acct_v2", use_case: { type: "account_onboarding" } });
 		expect(linkBody.use_case.account_onboarding).not.toHaveProperty("configurations");
+		expect(linkBody.use_case.account_onboarding.return_url).toMatch(/\/edit-profile\?connect=return$/);
+		expect(linkBody.use_case.account_onboarding.refresh_url).toMatch(/\/edit-profile\?connect=refresh$/);
 		expect(userModel.updateOne).toHaveBeenCalledWith({ _id: landlord }, { $set: { stripeAccountId: "acct_v2" } });
 	});
 
