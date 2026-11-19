@@ -14,7 +14,6 @@ export class WsJwtGuard implements CanActivate {
 	constructor(private readonly usersService: UsersService) { }
 
 	async canActivate(context: ExecutionContext): Promise<boolean> {
-		// TODO: RBAC
 		if (context.getType() !== "ws") {
 			return false;
 		}
