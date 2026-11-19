@@ -222,6 +222,18 @@ describe("AccountService deleteAccount", () => {
 		});
 	});
 
+	it("never deletes a repair photo: repairs stay with the property history and the user shows as Deleted user", async () => {
+		const { service, userModel, uploads } = setup();
+		const id = new Types.ObjectId();
+		const passport = `private/${id.toString()}/a.pdf`;
+		const repairPhoto = `private/${id.toString()}/repairs/x.jpg`;
+		userModel.findById.mockReturnValue(selectLean({ documents: [{ key: passport }] }));
+		await service.deleteAccount(id);
+		expect(uploads.deletePrivateObject).not.toHaveBeenCalledWith(repairPhoto);
+		expect(uploads.deletePrivateObject).toHaveBeenCalledTimes(1);
+		expect(userModel.updateOne.mock.calls[0][1].$set).toMatchObject({ name: "Deleted user" });
+	});
+
 	it("deletes unfiled imported email attachments but keeps one referenced by a tenancy", async () => {
 		const { service, messageModel, tenancyModel, uploads } = setup();
 		const id = new Types.ObjectId();

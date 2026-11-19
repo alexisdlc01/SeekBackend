@@ -204,6 +204,7 @@ export class AccountService {
 			{ landlord: userId, isDraft: false },
 			{ $set: { isVerified: false, moderationStatus: ModerationStatus.NEEDS_CHANGES, moderationReasons: ["This account was deleted."], lastUpdated: deletedAt } }
 		);
+		// Repair photos stay with the property's repair history (owner decision 2026-11-19); the student shows as "Deleted user".
 		const profile = await this.userModel.findById(userId).select("documents.key profilePicUrl").lean().exec();
 		const keys = [...new Set([
 			...(profile?.documents ?? []).map(doc => doc.key),
