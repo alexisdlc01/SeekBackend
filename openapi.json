@@ -12622,6 +12622,12 @@
             "type": "boolean",
             "description": "A paid holding deposit the landlord must refund within 7 days (Tenant Fees Act)."
           },
+          "refundedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When the payment was refunded to the tenant (it stays PAID). Null if never refunded."
+          },
           "fee": {
             "type": "number",
             "description": "Seek's 1% fee on this payment, pence."
@@ -12665,6 +12671,7 @@
           "remindDaysBefore",
           "remindersSent",
           "refundDue",
+          "refundedAt",
           "fee",
           "payout",
           "holdingDepositCredit",
