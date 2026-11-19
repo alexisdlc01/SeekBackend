@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { MongooseModule } from "@nestjs/mongoose";
+import { UploadModule } from "../upload/upload.module";
 import { SharedModule } from "../shared/shared.module";
 import { TenanciesModule } from "../tenancies/tenancies.module";
 import { NotificationsModule } from "../notifications/notifications.module";
@@ -11,6 +12,7 @@ import { RepairsService } from "./repairs.service";
 	imports: [
 		MongooseModule.forFeature([{ name: Repair.name, schema: RepairSchema }]),
 		SharedModule,
+		UploadModule,
 		TenanciesModule,
 		NotificationsModule
 	],

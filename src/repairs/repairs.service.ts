@@ -2,13 +2,15 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { Repair, RepairStatus } from "./repair.schema";
-import { CreateRepairDto, UpdateRepairDto } from "./dto/repair.dto";
+import { CreateRepairDto, MAX_REPAIR_PHOTOS, UpdateRepairDto } from "./dto/repair.dto";
 import { TenanciesService } from "../tenancies/tenancies.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { NotificationKind } from "../notifications/notification-kind.enum";
 import { notificationTarget, NotificationTargetKind } from "../notifications/links";
 import { User } from "../users/users.schema";
 import { Role } from "../auth/role.enum";
+import { UploadService } from "../upload/upload.service";
+import { isKeyOwnedBy } from "../upload/object-key";
 
 type Viewer = Pick<User, "_id" | "role">;
 
@@ -23,21 +25,37 @@ export class RepairsService {
 	constructor(
 		@InjectModel(Repair.name) private readonly repairModel: Model<Repair>,
 		private readonly tenancies: TenanciesService,
-		private readonly notifications: NotificationsService
+		private readonly notifications: NotificationsService,
+		private readonly uploads: UploadService
 	) {}
+
+	/** Only members of the tenancy (or its landlord) reach this, so signing here is the access check. */
+	private async withPhotoUrls<T extends { photoKeys?: string[] }>(repairs: T[]) {
+		return Promise.all(
+			repairs.map(async repair => ({
+				...repair,
+				photoUrls: await Promise.all(
+					(repair.photoKeys ?? []).map(key => this.uploads.getPresignedDownloadUrl(key, "private", 3600))
+				)
+			}))
+		);
+	}
 
 	async listForTenancy(tenancyId: string, viewer: Viewer) {
 		await this.tenancies.findForMember(tenancyId, viewer);
-		return this.repairModel
-			.find({ tenancy: new Types.ObjectId(tenancyId) })
-			.populate({ path: "reportedBy", select: "name profilePicUrl" })
-			.sort({ createdAt: -1 })
-			.lean()
-			.exec();
+		return this.withPhotoUrls(
+			await this.repairModel
+				.find({ tenancy: new Types.ObjectId(tenancyId) })
+				.populate({ path: "reportedBy", select: "name profilePicUrl" })
+				.sort({ createdAt: -1 })
+				.lean()
+				.exec()
+		);
 	}
 
 	async listForLandlord(landlordId: string) {
-		return this.repairModel
+		return this.withPhotoUrls(
+			await this.repairModel
 			.find({ landlord: new Types.ObjectId(landlordId) })
 			.populate({ path: "reportedBy", select: "name profilePicUrl" })
 			.populate({
@@ -47,7 +65,8 @@ export class RepairsService {
 			})
 			.sort({ createdAt: -1 })
 			.lean()
-			.exec();
+			.exec()
+		);
 	}
 
 	/** A tenant reports to the landlord; a landlord logs one on their own tenancy and tells the tenants. */
@@ -56,12 +75,20 @@ export class RepairsService {
 		const tenancy = byLandlord
 			? await this.tenancies.findForLandlord(dto.tenancy, reporter)
 			: await this.tenancies.findForTenant(dto.tenancy, reporter);
+		const photoKeys = dto.photoKeys ?? [];
+		if (photoKeys.length > MAX_REPAIR_PHOTOS) {
+			throw new BadRequestException(`Attach at most ${MAX_REPAIR_PHOTOS} photos.`);
+		}
+		if (!photoKeys.every(key => key.startsWith("private/") && /\.(jpe?g|png|webp)$/i.test(key) && isKeyOwnedBy(key, reporter._id.toString()))) {
+			throw new BadRequestException("Photo key was not issued to this account.");
+		}
 		const repair = await this.repairModel.create({
 			tenancy: tenancy._id,
 			landlord: tenancy.landlord,
 			reportedBy: reporter._id,
 			title: dto.title.trim(),
-			description: dto.description?.trim()
+			description: dto.description?.trim(),
+			photoKeys
 		});
 		if (byLandlord) {
 			await this.notifications.notifyMany(
