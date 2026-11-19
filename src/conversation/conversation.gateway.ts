@@ -23,8 +23,13 @@ import { ConversationAccessService } from "./conversation-access.service";
 import { User } from "../users/users.schema";
 import { JwtPayload, verify } from "jsonwebtoken";
 import { TokenPayload } from "../auth/token-payload.interface";
+import { UsersRepository } from "../users/users.repository";
+import { Role } from "../auth/role.enum";
+import { TeamScope } from "../users/types/team-scope";
 
 const SESSION_REVALIDATION_INTERVAL_MS = 30_000;
+/** Same scopes as @TeamAccess on ConversationController. */
+const CONVERSATION_SCOPES = [TeamScope.VIEWINGS_INBOX, TeamScope.APPLICATIONS];
 
 type ConversationSocketSession = TokenPayload & { exp: number };
 
@@ -38,6 +43,8 @@ type SessionSocket = {
 	data: {
 		user?: User;
 		conversationSession?: ConversationSocketSession;
+		/** Whose conversations this socket acts on: the user, or the owner whose inbox a team member helps run. */
+		actingUserId?: string;
 	};
 	connected?: boolean;
 	disconnect(close?: boolean): unknown;
@@ -63,6 +70,7 @@ export class ConversationGateway
 		@InjectModel(Message.name)
 		private readonly messageModel: Model<Message>,
 		private readonly conversationAccessService: ConversationAccessService,
+		private readonly usersRepository: UsersRepository,
 	) { }
 
 	afterInit(server: Server) {
@@ -70,6 +78,7 @@ export class ConversationGateway
 			try {
 				await WsJwtGuard.validateToken(client, this.usersService);
 				client.data.conversationSession = this.verifiedTokenPayload(client);
+				client.data.actingUserId = await this.actingUserId(client.data.user);
 				next();
 			} catch {
 				next(new Error("Conversation socket authentication failed."));
@@ -159,6 +168,17 @@ export class ConversationGateway
 		if (!user?._id) {
 			throw new UnauthorizedException("User is not authenticated");
 		}
+		return client.data.actingUserId ?? user._id.toString();
+	}
+
+	/** As RoleGuard does for REST: a team member with inbox or applications access acts as the owner. */
+	private async actingUserId(user: User): Promise<string> {
+		if (user.role === Role.LANDLORD_AGENCY) {
+			const membership = await this.usersRepository.findTeamOwner(user._id);
+			if (membership && CONVERSATION_SCOPES.some(scope => membership.scopes.includes(scope))) {
+				return membership.owner._id.toString();
+			}
+		}
 		return user._id.toString();
 	}
 
@@ -209,11 +229,10 @@ export class ConversationGateway
 		const clients = await this.server.in(conversationId).fetchSockets();
 		const recipients = await Promise.all(clients.map(async client => {
 			if (!await this.revalidateSession(client)) return null;
-			const session = client.data.conversationSession as ConversationSocketSession;
 			try {
 				await this.conversationAccessService.assertCanAccess(
 					conversationId,
-					session.userId,
+					client.data.actingUserId,
 				);
 				return client.id;
 			} catch {
@@ -241,6 +260,8 @@ export class ConversationGateway
 				session.userId,
 				session.sessionId,
 			);
+			// Re-read so a removed scope stops owner access, as it does on the next REST request.
+			client.data.actingUserId = await this.actingUserId(client.data.user!);
 			return true;
 		} catch {
 			this.clearSessionChecks(client.id);

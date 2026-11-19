@@ -427,6 +427,41 @@ describe("TenanciesService create / accept", () => {
 			expect(ctx.paymentModel.findOneAndUpdate).not.toHaveBeenCalled();
 		});
 
+		it("closes the tenant's open Checkout session and intent on the landlord's account before deleting their rows", async () => {
+			const ctx = setup();
+			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE
+			} as any);
+			const opened = [
+				{ _id: new Types.ObjectId(), providerRef: "cs_open", stripeAccountId: "acct_1" },
+				{ _id: new Types.ObjectId(), providerRef: "pi_failed", stripeAccountId: "acct_1" }
+			];
+			ctx.paymentModel.find.mockImplementation((filter: any) => lean(filter.providerRef ? opened : []));
+			const calls: { url: string; account?: string }[] = [];
+			const realFetch = global.fetch;
+			const realKey = process.env.STRIPE_SECRET_KEY;
+			process.env.STRIPE_SECRET_KEY = "sk_test_x";
+			global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+				calls.push({ url, account: (init?.headers as Record<string, string>)["Stripe-Account"] });
+				// The intent can no longer be cancelled: logged, and the end still goes through.
+				const ok = !url.includes("pi_failed");
+				return { ok, status: ok ? 200 : 400, json: async () => (ok ? { id: "cs_open" } : { error: { message: "already succeeded" } }) } as Response;
+			}) as never;
+			try {
+				await ctx.service.endTenancy(tenancyId.toString(), new Date("2027-01-16"), landlord);
+			} finally {
+				global.fetch = realFetch;
+				process.env.STRIPE_SECRET_KEY = realKey;
+			}
+
+			expect(ctx.paymentModel.find.mock.calls[0][0]).toMatchObject({ status: { $nin: ["PAID", "PENDING", "CANCELLED"] }, providerRef: /^(cs|pi)_/ });
+			expect(calls.map(call => [call.url.split("/v1")[1], call.account])).toEqual([
+				["/checkout/sessions/cs_open/expire", "acct_1"],
+				["/payment_intents/pi_failed/cancel", "acct_1"]
+			]);
+			expect(ctx.paymentModel.deleteMany).toHaveBeenCalledTimes(1);
+		});
+
 		it("tells each tenant once about the new end date", async () => {
 			const maya = new Types.ObjectId();
 			const tom = new Types.ObjectId();

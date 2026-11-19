@@ -20,7 +20,7 @@ export enum NotificationTargetKind {
 export enum NotificationScreen {
 	/** Student rent: web /student/home/rent, mobile /(app)/(tabs)/rent. */
 	RENT = "rent",
-	/** Student deposit: web /student/home/deposit, mobile /(app)/deposit. */
+	/** Student deposit: web /student/home/deposit (?tenancy=<id> with an id), mobile /(app)/deposit. */
 	DEPOSIT = "deposit",
 	/** Student home: web /student/home, mobile /(app)/(tabs)/my-home. */
 	HOME = "home",
@@ -91,6 +91,10 @@ export const NOTIFICATION_ROUTES: Record<NotificationTargetKind, Record<Audience
 export function linkFor(audience: Audience, kind: NotificationTargetKind, id?: string, listing?: string): string {
 	if (kind === NotificationTargetKind.APPLICATION && audience === "landlord" && id && listing) {
 		return `/application?listing=${encodeURIComponent(listing)}&id=${encodeURIComponent(id)}`;
+	}
+	// The id is the tenancy (deposit deductions): the deposit page opens on it.
+	if (kind === NotificationTargetKind.COMPLIANCE && audience === "student" && id) {
+		return `/student/home/deposit?tenancy=${encodeURIComponent(id)}`;
 	}
 	return NOTIFICATION_ROUTES[kind][audience].web;
 }

@@ -503,6 +503,26 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 		expect(doc.providerRef).toBe("pi_autopay");
 	});
 
+	it("refunds a paid Seek session whose payment row was deleted, and nothing it can't attribute", async () => {
+		const event = { type: "checkout.session.completed", account: "acct_123", data: { object: { id: "cs_1" } } };
+		const orphan = setup({ stripeAccountId: "acct_123" });
+		orphan.paymentModel.findById.mockReturnValue(lean(null) as any);
+		(orphan.paymentModel as any).exists = jest.fn().mockResolvedValue(null);
+		session.metadata = { paymentId: id.toString(), kind: PaymentKind.RENT, tenancyId: tenancy.toString(), tenantId: tenant.toString() };
+		await orphan.webhook(event, connectSecret);
+		expect(orphan.refunds().map(call => [call.body.get("payment_intent"), call.account])).toEqual([["pi_checkout", "acct_123"]]);
+
+		// Not Seek's metadata, or another row already holds the charge: left alone.
+		for (const [metadata, held] of [[{ paymentId: id.toString() }, null], [session.metadata, { _id: new Types.ObjectId() }]] as const) {
+			const other = setup({ stripeAccountId: "acct_123" });
+			other.paymentModel.findById.mockReturnValue(lean(null) as any);
+			(other.paymentModel as any).exists = jest.fn().mockResolvedValue(held);
+			session.metadata = metadata;
+			await other.webhook(event, connectSecret);
+			expect(other.refunds()).toHaveLength(0);
+		}
+	});
+
 	it("keeps the Checkout session when a card is declined on its page", async () => {
 		const { webhook, notifications } = setup();
 		await webhook({ type: "payment_intent.payment_failed", data: { object: { id: "pi_checkout", amount: 69500, metadata: { paymentId: id.toString() } } } });

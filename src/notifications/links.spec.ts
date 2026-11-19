@@ -24,4 +24,13 @@ describe("notification links", () => {
 		});
 		expect(notificationTarget("landlord", NotificationTargetKind.APPLICATION, "a1").link).toBe("/applicants");
 	});
+
+	it("opens a student's deposit on its tenancy", () => {
+		expect(notificationTarget("student", NotificationTargetKind.COMPLIANCE, "t 1")).toMatchObject({
+			link: "/student/home/deposit?tenancy=t%201",
+			target: { kind: "COMPLIANCE", screen: "deposit", id: "t 1" }
+		});
+		expect(notificationTarget("student", NotificationTargetKind.COMPLIANCE).link).toBe("/student/home/deposit");
+		expect(notificationTarget("landlord", NotificationTargetKind.COMPLIANCE, "t1").link).toBe("/dashboard");
+	});
 });

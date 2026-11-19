@@ -149,3 +149,20 @@ export async function refundPayment(
 	);
 	return true;
 }
+
+/**
+ * Closes a payment's open Checkout session or PaymentIntent on the account it was opened on,
+ * before its row is deleted, so the tenant can't pay something Seek no longer records.
+ */
+export async function closeStripeCharge(secretKey: string | undefined, payment: Pick<Payment, "providerRef" | "stripeAccountId"> & { _id: Types.ObjectId }) {
+	const ref = payment.providerRef;
+	if (!secretKey || !ref || !/^(cs|pi)_/.test(ref)) return;
+	try {
+		const stripe = new StripeClient(secretKey, payment.stripeAccountId ?? undefined);
+		if (ref.startsWith("cs_")) await stripe.expireCheckoutSession(ref);
+		else await stripe.cancelPaymentIntent(ref);
+	} catch (error) {
+		// Already expired, completed or cancelled: a charge that went through anyway is refunded when its webhook finds no row.
+		logger.warn(`Could not close ${ref} for payment ${payment._id.toString()}: ${(error as Error).message}`);
+	}
+}
