@@ -76,11 +76,15 @@ export class Payment {
 	@Prop({ type: String, default: null })
 	providerRef: string | null;
 
+	/** Connected account the Stripe charge lives on (direct charge). Null: Seek's platform account (legacy rows). */
+	@Prop({ type: String, default: null })
+	stripeAccountId: string | null;
+
 	@ApiProperty({
 		enum: PayoutStatus,
 		required: false,
 		nullable: true,
-		description: "HELD: paid by card while the landlord's payouts weren't set up, so Seek holds the money. TRANSFERRED: Seek has since sent it to the landlord. Null: it goes straight to the landlord."
+		description: "Legacy only, never written for new charges. HELD: an old card payment Seek collected before the landlord could take card payments. TRANSFERRED: Seek has since sent it to the landlord. Null: it went straight to the landlord."
 	})
 	@Prop({ type: String, enum: [...Object.values(PayoutStatus), null], default: null })
 	payoutStatus?: PayoutStatus | null;

@@ -85,8 +85,8 @@ export interface StripeAccount {
 	charges_enabled: boolean;
 	payouts_enabled: boolean;
 	details_submitted: boolean;
-	/** `transfers: "active"` = the account can be a destination charge / transfer target. */
-	capabilities?: { transfers?: string };
+	/** `card_payments: "active"` = direct charges can be made on the account; `transfers` = legacy transfer target. */
+	capabilities?: { transfers?: string; card_payments?: string };
 	external_accounts?: { data?: StripeExternalAccount[] };
 }
 
@@ -128,7 +128,8 @@ export const STRIPE_V2_VERSION = "2026-10-28.endive";
 export class StripeClient {
 	private readonly baseUrl = "https://api.stripe.com/v1";
 
-	constructor(private readonly secretKey: string) {}
+	/** With `stripeAccount`, v1 calls act on that connected account (Stripe-Account header): direct charges live there. */
+	constructor(private readonly secretKey: string, private readonly stripeAccount?: string) {}
 
 	createPaymentIntent(
 		params: Record<string, unknown>,
@@ -147,8 +148,9 @@ export class StripeClient {
 	}
 
 	/**
-	 * A GB connected account (Accounts v2, Express dashboard) that receives a
-	 * landlord's rent as the recipient of destination charges and transfers.
+	 * A GB connected account (Accounts v2, Express dashboard) on which tenants'
+	 * card payments are made as direct charges (merchant card_payments). The
+	 * recipient configuration stays for releasing legacy held payments by transfer.
 	 */
 	createRecipientAccount(
 		params: { contact_email?: string; metadata?: Record<string, string> },
@@ -161,13 +163,21 @@ export class StripeClient {
 				...params,
 				dashboard: "express",
 				identity: { country: "gb" },
-				configuration: { recipient: { capabilities: { stripe_balance: { stripe_transfers: { requested: true } } } } },
-				// Stripe only allows these values for recipient-only accounts; the platform must have
-				// acknowledged loss liability (Dashboard > Connect > Platform profile) or creation fails.
+				configuration: {
+					merchant: { capabilities: { card_payments: { requested: true } } },
+					recipient: { capabilities: { stripe_balance: { stripe_transfers: { requested: true } } } }
+				},
+				// The platform must have acknowledged loss liability (Dashboard > Connect > Platform profile) or creation fails.
+				// shortcut: merchant config with Express dashboard and these responsibilities is unconfirmed, confirm account creation in test mode
 				defaults: { responsibilities: { fees_collector: "application", losses_collector: "application" } }
 			},
 			idempotencyKey
 		);
+	}
+
+	/** Updates an Accounts v2 account, e.g. to request merchant card_payments on an existing recipient account. */
+	updateAccount(id: string, params: Record<string, unknown>): Promise<{ id: string }> {
+		return this.request("POST", `/v2/core/accounts/${encodeURIComponent(id)}`, params);
 	}
 
 	/** v1 view of any account: Stripe serves v2 accounts on this endpoint too. */
@@ -221,10 +231,6 @@ export class StripeClient {
 		return this.request("GET", `/refunds/${encodeURIComponent(id)}`);
 	}
 
-	createCustomer(params: Record<string, unknown>, idempotencyKey: string): Promise<{ id: string }> {
-		return this.request("POST", "/customers", params, idempotencyKey);
-	}
-
 	private async request<T>(
 		method: "GET" | "POST",
 		path: string,
@@ -239,6 +245,7 @@ export class StripeClient {
 		};
 		if (method === "POST") headers["Content-Type"] = v2 ? "application/json" : "application/x-www-form-urlencoded";
 		if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+		if (this.stripeAccount && !v2) headers["Stripe-Account"] = this.stripeAccount;
 
 		let body: string | undefined;
 		if (method === "POST" && params) body = v2 ? JSON.stringify(params) : toStripeForm(params).toString();

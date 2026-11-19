@@ -39,11 +39,14 @@ const CONNECT_NOT_ENABLED = new Set([
 ]);
 
 /**
- * Rent reaches the landlord as a destination charge / transfer: that needs the
- * `transfers` capability (v2 recipient `stripe_transfers`), not `charges_enabled`,
- * which stays false on recipient-only accounts.
+ * Card payments are direct charges on the landlord's own connected account, so Seek never
+ * holds tenant money: the account needs the merchant `card_payments` capability.
  */
-const canReceive = (account: StripeAccount) => account.capabilities?.transfers === "active";
+const canCharge = (account: StripeAccount) => account.capabilities?.card_payments === "active";
+/** Releasing a legacy held payment is a transfer: that needs `transfers` (v2 recipient `stripe_transfers`). */
+const canTransfer = (account: StripeAccount) => account.capabilities?.transfers === "active";
+
+const CARD_NOT_READY = "Your landlord hasn't finished setting up card payments on Seek yet, so this can't be paid by card. Use the bank transfer details or ask them to finish setup.";
 import {
 	CheckoutQueryDto,
 	CheckoutResponseDto,
@@ -103,10 +106,9 @@ export function monthRange(month?: string, now: Date = new Date()) {
 	return { start, end, label: `${year}-${String(monthIndex).padStart(2, "0")}` };
 }
 
-/** Route the charge to the landlord's connected account; Seek's fee only when there is one (none on holding deposits). */
-function toLandlord(destination: string | null | undefined, seekFee: number) {
-	if (!destination) return {};
-	return { ...(seekFee > 0 ? { application_fee_amount: seekFee } : {}), transfer_data: { destination } };
+/** Seek's commission on a direct charge, taken from the landlord's side (none on holding deposits). */
+function seekFeeParams(seekFee: number) {
+	return seekFee > 0 ? { application_fee_amount: seekFee } : {};
 }
 
 function assertRentOpen(status: TenancyStatus | string) {
@@ -323,26 +325,31 @@ export class PaymentsService {
 	}
 
 	async handleWebhook(rawBody: Buffer | undefined, signature: string | undefined) {
-		const secret = this.config.get<string>("STRIPE_WEBHOOK_SECRET");
-		if (!secret) {
+		// Platform endpoint (legacy charges) and Connect endpoint (direct charges on landlords' accounts).
+		const secrets = [this.config.get<string>("STRIPE_WEBHOOK_SECRET"), this.config.get<string>("STRIPE_CONNECT_WEBHOOK_SECRET")]
+			.filter((secret): secret is string => Boolean(secret));
+		if (secrets.length === 0) {
 			throw new ServiceUnavailableException("Stripe webhooks are not configured.");
 		}
-		if (!rawBody || !verifyStripeSignature({ payload: rawBody, header: signature, secret })) {
+		if (!rawBody || !secrets.some(secret => verifyStripeSignature({ payload: rawBody, header: signature, secret }))) {
 			throw new BadRequestException("Invalid Stripe signature.");
 		}
 
-		let event: { type?: string; data?: { object?: StripePaymentIntent } };
+		let event: { type?: string; account?: string; data?: { object?: StripePaymentIntent } };
 		try {
 			event = JSON.parse(rawBody.toString("utf8"));
 		} catch {
 			throw new BadRequestException("Invalid webhook payload.");
 		}
+		// The connected account the event happened on; none for Seek's own (legacy) charges.
+		const account = event.account ?? null;
 		if (event.type === "checkout.session.completed") {
 			const sessionId = event.data?.object?.id;
 			// The event's payment_intent is a bare id: the retrieved session expands it, so the autopay card gets saved.
 			if (sessionId && this.mode() === "stripe") {
 				await this.completeCheckout(
-					await new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!).retrieveCheckoutSession(sessionId)
+					await new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!, account ?? undefined).retrieveCheckoutSession(sessionId),
+					account
 				);
 			}
 			return { received: true };
@@ -367,16 +374,23 @@ export class PaymentsService {
 			this.logger.warn(`Stripe event ${event.type} for unknown intent ${intent.id}`);
 			return { received: true };
 		}
+		// A charge on any other account than the one Seek opened it on never settles this payment.
+		if ((payment.stripeAccountId ?? null) !== account) {
+			this.logger.warn(`Stripe event ${event.type} for payment ${payment._id.toString()} came from account ${account ?? "platform"}, expected ${payment.stripeAccountId ?? "platform"}: ignored`);
+			// Money taken there (a legacy intent outliving its row's move, say) is never kept: it goes back to the payer.
+			if (event.type === "payment_intent.succeeded") await this.refundCharge(intent.id, "duplicate", account);
+			return { received: true };
+		}
 		if (typeof intent.amount === "number" && intent.amount !== payment.amount) {
 			this.logger.error(`Stripe amount mismatch for payment ${payment._id.toString()}: charged ${intent.amount}, expected ${payment.amount}`);
 			// A captured charge Seek can't match is never kept silently: it goes back to the payer.
-			if (event.type === "payment_intent.succeeded") await this.refundCharge(intent.id, "requested_by_customer");
+			if (event.type === "payment_intent.succeeded") await this.refundCharge(intent.id, "requested_by_customer", account);
 			return { received: true };
 		}
 
 		if (event.type === "payment_intent.succeeded") {
 			const paid = await this.markPaid(payment as PaymentLean, PaymentProvider.STRIPE, intent.id);
-			if (!paid) await this.refundIfDuplicate(payment._id, intent.id);
+			if (!paid) await this.refundIfDuplicate(payment._id, intent.id, account);
 		} else if (event.type === "payment_intent.payment_failed") {
 			// A declined card on Checkout is retried on the same page: its session stays the reference.
 			if (payment.providerRef?.startsWith("cs_")) return { received: true };
@@ -494,11 +508,11 @@ export class PaymentsService {
 		};
 	}
 
-	/** Card payments can't reach this landlord yet: no Stripe account able to take charges. */
+	/** Tenants can't pay this landlord by card yet: no connected account able to take card payments. */
 	private async payoutsOnHold(landlordId: string): Promise<boolean> {
 		if (this.mode() !== "stripe") return false;
 		const stripe = new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!);
-		return !(await this.destinationFor(stripe, new Types.ObjectId(landlordId)));
+		return !(await this.accountFor(stripe, new Types.ObjectId(landlordId)));
 	}
 
 	/**
@@ -514,6 +528,8 @@ export class PaymentsService {
 			.find({
 				status: PaymentStatus.PAID,
 				payoutStatus: PayoutStatus.HELD,
+				// Only Seek's own legacy charges: a direct charge is already the landlord's money.
+				stripeAccountId: null,
 				refundFailed: { $ne: true },
 				$or: [
 					{ payoutReleaseStartedAt: null, refundDue: { $ne: true } },
@@ -536,6 +552,7 @@ export class PaymentsService {
 						_id: payment._id,
 						status: PaymentStatus.PAID,
 						payoutStatus: PayoutStatus.HELD,
+						stripeAccountId: null,
 						refundFailed: { $ne: true },
 						$or: [
 							{ payoutReleaseStartedAt: null, refundDue: { $ne: true } },
@@ -554,7 +571,7 @@ export class PaymentsService {
 				continue;
 			}
 			const key = claimed.landlord.toString();
-			if (!destinations.has(key)) destinations.set(key, await this.destinationFor(stripe, claimed.landlord));
+			if (!destinations.has(key)) destinations.set(key, await this.accountFor(stripe, claimed.landlord, canTransfer));
 			const destination = destinations.get(key);
 			if (!destination) {
 				await this.paymentModel.updateOne({ _id: claimed._id, payoutStatus: PayoutStatus.HELD }, { $set: { payoutReleaseStartedAt: null } });
@@ -821,28 +838,38 @@ export class PaymentsService {
 			};
 		}
 
-		const stripe = new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!);
+		const account = await this.accountFor(new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!), payment.landlord);
 		try {
 			if (payment.providerRef?.startsWith("cs_")) {
-				const existing = await stripe.retrieveCheckoutSession(payment.providerRef);
+				const previous = this.stripeFor(payment);
+				const existing = await previous.retrieveCheckoutSession(payment.providerRef);
 				if (existing.status === "open" && existing.url) {
-					if (existing.success_url === successUrl && existing.cancel_url === cancelUrl) {
+					if (account && payment.stripeAccountId === account && existing.success_url === successUrl && existing.cancel_url === cancelUrl) {
 						return { mode, sessionId: existing.id, url: existing.url, status: payment.status };
 					}
-					// Opened from the other client (web vs app): it would send the payer back to the wrong place.
-					await stripe.expireCheckoutSession(existing.id);
+					// Opened from the other client (web vs app), or its charge would land on another account (Seek's, for a legacy session).
+					await previous.expireCheckoutSession(existing.id);
 				}
 				if (existing.payment_status === "paid") {
-					const done = await this.completeCheckout(existing);
+					const done = await this.completeCheckout(existing, payment.stripeAccountId ?? null);
 					return { mode, sessionId: existing.id, url: successUrl.replace("{CHECKOUT_SESSION_ID}", existing.id), status: done?.status ?? payment.status };
 				}
+			}
+			if (!account) throw new BadRequestException(CARD_NOT_READY);
+			// An intent from POST /pay on another account (Seek's, for a legacy one) is settled or cancelled, never left to charge too.
+			if (payment.providerRef?.startsWith("pi_") && payment.provider === PaymentProvider.STRIPE && payment.stripeAccountId !== account) {
+				const previous = this.stripeFor(payment);
+				const existing = await previous.retrievePaymentIntent(payment.providerRef);
+				if (existing.status === "succeeded") {
+					const paid = await this.markPaid(payment, PaymentProvider.STRIPE, existing.id);
+					return { mode, sessionId: null, url: successUrl.replace("{CHECKOUT_SESSION_ID}", existing.id), status: (paid ?? payment).status };
+				}
+				if (OPEN_INTENT_STATUSES.includes(existing.status)) await previous.cancelPaymentIntent(existing.id);
 			}
 			const plan = payment.tenancy
 				? await this.planModel.findOne({ tenancy: payment.tenancy, tenant: payment.tenant }, { autopay: 1 }).lean().exec()
 				: null;
 			const saveCard = Boolean(plan?.autopay) && payment.kind !== PaymentKind.HOLDING_DEPOSIT;
-			const destination = await this.destinationFor(stripe, payment.landlord);
-			const customer = await this.customerFor(stripe, payment.tenant);
 			// A holding deposit's session closes with its offer. Stripe allows 30 minutes to 24 hours;
 			// whole minutes keep the idempotency key stable across a double tap.
 			const closesAt = offerEnds
@@ -850,7 +877,6 @@ export class PaymentsService {
 				: null;
 			const body = {
 					mode: "payment",
-					customer,
 					line_items: [
 						{
 							quantity: 1,
@@ -862,24 +888,27 @@ export class PaymentsService {
 						}
 					],
 					payment_intent_data: {
-						...toLandlord(destination, feeFor(payment).seekFee),
+						...seekFeeParams(feeFor(payment).seekFee),
 						...(saveCard ? { setup_future_usage: "off_session" } : {}),
 						metadata: this.stripeMetadata(payment)
 					},
+					// The card for autopay is saved on a customer on the landlord's account, where the charges live.
+					...(saveCard ? { customer_creation: "always" } : {}),
 					metadata: this.stripeMetadata(payment),
 					...(closesAt ? { expires_at: closesAt } : {}),
 					success_url: successUrl,
 					cancel_url: cancelUrl
 				};
-			// Keyed on the whole request: a changed amount, customer, destination or autopay choice is a new session.
-			const session = await stripe.createCheckoutSession(
+			await this.bindAccount(payment, account);
+			// Keyed on the whole request: a changed amount, account or autopay choice is a new session.
+			const session = await new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!, account).createCheckoutSession(
 				body,
-				`seek-checkout-${payment._id.toString()}-${payment.providerRef ?? "first"}-${createHash("sha256").update(JSON.stringify(body)).digest("hex").slice(0, 32)}`
+				`seek-checkout-${payment._id.toString()}-${payment.providerRef ?? "first"}-${createHash("sha256").update(account + JSON.stringify(body)).digest("hex").slice(0, 32)}`
 			);
 			// Remember the session so a second tap reuses it instead of opening a second charge.
 			await this.paymentModel.updateOne(
 				{ _id: payment._id, status: { $ne: PaymentStatus.PAID } },
-				{ $set: { provider: PaymentProvider.STRIPE, providerRef: session.id, payoutStatus: destination ? null : PayoutStatus.HELD } }
+				{ $set: { provider: PaymentProvider.STRIPE, providerRef: session.id } }
 			);
 			return { mode, sessionId: session.id, url: session.url ?? successUrl, status: payment.status };
 		} catch (error) {
@@ -898,9 +927,11 @@ export class PaymentsService {
 			throw new ForbiddenException("You can only confirm your own payments.");
 		}
 		if (this.mode() !== "stripe") return this.payResponse(payment, null);
+		// Back from a checkout() that found the payment already paid by its PaymentIntent: nothing to read.
+		if (payment.status === PaymentStatus.PAID && sessionId === payment.providerRef) return this.payResponse(payment, null);
 		let session: StripeCheckoutSession;
 		try {
-			session = await new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!).retrieveCheckoutSession(sessionId);
+			session = await this.stripeFor(payment).retrieveCheckoutSession(sessionId);
 		} catch (error) {
 			if (error instanceof StripeApiError) {
 				throw error.status === 404
@@ -912,12 +943,15 @@ export class PaymentsService {
 		if (session.metadata?.paymentId !== payment._id.toString()) {
 			throw new BadRequestException("This checkout session is for another payment.");
 		}
-		const updated = await this.completeCheckout(session);
+		const updated = await this.completeCheckout(session, payment.stripeAccountId ?? null);
 		return this.payResponse(updated ?? (await this.findPayment(paymentId)), null);
 	}
 
-	/** Shared by the redirect confirm and the checkout.session.completed webhook. */
-	private async completeCheckout(session: StripeCheckoutSession | undefined) {
+	/**
+	 * Shared by the redirect confirm and the checkout.session.completed webhook.
+	 * `account` is the connected account the session was read from (null: Seek's platform).
+	 */
+	private async completeCheckout(session: StripeCheckoutSession | undefined, account: string | null) {
 		const paymentId = session?.metadata?.paymentId;
 		if (!session?.id || !paymentId || !Types.ObjectId.isValid(paymentId)) return null;
 		const payment = await this.paymentModel.findById(paymentId).lean().exec();
@@ -927,25 +961,26 @@ export class PaymentsService {
 		}
 		const intent = typeof session.payment_intent === "object" ? session.payment_intent : null;
 		const intentId = typeof session.payment_intent === "string" ? session.payment_intent : intent?.id;
+		// A session on any other account than the one Seek opened it on never settles this payment, and its money goes back.
+		if ((payment.stripeAccountId ?? null) !== account) {
+			this.logger.warn(`Checkout session ${session.id} for payment ${payment._id.toString()} is on account ${account ?? "platform"}, expected ${payment.stripeAccountId ?? "platform"}: ignored`);
+			if (session.payment_status === "paid" && intentId) await this.refundCharge(intentId, "duplicate", account);
+			return null;
+		}
 		if (typeof session.amount_total === "number" && session.amount_total !== payment.amount) {
 			this.logger.error(`Stripe amount mismatch for payment ${payment._id.toString()} (session ${session.id}): charged ${session.amount_total}, expected ${payment.amount}`);
-			if (session.payment_status === "paid" && intentId) await this.refundCharge(intentId, "requested_by_customer");
+			if (session.payment_status === "paid" && intentId) await this.refundCharge(intentId, "requested_by_customer", account);
 			return null;
 		}
 		if (session.payment_status !== "paid") return payment as PaymentLean;
 
 		const paid = await this.markPaid(payment as PaymentLean, PaymentProvider.STRIPE, intentId ?? session.id);
-		if (!paid && intentId) await this.refundIfDuplicate(payment._id, intentId, session.id);
-		if (session.customer) {
-			await this.userModel.updateOne(
-				{ _id: payment.tenant, stripeCustomerId: { $exists: false } },
-				{ $set: { stripeCustomerId: session.customer } }
-			);
-		}
-		if (intent?.payment_method && payment.tenancy) {
+		if (!paid && intentId) await this.refundIfDuplicate(payment._id, intentId, account, session.id);
+		// The card and its customer live on the landlord's account: autopay charges there with both.
+		if (account && intent?.payment_method && session.customer && payment.tenancy) {
 			await this.planModel.updateOne(
 				{ tenancy: payment.tenancy, tenant: payment.tenant, autopay: true },
-				{ $set: { paymentMethodId: intent.payment_method } }
+				{ $set: { paymentMethodId: intent.payment_method, stripeCustomerId: session.customer } }
 			);
 		}
 		return paid ?? (payment as PaymentLean);
@@ -955,43 +990,48 @@ export class PaymentsService {
 	 * A second successful charge on an already-paid payment (autopay and an open
 	 * Checkout, say) is refunded, never kept. Same charge seen twice: nothing.
 	 */
-	private async refundIfDuplicate(paymentId: Types.ObjectId, intentId: string, sessionId?: string) {
+	private async refundIfDuplicate(paymentId: Types.ObjectId, intentId: string, account: string | null, sessionId?: string) {
 		const current = await this.paymentModel.findById(paymentId, { status: 1, providerRef: 1 }).lean().exec();
 		if (current?.status !== PaymentStatus.PAID || current.providerRef === intentId || (sessionId && current.providerRef === sessionId)) return;
 		this.logger.error(`Duplicate charge ${intentId} on payment ${paymentId.toString()} already paid by ${current.providerRef}: refunding it`);
-		await this.refundCharge(intentId, "duplicate");
+		await this.refundCharge(intentId, "duplicate", account);
 	}
 
-	/** Refunds a whole charge, idempotently per intent. */
-	private async refundCharge(intentId: string, reason: "duplicate" | "requested_by_customer") {
-		await refundStripeCharge({ secretKey: this.config.get<string>("STRIPE_SECRET_KEY")!, intentId, reason });
+	/** Refunds a whole charge on the account it was made on, idempotently per intent. */
+	private async refundCharge(intentId: string, reason: "duplicate" | "requested_by_customer", account: string | null) {
+		await refundStripeCharge({ secretKey: this.config.get<string>("STRIPE_SECRET_KEY")!, intentId, reason, account: account ?? undefined });
 	}
 
-	/** The landlord's connected account, when Stripe lets it receive destination charges and transfers. */
-	private async destinationFor(stripe: StripeClient, landlordId: Types.ObjectId): Promise<string | null> {
+	/** Stripe client acting where this payment's charge lives: the landlord's account, or Seek's for legacy rows. */
+	private stripeFor(payment: Pick<Payment, "stripeAccountId">) {
+		return new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!, payment.stripeAccountId ?? undefined);
+	}
+
+	/**
+	 * Records the account a charge is about to be made on before Stripe is called, so its webhook matches.
+	 * Never HELD: the money is the landlord's from the start. A reference on another account was closed by the caller.
+	 */
+	private async bindAccount(payment: PaymentLean, account: string) {
+		await this.paymentModel.updateOne(
+			{ _id: payment._id, status: { $ne: PaymentStatus.PAID } },
+			{ $set: { stripeAccountId: account, payoutStatus: null, ...(payment.stripeAccountId === account ? {} : { providerRef: null }) } }
+		);
+	}
+
+	/** The landlord's connected account, when Stripe lets it take card payments (or, for legacy releases, transfers). */
+	private async accountFor(stripe: StripeClient, landlordId: Types.ObjectId, ready = canCharge): Promise<string | null> {
 		const landlord = await this.userModel.findById(landlordId, { stripeAccountId: 1, suspendedAt: 1, deletedAt: 1 }).lean().exec();
 		const accountId = landlord?.stripeAccountId;
-		// A suspended or deleted landlord gets no payout: the payment is held, and released if the suspension is lifted.
+		// A suspended or deleted landlord takes no card payments (and gets no legacy release until the suspension is lifted).
 		if (landlord?.suspendedAt || landlord?.deletedAt) return null;
 		if (!accountId || accountId.startsWith("acct_sim_")) return null;
 		try {
 			const account = await stripe.retrieveAccount(accountId);
-			return canReceive(account) ? accountId : null;
+			return ready(account) ? accountId : null;
 		} catch (error) {
 			if (error instanceof StripeApiError) return null;
 			throw error;
 		}
-	}
-
-	private async customerFor(stripe: StripeClient, tenantId: Types.ObjectId): Promise<string> {
-		const user = await this.userModel.findById(tenantId, { stripeCustomerId: 1, email: 1, name: 1 }).lean().exec();
-		if (user?.stripeCustomerId) return user.stripeCustomerId;
-		const customer = await stripe.createCustomer(
-			{ email: user?.email, name: user?.name, metadata: { userId: tenantId.toString() } },
-			`seek-customer-${tenantId.toString()}`
-		);
-		await this.userModel.updateOne({ _id: tenantId }, { $set: { stripeCustomerId: customer.id } });
-		return customer.id;
 	}
 
 	private stripeMetadata(payment: PaymentLean) {
@@ -1015,7 +1055,7 @@ export class PaymentsService {
 	}
 
 	/**
-	 * Creates the landlord's Stripe connected account (Accounts v2, recipient) the first time and returns
+	 * Creates the landlord's Stripe connected account (Accounts v2, merchant card payments) the first time and returns
 	 * Stripe's onboarding link. Without a Stripe key (development) the account
 	 * is simulated and ready immediately.
 	 */
@@ -1048,6 +1088,11 @@ export class PaymentsService {
 				);
 				accountId = account.id;
 				await this.userModel.updateOne({ _id: landlord._id }, { $set: { stripeAccountId: accountId } }).exec();
+			} else {
+				// Accounts made before direct charges were recipient-only: ask for card payments so onboarding collects what they need.
+				// shortcut: v2 update body for merchant card_payments follows Stripe's documented shape, confirm in test mode
+				await stripe.updateAccount(accountId, { configuration: { merchant: { capabilities: { card_payments: { requested: true } } } } })
+					.catch((error: Error) => this.logger.error(`Requesting card payments on ${accountId} failed: ${error.message}`));
 			}
 			const frontend = this.config.get<string>("FRONTEND_URL") ?? "";
 			const link = await stripe.createAccountLink({
@@ -1061,7 +1106,7 @@ export class PaymentsService {
 				this.logger.error(`Stripe Connect onboarding failed (${error.status} ${error.code ?? "no code"}): ${error.message}`);
 				if (CONNECT_NOT_ENABLED.has(error.code ?? "") || /signed up for Connect/i.test(error.message)) {
 					throw new ConflictException(
-						"Payouts to your bank aren't available yet: Stripe Connect is not enabled for Seek. Tenants can still pay by card and Seek holds the rent until payouts are switched on."
+						"Card payments and payouts aren't available yet: Stripe Connect is not enabled for Seek. Tenants can pay you by bank transfer in the meantime."
 					);
 				}
 				throw new BadGatewayException("Payout setup could not be started. Please try again.");
@@ -1095,9 +1140,8 @@ export class PaymentsService {
 				? { last4: bank.last4 ?? null, bankName: bank.bank_name ?? null, verified: bank.status === "verified" }
 				: null;
 			await this.userModel.updateOne({ _id: landlordId }, payoutBank ? { $set: { payoutBank } } : { $unset: { payoutBank: 1 } });
-			// Payouts just became possible: send what Seek held now rather than at the next sweep.
-			const ready = canReceive(account);
-			if (ready) {
+			// Legacy: money Seek held before direct charges goes out as soon as transfers are possible.
+			if (canTransfer(account)) {
 				await this.releaseHeldPayouts(new Types.ObjectId(landlordId)).catch((error: Error) =>
 					this.logger.error(`Releasing held payouts failed: ${error.message}`)
 				);
@@ -1106,7 +1150,7 @@ export class PaymentsService {
 				...none,
 				payoutBank,
 				connected: true,
-				chargesEnabled: ready,
+				chargesEnabled: canCharge(account),
 				payoutsEnabled: account.payouts_enabled,
 				detailsSubmitted: account.details_submitted
 			};
@@ -1305,11 +1349,11 @@ export class PaymentsService {
 	private async pendingAttemptDead(payment: PaymentLean): Promise<boolean> {
 		if (!payment.providerRef) return true;
 		if (this.mode() !== "stripe") return false;
-		const stripe = new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!);
+		const stripe = this.stripeFor(payment);
 		try {
 			if (payment.providerRef.startsWith("cs_")) {
 				const session = await stripe.retrieveCheckoutSession(payment.providerRef);
-				if (session.payment_status === "paid") await this.completeCheckout(session);
+				if (session.payment_status === "paid") await this.completeCheckout(session, payment.stripeAccountId ?? null);
 				return session.status === "expired";
 			}
 			if (!payment.providerRef.startsWith("pi_")) return false;
@@ -1327,26 +1371,53 @@ export class PaymentsService {
 	private async sweepStripeAutopay(now: Date) {
 		const plans = await this.planModel
 			// Naming the select:false field in the projection includes it.
-			.find({ autopay: true, paymentMethodId: { $exists: true } }, { tenancy: 1, tenant: 1, paymentMethodId: 1 })
+			.find({ autopay: true, paymentMethodId: { $exists: true } }, { tenancy: 1, tenant: 1, paymentMethodId: 1, stripeCustomerId: 1 })
 			.lean()
 			.exec();
 		if (plans.length === 0) return;
 		const stripe = new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!);
+		const accounts = new Map<string, string | null>();
 		for (const plan of plans) {
-			const tenant = await this.userModel.findById(plan.tenant, { stripeCustomerId: 1 }).lean().exec();
-			if (!tenant?.stripeCustomerId || !plan.paymentMethodId) continue;
+			// A card saved before direct charges (on Seek's account, no plan customer) is never charged again.
+			if (!plan.stripeCustomerId || !plan.paymentMethodId) continue;
 			const due = await this.paymentModel
 				.find({ tenancy: plan.tenancy, tenant: plan.tenant, status: PaymentStatus.SCHEDULED, dueDate: { $lte: now } })
 				.lean()
 				.exec();
 			for (const payment of due as PaymentLean[]) {
+				const key = payment.landlord.toString();
+				if (!accounts.has(key)) accounts.set(key, await this.accountFor(stripe, payment.landlord));
+				const account = accounts.get(key);
+				if (!account) {
+					// Seek never collects rent itself: the tenant pays another way and the row stays SCHEDULED.
+					this.logger.warn(`Autopay skipped for payment ${payment._id.toString()}: the landlord can't take card payments yet`);
+					// Told once per payment, so a LATE notice never comes as a surprise.
+					await this.notifications.notify({
+						user: payment.tenant,
+						kind: NotificationKind.PAYMENT_FAILED,
+						title: `Autopay of ${formatPence(payment.amount)} didn't run`,
+						body: "Your landlord can't take card payments on Seek yet, so autopay didn't run. Please pay by bank transfer or ask them to finish setup.",
+						...notificationTarget("student", NotificationTargetKind.PAYMENTS),
+						dedupeKey: `autopay-skipped:${payment._id.toString()}`
+					});
+					await this.notifications.notify({
+						user: payment.landlord,
+						kind: NotificationKind.PAYMENT_FAILED,
+						title: "Finish Stripe setup to take rent by card",
+						body: `Autopay of ${formatPence(payment.amount)} couldn't run because card payments aren't set up on your account yet.`,
+						...notificationTarget("landlord", NotificationTargetKind.PAYMENTS),
+						dedupeKey: `autopay-skipped:${payment._id.toString()}`
+					});
+					continue;
+				}
 				// An open Checkout page could still be paid: close it first, or leave the instalment to it.
 				if (payment.providerRef?.startsWith("cs_")) {
 					try {
-						const session = await stripe.retrieveCheckoutSession(payment.providerRef);
-						if (session.status === "open") await stripe.expireCheckoutSession(session.id);
+						const previous = this.stripeFor(payment);
+						const session = await previous.retrieveCheckoutSession(payment.providerRef);
+						if (session.status === "open") await previous.expireCheckoutSession(session.id);
 						else if (session.status !== "expired") {
-							await this.completeCheckout(session);
+							await this.completeCheckout(session, payment.stripeAccountId ?? null);
 							continue;
 						}
 					} catch (error) {
@@ -1361,16 +1432,16 @@ export class PaymentsService {
 				);
 				if (claimed.modifiedCount === 0) continue;
 				try {
-					const destination = await this.destinationFor(stripe, payment.landlord);
-					const intent = await stripe.createPaymentIntent(
+					await this.bindAccount(payment, account);
+					const intent = await new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!, account).createPaymentIntent(
 						{
 							amount: payment.amount,
 							currency: "gbp",
-							customer: tenant.stripeCustomerId,
+							customer: plan.stripeCustomerId,
 							payment_method: plan.paymentMethodId,
 							off_session: true,
 							confirm: true,
-							...toLandlord(destination, feeFor(payment).seekFee),
+							...seekFeeParams(feeFor(payment).seekFee),
 							description: await this.describe(payment),
 							metadata: this.stripeMetadata(payment)
 						},
@@ -1378,7 +1449,7 @@ export class PaymentsService {
 					);
 					await this.paymentModel.updateOne(
 						{ _id: payment._id },
-						{ $set: { providerRef: intent.id, payoutStatus: destination ? null : PayoutStatus.HELD } }
+						{ $set: { providerRef: intent.id } }
 					);
 					if (intent.status === "succeeded") await this.markPaid(payment, PaymentProvider.STRIPE, intent.id);
 				} catch (error) {
@@ -1455,25 +1526,29 @@ export class PaymentsService {
 	}
 
 	private async payWithStripe(payment: PaymentLean) {
-		const stripe = new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!);
+		const previous = this.stripeFor(payment);
+		const account = await this.accountFor(new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!), payment.landlord);
 
 		try {
-			// An open Checkout page could still be paid (with its own destination): close it first, or let it settle the payment.
+			// An open Checkout page could still be paid (on its own account): close it first, or let it settle the payment.
 			if (payment.providerRef?.startsWith("cs_")) {
-				const session = await stripe.retrieveCheckoutSession(payment.providerRef);
-				if (session.status === "open") await stripe.expireCheckoutSession(session.id);
+				const session = await previous.retrieveCheckoutSession(payment.providerRef);
+				if (session.status === "open") await previous.expireCheckoutSession(session.id);
 				else if (session.status !== "expired") {
-					const settled = await this.completeCheckout(session);
+					const settled = await this.completeCheckout(session, payment.stripeAccountId ?? null);
 					return this.payResponse(settled ?? payment, null);
 				}
 			}
 			if (payment.providerRef?.startsWith("pi_") && payment.provider === PaymentProvider.STRIPE) {
-				const existing = await stripe.retrievePaymentIntent(payment.providerRef);
+				const existing = await previous.retrievePaymentIntent(payment.providerRef);
 				if (existing.status === "succeeded") {
 					const paid = await this.markPaid(payment, PaymentProvider.STRIPE, existing.id);
 					return this.payResponse(paid ?? payment, null);
 				}
-				if (OPEN_INTENT_STATUSES.includes(existing.status)) {
+				// An open intent on another account (Seek's, for a legacy one) is cancelled, never reused.
+				if (OPEN_INTENT_STATUSES.includes(existing.status) && (!account || payment.stripeAccountId !== account)) {
+					await previous.cancelPaymentIntent(existing.id);
+				} else if (OPEN_INTENT_STATUSES.includes(existing.status)) {
 					await this.paymentModel.updateOne(
 						{ _id: payment._id, status: { $ne: PaymentStatus.PAID } },
 						{ $set: { status: PaymentStatus.PENDING } }
@@ -1484,15 +1559,16 @@ export class PaymentsService {
 			if (!PAYABLE.includes(payment.status) && payment.status !== PaymentStatus.PENDING) {
 				throw new BadRequestException("This payment cannot be paid.");
 			}
+			// Seek never collects rent itself: no landlord account able to take cards, no card payment.
+			if (!account) throw new BadRequestException(CARD_NOT_READY);
 
-			// No usable connected account yet: Seek collects the rent and pays out later.
-			const destination = await this.destinationFor(stripe, payment.landlord);
-			const intent = await stripe.createPaymentIntent(
+			await this.bindAccount(payment, account);
+			const intent = await new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!, account).createPaymentIntent(
 				{
 					amount: payment.amount,
 					currency: "gbp",
 					automatic_payment_methods: { enabled: true },
-					...toLandlord(destination, feeFor(payment).seekFee),
+					...seekFeeParams(feeFor(payment).seekFee),
 					description: await this.describe(payment),
 					metadata: this.stripeMetadata(payment)
 				},
@@ -1500,9 +1576,9 @@ export class PaymentsService {
 			);
 			await this.paymentModel.updateOne(
 				{ _id: payment._id, status: { $ne: PaymentStatus.PAID } },
-				{ $set: { status: PaymentStatus.PENDING, provider: PaymentProvider.STRIPE, providerRef: intent.id, payoutStatus: destination ? null : PayoutStatus.HELD } }
+				{ $set: { status: PaymentStatus.PENDING, provider: PaymentProvider.STRIPE, providerRef: intent.id } }
 			);
-			return this.payResponse({ ...payment, status: PaymentStatus.PENDING }, intent.client_secret);
+			return this.payResponse({ ...payment, status: PaymentStatus.PENDING, stripeAccountId: account }, intent.client_secret);
 		} catch (error) {
 			if (error instanceof StripeApiError) {
 				this.logger.error(`Stripe error ${error.status} for payment ${payment._id.toString()}: ${error.message}`);
@@ -1564,9 +1640,7 @@ export class PaymentsService {
 				user: paid.landlord,
 				kind: NotificationKind.PAYMENT_RECEIVED,
 				title: `${tenant?.name ?? "A tenant"} paid ${formatPence(paid.amount)}${holding ? " holding deposit" : ""}`,
-				body: paid.payoutStatus === PayoutStatus.HELD
-					? `Seek is holding ${formatPence(paid.payout)} for you (after its ${formatPence(paid.seekFee)} fee) until you set up payouts.`
-					: `You receive ${formatPence(paid.payout)} after Seek's ${formatPence(paid.seekFee)} fee.`,
+				body: `You receive ${formatPence(paid.payout)} after Seek's ${formatPence(paid.seekFee)} fee.`,
 				...notificationTarget("landlord", NotificationTargetKind.PAYMENTS),
 				dedupeKey: `received:${paid._id.toString()}`
 			},
@@ -1575,12 +1649,13 @@ export class PaymentsService {
 		return paid as PaymentLean;
 	}
 
-	private payResponse(payment: Pick<PaymentLean, "_id" | "status" | "provider">, clientSecret: string | null) {
+	private payResponse(payment: Pick<PaymentLean, "_id" | "status" | "provider"> & Partial<Pick<PaymentLean, "stripeAccountId">>, clientSecret: string | null) {
 		return {
 			paymentId: payment._id.toString(),
 			status: payment.status,
 			provider: payment.provider ?? (this.mode() === "stripe" ? PaymentProvider.STRIPE : PaymentProvider.SIMULATED),
-			clientSecret
+			clientSecret,
+			stripeAccountId: payment.stripeAccountId ?? null
 		};
 	}
 

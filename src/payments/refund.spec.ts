@@ -116,6 +116,34 @@ describe("automatic payment refunds", () => {
 		expect(reversal).toHaveBeenLastCalledWith("tr_1", { amount: 31680 }, `seek-payment-refund-reversal-${base._id}`);
 	});
 
+	it("refunds a direct charge on the landlord's account, Seek's fee included, without a transfer reversal", async () => {
+		const calls: { url: string; account?: string; body: URLSearchParams }[] = [];
+		jest.spyOn(global, "fetch").mockImplementation((async (url: string, init?: RequestInit) => {
+			calls.push({ url, account: (init?.headers as Record<string, string>)["Stripe-Account"], body: new URLSearchParams(String(init?.body ?? "")) });
+			return { ok: true, status: 200, json: async () => (url.includes("/payment_intents/") ? { id: "pi_paid", application_fee_amount: 620 } : { id: "re_1", status: "succeeded" }) } as Response;
+		}) as never);
+
+		await expect(refundPayment(paymentModel as any, { ...base, stripeAccountId: "acct_123" }, "sk_test", 32000)).resolves.toBe(true);
+		const refund = calls.find(call => call.url.endsWith("/refunds"))!;
+		expect(calls.every(call => call.account === "acct_123")).toBe(true);
+		expect(refund.body.get("amount")).toBe("32000");
+		expect(refund.body.get("refund_application_fee")).toBe("true");
+		expect(refund.body.get("reverse_transfer")).toBeNull();
+	});
+
+	it("still reverses the transfer of a legacy destination charge on Seek's account", async () => {
+		const calls: { url: string; account?: string; body: URLSearchParams }[] = [];
+		jest.spyOn(global, "fetch").mockImplementation((async (url: string, init?: RequestInit) => {
+			calls.push({ url, account: (init?.headers as Record<string, string>)["Stripe-Account"], body: new URLSearchParams(String(init?.body ?? "")) });
+			return { ok: true, status: 200, json: async () => (url.includes("/payment_intents/") ? { id: "pi_paid", transfer_data: { destination: "acct_1" } } : { id: "re_1", status: "succeeded" }) } as Response;
+		}) as never);
+
+		await refundPayment(paymentModel as any, { ...base, stripeAccountId: null }, "sk_test");
+		const refund = calls.find(call => call.url.endsWith("/refunds"))!;
+		expect(calls.every(call => call.account === undefined)).toBe(true);
+		expect(refund.body.get("reverse_transfer")).toBe("true");
+	});
+
 	it("keeps the proportional fee split exact to the penny", () => {
 		const split = proportionalRefund(101, 50, 1);
 		expect(split).toEqual({ tenantRefund: 50, landlordNet: 50, keptSeekFee: 1, transferReversal: 50 });

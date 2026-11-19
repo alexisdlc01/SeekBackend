@@ -7,7 +7,7 @@ import { StripeApiError, StripeClient } from "./stripe";
 const logger = new Logger("PaymentRefund");
 
 export type RefundablePayment = Pick<Payment, "_id" | "amount" | "provider" | "providerRef" | "status" | "refundedAt" | "refundedAmount"> &
-	Partial<Pick<Payment, "refundRef" | "refundFailed" | "payoutStatus" | "payoutReleaseStartedAt" | "transferRef" | "reversalRef" | "seekFee">> & {
+	Partial<Pick<Payment, "refundRef" | "refundFailed" | "payoutStatus" | "payoutReleaseStartedAt" | "transferRef" | "reversalRef" | "seekFee" | "stripeAccountId">> & {
 	_id: Types.ObjectId;
 };
 
@@ -32,17 +32,20 @@ export async function refundStripeCharge(params: {
 	reason: "duplicate" | "requested_by_customer";
 	amount?: number;
 	idempotencyKey?: string;
+	/** Connected account of a direct charge; omitted for legacy platform charges. */
+	account?: string;
 }): Promise<{ id: string; status: string } | null> {
 	try {
-		const stripe = new StripeClient(params.secretKey);
+		const stripe = new StripeClient(params.secretKey, params.account);
 		const intent = await stripe.retrievePaymentIntent(params.intentId);
 		return await stripe.createRefund(
 			{
 				payment_intent: params.intentId,
 				reason: params.reason,
 				...(params.amount !== undefined ? { amount: params.amount } : {}),
-				// A destination charge already went to the landlord: take it back from them, with Seek's fee.
+				// Legacy destination charge: take it back from the landlord. A direct charge is refunded from their own balance.
 				...(intent.transfer_data ? { reverse_transfer: true } : {}),
+				// Seek's application fee goes back pro rata, so the landlord isn't charged a fee on refunded rent.
 				...(intent.application_fee_amount ? { refund_application_fee: true } : {})
 			},
 			params.idempotencyKey ?? `seek-refund-${params.intentId}`
@@ -74,7 +77,7 @@ export async function refundPayment(
 			logger.error(`Payment ${payment._id.toString()} cannot be refunded automatically (${payment.providerRef ?? "no provider reference"}). Refund it in the Stripe dashboard.`);
 			return false;
 		}
-		const stripe = new StripeClient(secretKey);
+		const stripe = new StripeClient(secretKey, payment.stripeAccountId ?? undefined);
 		const refunded = refundRef?.startsWith("re_")
 			? await stripe.retrieveRefund(refundRef).catch(error => {
 				if (!(error instanceof StripeApiError)) throw error;
@@ -85,6 +88,7 @@ export async function refundPayment(
 				secretKey,
 				intentId: payment.providerRef,
 				reason: "requested_by_customer",
+				account: payment.stripeAccountId ?? undefined,
 				...(amount < payment.amount ? { amount } : {}),
 				idempotencyKey: `seek-payment-refund-${payment._id.toString()}`
 			});
@@ -112,7 +116,8 @@ export async function refundPayment(
 			const reversalAmount = proportionalRefund(payment.amount, amount, payment.seekFee ?? 0).transferReversal;
 			if (reversalAmount > 0) {
 				try {
-					const reversal = await stripe.createTransferReversal(
+					// Transfers are Seek's own (platform) objects.
+					const reversal = await new StripeClient(secretKey).createTransferReversal(
 						payment.transferRef,
 						{ amount: reversalAmount },
 						`seek-payment-refund-reversal-${payment._id.toString()}`
