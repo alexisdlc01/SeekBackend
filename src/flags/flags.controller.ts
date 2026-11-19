@@ -7,6 +7,7 @@ import {
 	Param,
 	Delete
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { FlagsService } from "./flags.service";
 import { CreateFlagDto } from "./dto/create-flag.dto";
 import { ResolveFlagDto } from "./dto/resolve-flag.dto";
@@ -31,6 +32,7 @@ export class FlagsController {
 
 	@CreateFlagDocs()
 	@Post()
+	@Throttle({ default: { limit: 20, ttl: 60 * 60_000 } })
 	@StudentOrLandlordOrSuperuser()
 	create(@Body() createFlagDto: CreateFlagDto, @CurrentUser() user: User) {
 		return this.flagsService.create(createFlagDto, user);
