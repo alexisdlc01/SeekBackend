@@ -17,16 +17,21 @@ describe("FlagsService", () => {
 		await expect(service.getAll()).resolves.toBe(reports);
 	});
 
-	it("stores the flag without any admin email (no human queue)", async () => {
+	it("stores the flag and emails the admin, and a failed email does not fail the report", async () => {
 		const stored = { _id: "flag-2", text: "spam" };
 		const flagModel = { create: jest.fn().mockResolvedValue({ ...stored, toObject: () => stored }) };
 		const userModel = { exists: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ _id: "u" }) }) };
-		const service = new FlagsService(flagModel as never, userModel as never);
+		const mail = { sendReportEmail: jest.fn().mockRejectedValue(new Error("mailgun down")) };
+		const service = new FlagsService(flagModel as never, userModel as never, undefined, undefined, undefined, undefined, undefined, mail as never);
 		jest.spyOn((service as any).logger, "error").mockImplementation(() => undefined);
 
 		await expect(
-			service.create({ reportedUser: "64b64b64b64b64b64b64b64b", text: "spam" } as never, { _id: "u", email: "a@st-andrews.ac.uk" } as never)
+			service.create(
+				{ reportedUser: "64b64b64b64b64b64b64b64b", text: "spam", category: "OTHER" } as never,
+				{ _id: "u", name: "Ann", email: "a@st-andrews.ac.uk" } as never
+			)
 		).resolves.toBe(stored);
+		expect(mail.sendReportEmail).toHaveBeenCalledWith("Ann", "a@st-andrews.ac.uk", "[OTHER] spam", "user 64b64b64b64b64b64b64b64b");
 	});
 
 	it("lists only the caller's reports, newest first", async () => {
