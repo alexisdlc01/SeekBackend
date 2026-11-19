@@ -14,6 +14,7 @@ import { NotificationKind } from "../notifications/notification-kind.enum";
 import { Conversation } from "../conversation/converstaion.schema";
 import { Message } from "../conversation/message.schema";
 import { Tenancy } from "../tenancies/tenancy.schema";
+import { MailService } from "../auth/mail.service";
 
 const DAY_MS = 86_400_000;
 /** Reports count for 30 days; one still open after that is closed with CLOSED_RESPONSE. */
@@ -48,7 +49,8 @@ export class FlagsService {
 		@Optional() private readonly notifications?: NotificationsService,
 		@Optional() @InjectModel(Conversation.name) private readonly conversationModel?: Model<Conversation>,
 		@Optional() @InjectModel(Tenancy.name) private readonly tenancyModel?: Model<Tenancy>,
-		@Optional() @InjectModel(Message.name) private readonly messageModel?: Model<Message>
+		@Optional() @InjectModel(Message.name) private readonly messageModel?: Model<Message>,
+		@Optional() private readonly mail?: MailService
 	) {}
 
 	async create(createFlagDto: CreateFlagDto, user: User): Promise<Flag> {
@@ -75,7 +77,10 @@ export class FlagsService {
 			status: FlagStatus.UNDER_REVIEW
 		});
 
-		// No admin email: reports are handled by the rules below, never by a person.
+		// The rules below act alone; the email only tells Seek a report came in (App Store: timely response to reports).
+		await this.mail
+			?.sendReportEmail(user.name, user.email, `[${createFlagDto.category}] ${createFlagDto.text}`, `user ${createFlagDto.reportedUser}`)
+			.catch((error: Error) => this.logger.error(`Flag email failed for ${flag._id.toString()}: ${error?.message}`));
 		const triage = this.triage(createFlagDto);
 		if (triage) await this.flagModel.updateOne({ _id: flag._id }, { $set: { triage } }).exec();
 		// The flag is stored: a failed check must not 500 (a retry would duplicate the report).
