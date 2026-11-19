@@ -245,6 +245,7 @@ export class AccountService {
 					deletedAt,
 					email: `deleted-${userId.toString()}@deleted.invalid`,
 					refreshSessions: [],
+					pushTokens: [],
 					isGoogle: false,
 					team: [],
 					name: "Deleted user",

@@ -145,7 +145,7 @@ describe("AccountService deleteAccount", () => {
 		expect(result.deletedAt).toBeInstanceOf(Date);
 		const [filter, update] = userModel.updateOne.mock.calls[0];
 		expect(filter).toEqual({ _id: id, deletedAt: null });
-		expect(update.$set).toMatchObject({ refreshSessions: [], email: `deleted-${id.toString()}@deleted.invalid` });
+		expect(update.$set).toMatchObject({ refreshSessions: [], pushTokens: [], email: `deleted-${id.toString()}@deleted.invalid` });
 		expect(update.$unset.password).toBe(1);
 	});
 
