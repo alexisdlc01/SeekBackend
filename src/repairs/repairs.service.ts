@@ -3,7 +3,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { Repair, RepairStatus } from "./repair.schema";
 import { CreateRepairDto, MAX_REPAIR_PHOTOS, UpdateRepairDto } from "./dto/repair.dto";
-import { TenanciesService } from "../tenancies/tenancies.service";
+import { isTenancyMember, TenanciesService } from "../tenancies/tenancies.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { NotificationKind } from "../notifications/notification-kind.enum";
 import { notificationTarget, NotificationTargetKind } from "../notifications/links";
@@ -29,27 +29,28 @@ export class RepairsService {
 		private readonly uploads: UploadService
 	) {}
 
-	/** Only members of the tenancy (or its landlord) reach this, so signing here is the access check. */
-	private async withPhotoUrls<T extends { photoKeys?: string[] }>(repairs: T[]) {
+	/** Signing is the access check: callers pass sign=false for non-members (e.g. Seek staff), who get no private photo links. */
+	private async withPhotoUrls<T extends { photoKeys?: string[] }>(repairs: T[], sign = true) {
 		return Promise.all(
 			repairs.map(async repair => ({
 				...repair,
 				photoUrls: await Promise.all(
-					(repair.photoKeys ?? []).map(key => this.uploads.getPresignedDownloadUrl(key, "private", 3600))
+					(sign ? repair.photoKeys ?? [] : []).map(key => this.uploads.getPresignedDownloadUrl(key, "private", 3600))
 				)
 			}))
 		);
 	}
 
 	async listForTenancy(tenancyId: string, viewer: Viewer) {
-		await this.tenancies.findForMember(tenancyId, viewer);
+		const tenancy = await this.tenancies.findForMember(tenancyId, viewer);
 		return this.withPhotoUrls(
 			await this.repairModel
 				.find({ tenancy: new Types.ObjectId(tenancyId) })
 				.populate({ path: "reportedBy", select: "name profilePicUrl" })
 				.sort({ createdAt: -1 })
 				.lean()
-				.exec()
+				.exec(),
+			isTenancyMember(tenancy, viewer._id.toString())
 		);
 	}
 

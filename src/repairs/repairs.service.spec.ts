@@ -77,4 +77,12 @@ describe("RepairsService create", () => {
 		await expect(service.listForTenancy(tenancy._id.toString(), { _id: new Types.ObjectId(), role: Role.STUDENT } as any)).rejects.toBeInstanceOf(ForbiddenException);
 		expect(uploads.getPresignedDownloadUrl).toHaveBeenCalledTimes(1);
 	});
+
+	it("gives a superuser who is not a member no photo links", async () => {
+		const { service, tenancies, uploads } = setup();
+		(tenancies as any).findForMember = jest.fn().mockResolvedValue(tenancy);
+		const [repair] = await service.listForTenancy(tenancy._id.toString(), { _id: new Types.ObjectId(), role: Role.SUPERUSER } as any);
+		expect(repair.photoUrls).toEqual([]);
+		expect(uploads.getPresignedDownloadUrl).not.toHaveBeenCalled();
+	});
 });
