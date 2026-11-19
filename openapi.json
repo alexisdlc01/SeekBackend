@@ -12250,7 +12250,7 @@
               "TRANSFERRED"
             ],
             "nullable": true,
-            "description": "HELD: paid by card while the landlord's payouts weren't set up, so Seek holds the money. TRANSFERRED: Seek has since sent it to the landlord. Null: it goes straight to the landlord."
+            "description": "Legacy only, never written for new charges. HELD: an old card payment Seek collected before the landlord could take card payments. TRANSFERRED: Seek has since sent it to the landlord. Null: it went straight to the landlord."
           },
           "transferRef": {
             "type": "object",
@@ -12549,7 +12549,7 @@
               "TRANSFERRED"
             ],
             "nullable": true,
-            "description": "HELD: Seek holds this payment until payouts are set up. TRANSFERRED: released since."
+            "description": "Legacy only (no new card payment is ever held). HELD: an old payment Seek collected before the landlord could take card payments. TRANSFERRED: released since."
           }
         },
         "required": [
@@ -12621,11 +12621,11 @@
           },
           "payoutsOnHold": {
             "type": "boolean",
-            "description": "True when card payments can't reach the landlord yet (no Stripe payout account able to take them): Seek holds them until payouts are set up."
+            "description": "True when tenants can't pay this landlord by card yet (no Stripe account able to take card payments): card payment is blocked until setup is finished."
           },
           "held": {
             "type": "number",
-            "description": "Paid this month but held by Seek until payouts are set up, pence (after Seek's fee)."
+            "description": "Legacy: paid this month but held by Seek from before direct card payments, pence (after Seek's fee)."
           },
           "rows": {
             "type": "array",
@@ -12881,13 +12881,19 @@
             "type": "string",
             "nullable": true,
             "description": "Stripe PaymentIntent client secret for the Payment Element. Null when already paid or simulated."
+          },
+          "stripeAccountId": {
+            "type": "string",
+            "nullable": true,
+            "description": "Landlord's Stripe connected account the charge lives on (pass it as stripeAccount to Stripe.js). Null for simulated or legacy payments."
           }
         },
         "required": [
           "paymentId",
           "status",
           "provider",
-          "clientSecret"
+          "clientSecret",
+          "stripeAccountId"
         ]
       },
       "BillShareDto": {

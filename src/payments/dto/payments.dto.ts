@@ -116,6 +116,13 @@ export class PayResponseDto {
 		description: "Stripe PaymentIntent client secret for the Payment Element. Null when already paid or simulated."
 	})
 	clientSecret: string | null;
+
+	@ApiProperty({
+		nullable: true,
+		type: String,
+		description: "Landlord's Stripe connected account the charge lives on (pass it as stripeAccount to Stripe.js). Null for simulated or legacy payments."
+	})
+	stripeAccountId: string | null;
 }
 
 // Syntax only; PaymentsService.assertReturnUrl decides which origins are allowed.
@@ -321,7 +328,7 @@ export class LandlordPaymentRowDto {
 	})
 	nextPayout: Date | null;
 
-	@ApiProperty({ enum: PayoutStatus, nullable: true, description: "HELD: Seek holds this payment until payouts are set up. TRANSFERRED: released since." })
+	@ApiProperty({ enum: PayoutStatus, nullable: true, description: "Legacy only (no new card payment is ever held). HELD: an old payment Seek collected before the landlord could take card payments. TRANSFERRED: released since." })
 	payoutStatus: PayoutStatus | null;
 }
 
@@ -361,10 +368,10 @@ export class LandlordPaymentsDto {
 	})
 	nextPayoutDate: Date | null;
 
-	@ApiProperty({ description: "True when card payments can't reach the landlord yet (no Stripe payout account able to take them): Seek holds them until payouts are set up." })
+	@ApiProperty({ description: "True when tenants can't pay this landlord by card yet (no Stripe account able to take card payments): card payment is blocked until setup is finished." })
 	payoutsOnHold: boolean;
 
-	@ApiProperty({ description: "Paid this month but held by Seek until payouts are set up, pence (after Seek's fee)." })
+	@ApiProperty({ description: "Legacy: paid this month but held by Seek from before direct card payments, pence (after Seek's fee)." })
 	held: number;
 
 	@ApiProperty({ type: [LandlordPaymentRowDto] })

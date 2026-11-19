@@ -778,7 +778,7 @@ export class ApplicationService {
 		const unpaid = { application: applicationId, kind: PaymentKind.HOLDING_DEPOSIT, status: { $ne: PaymentStatus.PAID } };
 		const keep: Types.ObjectId[] = [];
 		if (process.env.STRIPE_SECRET_KEY) {
-			const withSession = await this.paymentModel.find({ ...unpaid, providerRef: /^(cs|pi)_/ }, { providerRef: 1 }).lean().exec();
+			const withSession = await this.paymentModel.find({ ...unpaid, providerRef: /^(cs|pi)_/ }, { providerRef: 1, stripeAccountId: 1 }).lean().exec();
 			const paid = await this.closeCheckoutSessions(withSession);
 			keep.push(...withSession.filter(row => paid.has(row._id.toString())).map(row => row._id));
 		}
@@ -803,13 +803,14 @@ export class ApplicationService {
 	}
 
 	/** Expires each row's open Checkout session or cancels its PaymentIntent; returns the ids of rows Stripe already took (or is taking) payment on. */
-	private async closeCheckoutSessions(rows: { _id: Types.ObjectId; providerRef?: string | null }[]): Promise<Set<string>> {
+	private async closeCheckoutSessions(rows: { _id: Types.ObjectId; providerRef?: string | null; stripeAccountId?: string | null }[]): Promise<Set<string>> {
 		const paid = new Set<string>();
 		const key = process.env.STRIPE_SECRET_KEY;
 		const open = rows.filter(row => row.providerRef?.startsWith("cs_") || row.providerRef?.startsWith("pi_"));
 		if (!key || open.length === 0) return paid;
-		const stripe = new StripeClient(key);
 		for (const row of open) {
+			// The session or intent lives on the landlord's account (direct charge), or Seek's for legacy rows.
+			const stripe = new StripeClient(key, row.stripeAccountId ?? undefined);
 			if (row.providerRef!.startsWith("pi_")) {
 				try {
 					await stripe.cancelPaymentIntent(row.providerRef!);

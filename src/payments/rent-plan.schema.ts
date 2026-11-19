@@ -37,6 +37,10 @@ export class RentPlan {
 	/** Card saved at Checkout for autopay (off-session). Never sent to clients. */
 	@Prop({ type: String, select: false })
 	paymentMethodId?: string;
+
+	/** Customer holding that card, on the landlord's connected account (direct charges). Never sent to clients. */
+	@Prop({ type: String, select: false })
+	stripeCustomerId?: string;
 }
 
 export const RentPlanSchema = SchemaFactory.createForClass(RentPlan);

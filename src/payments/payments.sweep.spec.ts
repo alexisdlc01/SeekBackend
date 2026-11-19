@@ -183,19 +183,23 @@ describe("PaymentsService.remindOne channels", () => {
 	});
 });
 
-describe("PaymentsService.destinationFor", () => {
+describe("PaymentsService.accountFor", () => {
 	afterEach(() => jest.restoreAllMocks());
 
-	async function destination(landlord: Record<string, unknown>) {
+	async function destination(landlord: Record<string, unknown>, capabilities: Record<string, string> = { card_payments: "active" }) {
 		const userModel = { findById: jest.fn().mockReturnValue(lean(landlord)) };
 		const service = new PaymentsService({} as any, {} as any, {} as any, {} as any, userModel as any, {} as any, {} as any, {} as any, {} as any, {} as any);
-		const retrieve = jest.spyOn(StripeClient.prototype, "retrieveAccount").mockResolvedValue({ id: "acct_1", capabilities: { transfers: "active" } } as any);
-		const result = await (service as any).destinationFor(new StripeClient("sk_test"), new Types.ObjectId());
+		const retrieve = jest.spyOn(StripeClient.prototype, "retrieveAccount").mockResolvedValue({ id: "acct_1", capabilities } as any);
+		const result = await (service as any).accountFor(new StripeClient("sk_test"), new Types.ObjectId());
 		return { result, retrieve };
 	}
 
 	it("pays a ready landlord", async () => {
 		expect((await destination({ stripeAccountId: "acct_1" })).result).toBe("acct_1");
+	});
+
+	it("refuses a landlord who can receive transfers but not take card payments", async () => {
+		expect((await destination({ stripeAccountId: "acct_1" }, { transfers: "active" })).result).toBeNull();
 	});
 
 	it("holds the money of a suspended or deleted landlord", async () => {
