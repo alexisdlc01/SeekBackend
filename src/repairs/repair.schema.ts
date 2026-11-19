@@ -35,6 +35,14 @@ export class Repair {
 	@Prop({ trim: true })
 	description?: string;
 
+	@ApiProperty({ type: [String], description: "Private upload keys of the attached photos (max 5)." })
+	@Prop({ type: [String], default: [] })
+	photoKeys: string[];
+
+	/** Short-lived download links for photoKeys, added on read; never stored. */
+	@ApiProperty({ type: [String], required: false })
+	photoUrls?: string[];
+
 	@ApiProperty({ enum: RepairStatus })
 	@Prop({ enum: RepairStatus, default: RepairStatus.OPEN })
 	status: RepairStatus;

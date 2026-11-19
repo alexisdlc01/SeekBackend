@@ -13211,6 +13211,19 @@
           "description": {
             "type": "string"
           },
+          "photoKeys": {
+            "description": "Private upload keys of the attached photos (max 5).",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "photoUrls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "status": {
             "type": "string",
             "enum": [
@@ -13240,6 +13253,7 @@
           "landlord",
           "reportedBy",
           "title",
+          "photoKeys",
           "status",
           "scheduledFor",
           "fixedAt",
@@ -13258,6 +13272,13 @@
           },
           "description": {
             "type": "string"
+          },
+          "photoKeys": {
+            "description": "Private upload keys from /upload/presign (max 5 photos).",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [

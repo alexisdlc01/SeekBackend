@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import {
+	ArrayMaxSize,
+	IsArray,
 	IsDateString,
 	IsEnum,
 	IsMongoId,
@@ -10,6 +12,8 @@ import {
 	ValidateIf
 } from "class-validator";
 import { RepairStatus } from "../repair.schema";
+
+export const MAX_REPAIR_PHOTOS = 5;
 
 export class CreateRepairDto {
 	@ApiProperty()
@@ -27,6 +31,14 @@ export class CreateRepairDto {
 	@IsString()
 	@MaxLength(2000)
 	description?: string;
+
+	@ApiPropertyOptional({ type: [String], description: "Private upload keys from /upload/presign (max 5 photos)." })
+	@IsOptional()
+	@IsArray()
+	@ArrayMaxSize(MAX_REPAIR_PHOTOS)
+	@IsString({ each: true })
+	@MaxLength(200, { each: true })
+	photoKeys?: string[];
 }
 
 export class UpdateRepairDto {
