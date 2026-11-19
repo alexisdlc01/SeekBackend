@@ -449,7 +449,8 @@ export class PaymentsService {
 			if (isHolding) {
 				totals.holdingDepositsExpected += payment.amount;
 				if (paid) totals.holdingDepositsCollected += payment.amount;
-			} else {
+			} else if (payment.status !== PaymentStatus.CANCELLED) {
+				// Rent cancelled by an early tenancy end is no longer owed.
 				totals.expected += payment.amount;
 				if (paid) totals.collected += payment.amount;
 			}

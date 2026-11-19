@@ -72,6 +72,16 @@ describe("ConversationService authorization", () => {
 		expect(conversationModel.findById).not.toHaveBeenCalled();
 	});
 
+	it("returns a conversation's messages newest first, as the mobile chat's inverted list expects", async () => {
+		const populate = jest.fn();
+		const chain = { populate, exec: jest.fn().mockResolvedValue(null) };
+		populate.mockReturnValue(chain);
+		conversationModel.findById.mockReturnValue(chain);
+
+		await expect(service.getById(conversationId.toString(), userId.toString())).rejects.toThrow("no such conversation exists");
+		expect(populate).toHaveBeenCalledWith(expect.objectContaining({ path: "messages", options: { sort: { createdAt: -1 } } }));
+	});
+
 	it.each(["STUDENT", "LANDLORD"])(
 		"includes the %s sender's name in the live message without a conversation reload",
 		async (role) => {

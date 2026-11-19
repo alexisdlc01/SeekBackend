@@ -757,6 +757,28 @@ describe("PaymentsService.landlordMonth", () => {
 		expect(month.rows[0]).toMatchObject({ kind: PaymentKind.HOLDING_DEPOSIT, property: "Cotham Flat", refundDue: true });
 		expect(month.holdingDepositsCollected).toBe(15000);
 	});
+
+	it("leaves rent cancelled by an early tenancy end out of expected", async () => {
+		const query = (value: unknown) => {
+			const chain: Record<string, unknown> = { exec: () => Promise.resolve(value) };
+			for (const method of ["populate", "sort", "lean", "select", "limit"]) chain[method] = () => chain;
+			return chain;
+		};
+		const rent = (status: PaymentStatus) => ({
+			_id: new Types.ObjectId(), kind: PaymentKind.RENT, tenancy: { _id: new Types.ObjectId() },
+			tenant: { _id: new Types.ObjectId(), name: "Maya" }, amount: 62000, seekFee: 620, payout: 61380, status, dueDate: new Date()
+		});
+		const paymentModel = { find: jest.fn().mockReturnValueOnce(query([rent(PaymentStatus.PAID), rent(PaymentStatus.CANCELLED)])).mockReturnValue(query([])) };
+		const service = new PaymentsService(
+			paymentModel as any, { find: jest.fn().mockReturnValue(lean([])) } as any,
+			{} as any, {} as any, {} as any, {} as any, {} as any, {} as any, { get: () => undefined } as any, {} as any
+		);
+
+		const month = await service.landlordMonth(new Types.ObjectId().toString());
+
+		expect(month.expected).toBe(62000);
+		expect(month.collected).toBe(62000);
+	});
 });
 
 describe("PaymentsService.connectOnboard (Stripe Accounts v2)", () => {

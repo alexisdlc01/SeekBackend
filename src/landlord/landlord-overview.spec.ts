@@ -44,4 +44,16 @@ describe("LandlordOverviewService todo", () => {
 		expect(overview.todo.filter(item => item.kind === "MAKE_OFFER")).toEqual([]);
 		expect(overview.applicants.qualified).toBe(0);
 	});
+
+	it("leaves rent cancelled by an early tenancy end out of rent expected", async () => {
+		const payments = [{ amount: 62000, seekFee: 620, status: "PAID", kind: "RENT" }, { amount: 62000, seekFee: 620, status: "CANCELLED", kind: "RENT" }];
+		const paymentModel = { find: jest.fn().mockReturnValueOnce(query(payments)).mockReturnValue(query([])), countDocuments: async () => 0, distinct: () => query([]) };
+		const service = new LandlordOverviewService(
+			model() as never, model() as never, paymentModel as never, model() as never,
+			model() as never, model() as never, model() as never
+		);
+		const overview = await service.overview(new Types.ObjectId().toString(), now);
+		expect(overview.rentExpectedThisMonth).toBe(62000);
+		expect(overview.rentCollectedThisMonth).toBe(62000);
+	});
 });

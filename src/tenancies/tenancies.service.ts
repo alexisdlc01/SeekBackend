@@ -542,6 +542,17 @@ export class TenanciesService {
 				await refundPayment(this.paymentModel, claimed, process.env.STRIPE_SECRET_KEY, claimed.refundAmount);
 			}
 		}
+		const endDay = end.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+		await this.notifications.notifyMany(
+			(tenancy.tenants ?? []).map(tenant => ({
+				user: tenant,
+				kind: NotificationKind.TENANCY_ENDED,
+				title: `Your tenancy now ends on ${endDay}`,
+				body: "Rent due after that date is cancelled, and any rent you paid for days after it is refunded.",
+				...notificationTarget("student", NotificationTargetKind.TENANCY, tenancy._id),
+				dedupeKey: `tenancy-ended:${tenancy._id.toString()}:${end.toISOString().slice(0, 10)}`
+			}))
+		);
 		return this.getDetail(id, landlord);
 	}
 

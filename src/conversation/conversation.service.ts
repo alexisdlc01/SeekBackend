@@ -126,6 +126,8 @@ export class ConversationService {
 		const conv = await this.conversationModel.findById(new Types.ObjectId(id))
 			.populate({
 				path: "messages",
+				// Newest first: the mobile chat renders an inverted list; the web re-sorts on its own.
+				options: { sort: { createdAt: -1 } },
 				populate: { path: "sender" }
 			})
 			.populate("users")
