@@ -355,6 +355,10 @@ export class User {
 	@Prop({ type: NotificationPrefsSchema, default: () => ({}) })
 	notificationPrefs: NotificationPrefs;
 
+	/** Expo push tokens of the user's devices, newest last, max 10. */
+	@Prop({ type: [String], default: [] })
+	pushTokens: string[];
+
 	@Prop({ type: RentReminderScheduleSchema, default: () => ({}) })
 	rentReminderSchedule: RentReminderSchedule;
 
@@ -395,6 +399,7 @@ export class User {
 export const UserSchema = SchemaFactory.createForClass(User);
 
 UserSchema.index({ "team.user": 1 }, { sparse: true });
+UserSchema.index({ pushTokens: 1 });
 
 UserSchema.pre(["findOneAndUpdate", "updateOne"], function () {
 	withRegistrationStatus(this.getUpdate() as { $set?: Record<string, unknown> });

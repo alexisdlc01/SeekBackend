@@ -30,6 +30,9 @@ const PREF_DEFAULTS: Record<BooleanPref, boolean> = {
 	weeklySummary: false
 };
 
+const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
+const MAX_PUSH_TOKENS = 10;
+
 @Injectable()
 export class NotificationsService {
 	private readonly logger = new Logger(NotificationsService.name);
@@ -65,9 +68,13 @@ export class NotificationsService {
 					{ $setOnInsert: { ...doc, dedupeKey: input.dedupeKey } },
 					{ upsert: true }
 				);
+				if (result.upsertedCount > 0) {
+					void this.push(user, input, result.upsertedId?.toString());
+				}
 				return result.upsertedCount > 0;
 			}
-			await this.notificationModel.create(doc);
+			const created = await this.notificationModel.create(doc);
+			void this.push(user, input, created._id?.toString());
 			return true;
 		} catch (error) {
 			if ((error as { code?: number })?.code === 11000) return false;
@@ -78,6 +85,78 @@ export class NotificationsService {
 
 	async notifyMany(inputs: NotificationInput[], pref?: BooleanPref): Promise<void> {
 		await Promise.all(inputs.map(input => this.notify(input, pref)));
+	}
+
+	async addPushToken(userId: string, token: string) {
+		// A device belongs to one account: drop the token from any other user first.
+		await this.userModel.updateMany(
+			{ _id: { $ne: userId }, pushTokens: token },
+			{ $pull: { pushTokens: token } }
+		);
+		// One atomic update: drop any copy, append, keep the newest MAX_PUSH_TOKENS.
+		await this.userModel.updateOne({ _id: userId }, [
+			{
+				$set: {
+					pushTokens: {
+						$slice: [
+							{
+								$concatArrays: [
+									{
+										$filter: {
+											input: { $ifNull: ["$pushTokens", []] },
+											cond: { $ne: ["$$this", token] }
+										}
+									},
+									[token]
+								]
+							},
+							-MAX_PUSH_TOKENS
+						]
+					}
+				}
+			}
+		]);
+	}
+
+	async removePushToken(userId: string, token: string) {
+		await this.userModel.updateOne({ _id: userId }, { $pull: { pushTokens: token } });
+	}
+
+	/** Fire-and-forget Expo push; never throws. Drops tokens Expo reports as unregistered. */
+	private async push(userId: Types.ObjectId, input: NotificationInput, notificationId?: string) {
+		try {
+			const user = await this.userModel.findById(userId, { pushTokens: 1 }).lean().exec();
+			const tokens = user?.pushTokens ?? [];
+			if (!tokens.length) return;
+			const data = { notificationId, link: input.link, path: input.target?.mobile };
+			const headers: Record<string, string> = {
+				"Content-Type": "application/json",
+				Accept: "application/json"
+			};
+			if (process.env.EXPO_ACCESS_TOKEN) {
+				headers.Authorization = `Bearer ${process.env.EXPO_ACCESS_TOKEN}`;
+			}
+			// At most MAX_PUSH_TOKENS per user, well under Expo's 100-message limit.
+			const response = await fetch(EXPO_PUSH_URL, {
+				method: "POST",
+				headers,
+				body: JSON.stringify(
+					tokens.map(to => ({ to, title: input.title, body: input.body, data, sound: "default" }))
+				),
+				signal: AbortSignal.timeout(10_000)
+			});
+			const json = (await response.json()) as {
+				data?: { status?: string; details?: { error?: string } }[];
+			};
+			const dead = tokens.filter(
+				(_, index) => json.data?.[index]?.details?.error === "DeviceNotRegistered"
+			);
+			if (dead.length) {
+				await this.userModel.updateOne({ _id: userId }, { $pull: { pushTokens: { $in: dead } } });
+			}
+		} catch (error) {
+			this.logger.warn(`Push not sent: ${(error as Error)?.message}`);
+		}
 	}
 
 	async listForUser(userId: string, limit = 50) {

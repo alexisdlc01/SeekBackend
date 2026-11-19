@@ -9,7 +9,7 @@ describe("UsersRepository.consumePasswordReset", () => {
 
 		const update = findOneAndUpdate.mock.calls[0][1];
 		expect(update.$set).toEqual(
-			expect.objectContaining({ password: "pw-hash", isVerified: true, refreshSessions: [] })
+			expect.objectContaining({ password: "pw-hash", isVerified: true, refreshSessions: [], pushTokens: [] })
 		);
 	});
 

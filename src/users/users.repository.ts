@@ -114,7 +114,7 @@ export class UsersRepository {
 	async clearRefreshSessions(userId: string): Promise<void> {
 		await this.userModel.updateOne(
 			{ _id: userId },
-			{ $set: { refreshSessions: [] } }
+			{ $set: { refreshSessions: [], pushTokens: [] } }
 		);
 	}
 
@@ -143,7 +143,8 @@ export class UsersRepository {
 					$set: {
 						email: newEmail,
 						isVerified: true,
-						refreshSessions: []
+						refreshSessions: [],
+						pushTokens: []
 					},
 					$unset: {
 						pendingEmail: 1,
@@ -184,6 +185,7 @@ export class UsersRepository {
 					// address squatted by an unverified signup.
 					isVerified: true,
 					refreshSessions: [],
+					pushTokens: [],
 					...(dropTeam ? { team: [] } : {})
 				},
 				$unset: {
