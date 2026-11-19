@@ -146,6 +146,42 @@ describe("PaymentsService reminders and receipts", () => {
 	});
 });
 
+describe("PaymentsService.markPaid receipt email", () => {
+	const tenant = new Types.ObjectId();
+	const landlord = new Types.ObjectId();
+	const build = (notified: boolean, mailResult: "ok" | "fail" = "ok") => {
+		const paid = { _id: new Types.ObjectId(), tenancy: new Types.ObjectId(), tenant, landlord, amount: 69500, payout: 68805, seekFee: 695, dueDate: new Date("2026-09-01") };
+		const paymentModel = { findOneAndUpdate: jest.fn().mockReturnValue(lean(paid)) };
+		const planModel = { findOne: jest.fn().mockReturnValue(lean({})) };
+		const userModel = { findById: jest.fn().mockReturnValue(lean({ email: "maya@seek.local", name: "Maya" })) };
+		const notifications = { notify: jest.fn().mockResolvedValueOnce(notified).mockResolvedValue(true) };
+		const mail = { sendPaymentReceiptEmail: mailResult === "ok" ? jest.fn().mockResolvedValue(undefined) : jest.fn().mockRejectedValue(new Error("mailgun down")) };
+		const service = new PaymentsService(
+			paymentModel as any, planModel as any, {} as any, {} as any, userModel as any, {} as any, {} as any,
+			notifications as any, { get: () => undefined } as any, {} as any, mail as any
+		);
+		return { service, paid, mail };
+	};
+
+	it("emails the tenant when the in-app receipt is allowed", async () => {
+		const { service, paid, mail } = build(true);
+		await (service as any).markPaid(paid, "SIMULATED", "sim_1");
+		expect(mail.sendPaymentReceiptEmail).toHaveBeenCalledWith("maya@seek.local", "Maya", expect.stringContaining("£695.00"), "Your payment of £695.00 for your rent due 1 Sept went through and was sent to your landlord.", "/student/home/rent");
+	});
+
+	it("sends nothing when the receipt pref skips the in-app receipt", async () => {
+		const { service, paid, mail } = build(false);
+		await (service as any).markPaid(paid, "SIMULATED", "sim_1");
+		expect(mail.sendPaymentReceiptEmail).not.toHaveBeenCalled();
+	});
+
+	it("still succeeds when the email fails", async () => {
+		const { service, paid, mail } = build(true, "fail");
+		await expect((service as any).markPaid(paid, "SIMULATED", "sim_1")).resolves.toEqual(paid);
+		expect(mail.sendPaymentReceiptEmail).toHaveBeenCalled();
+	});
+});
+
 describe("PaymentsService.remindOne channels", () => {
 	let nodeEnv: string | undefined = "production";
 
