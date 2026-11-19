@@ -22,7 +22,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { Payment } from "../payments/payment.schema";
 import { PaymentKind, PaymentStatus } from "../payments/payment.enums";
 import { addMonths, computeFee, startOfUtcDay } from "../payments/schedule";
-import { refundPayment } from "../payments/refund";
+import { closeStripeCharge, refundPayment } from "../payments/refund";
 import { NotificationKind } from "../notifications/notification-kind.enum";
 import { notificationTarget, NotificationTargetKind } from "../notifications/links";
 import { isKeyOwnedBy } from "../upload/object-key";
@@ -490,12 +490,19 @@ export class TenanciesService {
 			},
 			[{ $set: { status: PaymentStatus.CANCELLED, refundDue: true, autoRefund: true, refundAmount: "$amount" } }]
 		);
-		await this.paymentModel.deleteMany({
+		const unpaidAfterEnd = {
 			tenancy: tenancy._id,
 			kind: { $ne: PaymentKind.HOLDING_DEPOSIT },
 			status: { $nin: [PaymentStatus.PAID, PaymentStatus.PENDING, PaymentStatus.CANCELLED] },
 			dueDate: { $gte: end }
-		});
+		};
+		// A Checkout session or intent the tenant opened would otherwise stay payable with no row to settle.
+		const opened = await this.paymentModel
+			.find({ ...unpaidAfterEnd, providerRef: /^(cs|pi)_/ }, { providerRef: 1, stripeAccountId: 1 })
+			.lean()
+			.exec();
+		for (const payment of opened) await closeStripeCharge(process.env.STRIPE_SECRET_KEY, payment);
+		await this.paymentModel.deleteMany(unpaidAfterEnd);
 		const unpaidSpanning = await this.paymentModel
 			.find({
 				tenancy: tenancy._id,

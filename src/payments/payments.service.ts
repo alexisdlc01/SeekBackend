@@ -959,12 +959,13 @@ export class PaymentsService {
 		const paymentId = session?.metadata?.paymentId;
 		if (!session?.id || !paymentId || !Types.ObjectId.isValid(paymentId)) return null;
 		const payment = await this.paymentModel.findById(paymentId).lean().exec();
-		if (!payment) {
-			this.logger.warn(`Checkout session ${session.id} for unknown payment`);
-			return null;
-		}
 		const intent = typeof session.payment_intent === "object" ? session.payment_intent : null;
 		const intentId = typeof session.payment_intent === "string" ? session.payment_intent : intent?.id;
+		if (!payment) {
+			this.logger.warn(`Checkout session ${session.id} for unknown payment`);
+			await this.refundOrphanCheckout(session, intentId, account);
+			return null;
+		}
 		// A session on any other account than the one Seek opened it on never settles this payment, and its money goes back.
 		if ((payment.stripeAccountId ?? null) !== account) {
 			this.logger.warn(`Checkout session ${session.id} for payment ${payment._id.toString()} is on account ${account ?? "platform"}, expected ${payment.stripeAccountId ?? "platform"}: ignored`);
@@ -999,6 +1000,20 @@ export class PaymentsService {
 		if (current?.status !== PaymentStatus.PAID || current.providerRef === intentId || (sessionId && current.providerRef === sessionId)) return;
 		this.logger.error(`Duplicate charge ${intentId} on payment ${paymentId.toString()} already paid by ${current.providerRef}: refunding it`);
 		await this.refundCharge(intentId, "duplicate", account);
+	}
+
+	/**
+	 * A paid Seek session whose payment row is gone (unpaid rent removed when a tenancy ended, say):
+	 * no row will ever record that money, so it goes back. Only when Seek's own metadata names the
+	 * deleted payment and no other row holds this charge.
+	 */
+	private async refundOrphanCheckout(session: StripeCheckoutSession, intentId: string | undefined, account: string | null) {
+		const meta = session.metadata ?? {};
+		if (session.payment_status !== "paid" || !intentId) return;
+		if (!Object.values(PaymentKind).includes(meta.kind as PaymentKind) || !meta.tenantId || !Types.ObjectId.isValid(meta.tenantId)) return;
+		if (await this.paymentModel.exists({ providerRef: { $in: [intentId, session.id] } })) return;
+		this.logger.error(`Paid checkout session ${session.id} for deleted payment ${meta.paymentId}: refunding ${intentId}`);
+		await this.refundCharge(intentId, "requested_by_customer", account);
 	}
 
 	/** Refunds a whole charge on the account it was made on, idempotently per intent. */
