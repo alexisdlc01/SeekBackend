@@ -615,6 +615,21 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 		expect(stripeCalls.some(call => call.url.endsWith("/checkout/sessions") || call.url.endsWith("/cancel"))).toBe(false);
 		expect(doc).toMatchObject({ status: PaymentStatus.PAID, providerRef: "pi_old" });
 		expect(doc.stripeAccountId).toBeUndefined();
+
+		// Even with the landlord not ready for cards, a charge that already went through is the answer, not a 400.
+		const notReady = withIntent("succeeded");
+		capabilities = { transfers: "active" };
+		await expect(notReady.service.checkout(id.toString(), { _id: tenant } as any, {}, "mobile")).resolves.toMatchObject({ status: PaymentStatus.PAID });
+
+		// A succeeded intent for another amount is left to the webhook (it refunds): no settling here.
+		const wrongAmount = setup({ providerRef: "pi_old", provider: PaymentProvider.STRIPE, status: PaymentStatus.PENDING, amount: 100 });
+		const answering = global.fetch;
+		global.fetch = jest.fn(async (url: string, init?: RequestInit) =>
+			url.endsWith("/payment_intents/pi_old")
+				? ({ ok: true, status: 200, json: async () => ({ id: "pi_old", status: "succeeded", amount: 69500 }) } as Response)
+				: (answering as any)(url, init)) as never;
+		await wrongAmount.service.checkout(id.toString(), { _id: tenant } as any, {}, "mobile");
+		expect(doc.status).not.toBe(PaymentStatus.PAID);
 	});
 
 	it("never saves a card from a legacy Checkout on Seek's account for autopay", async () => {

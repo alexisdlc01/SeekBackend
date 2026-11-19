@@ -855,17 +855,18 @@ export class PaymentsService {
 					return { mode, sessionId: existing.id, url: successUrl.replace("{CHECKOUT_SESSION_ID}", existing.id), status: done?.status ?? payment.status };
 				}
 			}
-			if (!account) throw new BadRequestException(CARD_NOT_READY);
 			// An intent from POST /pay on another account (Seek's, for a legacy one) is settled or cancelled, never left to charge too.
-			if (payment.providerRef?.startsWith("pi_") && payment.provider === PaymentProvider.STRIPE && payment.stripeAccountId !== account) {
+			if (payment.providerRef?.startsWith("pi_") && payment.provider === PaymentProvider.STRIPE && (!account || payment.stripeAccountId !== account)) {
 				const previous = this.stripeFor(payment);
 				const existing = await previous.retrievePaymentIntent(payment.providerRef);
-				if (existing.status === "succeeded") {
+				// Same guard as the webhook: a mismatched amount is left to it (it refunds).
+				if (existing.status === "succeeded" && existing.amount === payment.amount) {
 					const paid = await this.markPaid(payment, PaymentProvider.STRIPE, existing.id);
 					return { mode, sessionId: null, url: successUrl.replace("{CHECKOUT_SESSION_ID}", existing.id), status: (paid ?? payment).status };
 				}
 				if (OPEN_INTENT_STATUSES.includes(existing.status)) await previous.cancelPaymentIntent(existing.id);
 			}
+			if (!account) throw new BadRequestException(CARD_NOT_READY);
 			const plan = payment.tenancy
 				? await this.planModel.findOne({ tenancy: payment.tenancy, tenant: payment.tenant }, { autopay: 1 }).lean().exec()
 				: null;
