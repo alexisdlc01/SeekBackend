@@ -2593,6 +2593,90 @@
         ]
       }
     },
+    "/notifications/push-token": {
+      "post": {
+        "operationId": "NotificationsController_addPushToken",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushTokenDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Register this device's Expo push token. Idempotent.",
+        "tags": [
+          "Notifications"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "NotificationsController_removePushToken",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushTokenDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Remove an Expo push token (on logout).",
+        "tags": [
+          "Notifications"
+        ],
+        "security": [
+          {
+            "access_token": []
+          },
+          {
+            "mobile-token": []
+          }
+        ]
+      }
+    },
     "/auth/login": {
       "post": {
         "operationId": "AuthController_login",
@@ -9979,6 +10063,18 @@
           "title",
           "readAt",
           "createdAt"
+        ]
+      },
+      "PushTokenDto": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "example": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"
+          }
+        },
+        "required": [
+          "token"
         ]
       },
       "LoginDto": {
