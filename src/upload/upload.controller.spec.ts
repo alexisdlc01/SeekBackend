@@ -22,7 +22,7 @@ describe("UploadController", () => {
 			user
 		)).resolves.toBe("https://signed.example/file");
 		expect(uploadService.getAuthorizedPrivateDownloadUrl)
-			.toHaveBeenCalledWith("private/document.pdf", user);
+			.toHaveBeenCalledWith("private/document.pdf", user, undefined);
 	});
 
 	it("mints a team member's upload under the owner, the id the consuming endpoints check", async () => {

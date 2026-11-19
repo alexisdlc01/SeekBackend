@@ -25,6 +25,7 @@ import {
 	MAX_UPLOAD_BYTES
 } from "./dto/presign.dto";
 import { Role } from "../auth/role.enum";
+import { TeamScope } from "../users/types/team-scope";
 import { isKeyOwnedBy, ownerIdFromKey } from "./object-key";
 
 @Injectable()
@@ -160,7 +161,9 @@ export class UploadService {
 		return await getSignedUrl(this.s3Client, command, { expiresIn });
 	}
 
-	async getAuthorizedPrivateDownloadUrl(key: string, user: User) {
+	/** memberScopes: the acting team member's scopes, undefined when the caller is not a team member. */
+	async getAuthorizedPrivateDownloadUrl(key: string, user: User, memberScopes?: TeamScope[]) {
+		const allows = (...scopes: TeamScope[]) => !memberScopes || scopes.some(scope => memberScopes.includes(scope));
 		if (!key.startsWith("private/")) {
 			throw new ForbiddenException("File access is not allowed.");
 		}
@@ -175,14 +178,14 @@ export class UploadService {
 		}
 		// The key must also be minted for this landlord: a stored applicant key must not skip the share checks.
 		// A key from before owner-scoped keys (private/<timestamp>-<name>) still opens, unless it is a user's own document.
-		const ownsListingDocument = (isKeyOwnedBy(key, userId)
+		const ownsListingDocument = allows(TeamScope.LISTINGS) && (isKeyOwnedBy(key, userId)
 			|| (ownerIdFromKey(key) === null && !(await this.userModel.exists({ "documents.key": key }))))
 			&& await this.listingModel.exists({
 			landlord: userId,
 			registerOfTitleKey: key
 		});
 
-		if (!ownsListingDocument && !(await this.isTenancyDocument(key, userId))) {
+		if (!ownsListingDocument && !(allows(TeamScope.TENANCIES) && await this.isTenancyDocument(key, userId))) {
 			const claimedOwnerIds = await this.userModel.distinct("_id", {
 				"documents.key": key
 			});
@@ -197,14 +200,15 @@ export class UploadService {
 				: claimedOwnerIds;
 
 			// A key minted for this user is theirs even before it is filed on the profile.
-			const isOwnDocument = keyOwnerId === userId || documentOwnerIds.some(
+			// A member acts as the owner, so "own" here means the owner's files: not theirs to open.
+			const isOwnDocument = !memberScopes && (keyOwnerId === userId || documentOwnerIds.some(
 				id => id.toString() === userId
-			);
+			));
 
 			// Landlords see an applicant's files only while the student's share
 			// is live: 14 days from sending the application, unless revoked.
 			// Nobody else (another student, a stranger) can use a share.
-			const activeShare = !isOwnDocument && user.role === Role.LANDLORD_AGENCY && documentOwnerIds.length > 0
+			const activeShare = !isOwnDocument && allows(TeamScope.APPLICATIONS, TeamScope.VIEWINGS_INBOX) && user.role === Role.LANDLORD_AGENCY && documentOwnerIds.length > 0
 				? await this.shareModel.exists({
 					viewer: userId,
 					owner: { $in: documentOwnerIds },

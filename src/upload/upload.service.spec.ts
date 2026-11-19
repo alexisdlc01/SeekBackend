@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { Types } from "mongoose";
 import { UploadService } from "./upload.service";
 import { Role } from "../auth/role.enum";
+import { TeamScope } from "../users/types/team-scope";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 jest.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: jest.fn().mockResolvedValue("https://signed.example/upload") }));
@@ -298,6 +299,86 @@ describe("UploadService private-file authorization", () => {
 		expect(shareModel.exists).toHaveBeenCalledWith(
 			expect.objectContaining({ owner: { $in: [realOwner] } })
 		);
+	});
+
+	describe("team members acting as the landlord", () => {
+		const landlordId = new Types.ObjectId();
+		const landlord = { _id: landlordId, role: Role.LANDLORD_AGENCY } as any;
+		const ownKey = `private/${landlordId.toHexString()}/123e4567-e89b-12d3-a456-426614174000.pdf`;
+
+		it("lets a LISTINGS member open the listing's register of title", async () => {
+			const { service, listingModel } = setup();
+			listingModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+			await expect(service.getAuthorizedPrivateDownloadUrl(ownKey, landlord, [TeamScope.LISTINGS]))
+				.resolves.toBe("https://signed.example/file");
+		});
+
+		it("denies a LISTINGS member an applicant's shared document", async () => {
+			const { service, listingModel, userModel, shareModel } = setup();
+			const studentId = new Types.ObjectId();
+			listingModel.exists.mockResolvedValue(null);
+			userModel.distinct.mockResolvedValue([studentId]);
+			shareModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+			await expect(service.getAuthorizedPrivateDownloadUrl(
+				`private/${studentId.toHexString()}/123e4567-e89b-12d3-a456-426614174000.pdf`,
+				landlord,
+				[TeamScope.LISTINGS]
+			)).rejects.toBeInstanceOf(ForbiddenException);
+			expect(shareModel.exists).not.toHaveBeenCalled();
+		});
+
+		it("denies a LISTINGS member a tenancy document, which a TENANCIES member opens", async () => {
+			const { service, listingModel, userModel, tenancyModel } = setup();
+			listingModel.exists.mockResolvedValue(null);
+			userModel.distinct.mockResolvedValue([]);
+			tenancyModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+			await expect(service.getAuthorizedPrivateDownloadUrl("private/seed/cotham-agreement-2026.pdf", landlord, [TeamScope.LISTINGS]))
+				.rejects.toBeInstanceOf(ForbiddenException);
+			expect(tenancyModel.exists).not.toHaveBeenCalled();
+
+			await expect(service.getAuthorizedPrivateDownloadUrl("private/seed/cotham-agreement-2026.pdf", landlord, [TeamScope.TENANCIES]))
+				.resolves.toBe("https://signed.example/file");
+		});
+
+		it("denies a TENANCIES member the register of title", async () => {
+			const { service, listingModel, userModel } = setup();
+			listingModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+			userModel.distinct.mockResolvedValue([]);
+			await expect(service.getAuthorizedPrivateDownloadUrl(ownKey, landlord, [TeamScope.TENANCIES]))
+				.rejects.toBeInstanceOf(ForbiddenException);
+		});
+
+		it("lets an APPLICATIONS member open a live share, but not the owner's own unfiled key", async () => {
+			const { service, listingModel, userModel, shareModel } = setup();
+			listingModel.exists.mockResolvedValue(null);
+			userModel.distinct.mockResolvedValue([new Types.ObjectId()]);
+			shareModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+			await expect(service.getAuthorizedPrivateDownloadUrl("private/passport.pdf", landlord, [TeamScope.APPLICATIONS]))
+				.resolves.toBe("https://signed.example/file");
+
+			userModel.distinct.mockResolvedValue([]);
+			await expect(service.getAuthorizedPrivateDownloadUrl(ownKey, landlord, [TeamScope.APPLICATIONS]))
+				.rejects.toBeInstanceOf(ForbiddenException);
+			// The landlord themselves still opens it.
+			await expect(service.getAuthorizedPrivateDownloadUrl(ownKey, landlord))
+				.resolves.toBe("https://signed.example/file");
+		});
+
+		it("leaves a non-member landlord unchanged: title deed, tenancy file and live share all open", async () => {
+			const { service, listingModel, userModel, shareModel, tenancyModel } = setup();
+			listingModel.exists.mockResolvedValueOnce({ _id: new Types.ObjectId() });
+			await expect(service.getAuthorizedPrivateDownloadUrl(ownKey, landlord)).resolves.toBe("https://signed.example/file");
+
+			listingModel.exists.mockResolvedValue(null);
+			tenancyModel.exists.mockResolvedValueOnce({ _id: new Types.ObjectId() });
+			await expect(service.getAuthorizedPrivateDownloadUrl("private/seed/cotham-agreement-2026.pdf", landlord))
+				.resolves.toBe("https://signed.example/file");
+
+			userModel.distinct.mockResolvedValue([new Types.ObjectId()]);
+			shareModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+			await expect(service.getAuthorizedPrivateDownloadUrl("private/passport.pdf", landlord))
+				.resolves.toBe("https://signed.example/file");
+		});
 	});
 
 	describe("presigned uploads", () => {

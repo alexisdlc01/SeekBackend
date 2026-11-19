@@ -40,6 +40,8 @@ export class UploadController {
 		@Query() { key }: AccessReqDto,
 		@CurrentUser() user: User
 	) {
-		return this.uploadService.getAuthorizedPrivateDownloadUrl(key, user);
+		// @TeamAccess lets in any of its scopes: the service checks each document kind against the member's own scopes.
+		const member = (user as User & { actingMember?: { scopes: TeamScope[] } }).actingMember;
+		return this.uploadService.getAuthorizedPrivateDownloadUrl(key, user, member?.scopes);
 	}
 }
