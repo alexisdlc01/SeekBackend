@@ -3,7 +3,7 @@ import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 import { Reflector } from "@nestjs/core";
 import { Types } from "mongoose";
-import { depositReceivedDate, earlyEndRefundAmount, TenanciesService } from "./tenancies.service";
+import { applicationTenancyPeriod, depositReceivedDate, earlyEndRefundAmount, TenanciesService } from "./tenancies.service";
 import { InventoryStage, TenancyDocumentType, TenancyStatus } from "./tenancy.enums";
 import { ApplicationStage } from "../application/enums/application-stage.enum";
 import { Role } from "../auth/role.enum";
@@ -662,5 +662,13 @@ describe("depositReceivedDate", () => {
 		expect(depositReceivedDate("2026-10-12T00:00:00Z", now).toISOString()).toBe("2026-10-12T00:00:00.000Z");
 		expect(depositReceivedDate("2026-11-07T12:03:00Z", now).toISOString()).toBe("2026-11-07T12:03:00.000Z");
 		expect(() => depositReceivedDate("2026-11-12T12:00:00Z", now)).toThrow(BadRequestException);
+	});
+});
+
+describe("applicationTenancyPeriod", () => {
+	it("starts an already-available tenancy on the London day, at midnight UTC", () => {
+		// 00:30 BST on 15 June is 23:30 UTC on 14 June.
+		const { startDate } = applicationTenancyPeriod({ availableFrom: new Date("2026-01-01T00:00:00Z") } as never, new Date("2026-06-14T23:30:00Z"));
+		expect(startDate.toISOString()).toBe("2026-06-15T00:00:00.000Z");
 	});
 });

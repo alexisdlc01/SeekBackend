@@ -151,6 +151,35 @@ export class AccountService {
 	 * the account intact and the user can retry. Tenancy files, contracts and
 	 * payments are kept: they belong to the tenancy record, not the profile.
 	 */
+	/**
+	 * Keys a tenancy, a contract or a synced email still points at: those files must stay.
+	 * `leavingUser`'s own emails are ignored, as they are deleted with the account.
+	 */
+	private async referencedKeys(candidates: string[], leavingUser?: Types.ObjectId): Promise<Set<string>> {
+		if (!candidates.length) return new Set();
+		const tenancyKeys = (await this.tenancyModel.distinct("documents.key", { "documents.key": { $in: candidates } })).map(String);
+		const contractKeys = this.moduleRef
+			? await this.moduleRef.get(ContractsService, { strict: false }).referencedDocumentKeys(candidates)
+			: candidates;
+		const messageKeys = (await this.messageModel.distinct("attachments.key", {
+			...(leavingUser ? { user: { $ne: leavingUser } } : {}),
+			"attachments.key": { $in: candidates }
+		})).map(String);
+		return new Set([...tenancyKeys, ...contractKeys, ...messageKeys]);
+	}
+
+	/** A Seek Passport file replaced by a new upload is erased, unless the account or anything else still uses it. A failure only logs. */
+	async eraseReplacedDocument(userId: Types.ObjectId, key?: string) {
+		if (!key?.startsWith("private/") || !isKeyOwnedBy(key, userId.toString())) return;
+		try {
+			if (await this.userModel.exists({ _id: userId, "documents.key": key })) return;
+			if ((await this.referencedKeys([key])).has(key)) return;
+			await this.uploads.deletePrivateObject(key);
+		} catch (error) {
+			this.logger.warn(`Erasing replaced document for ${userId.toString()} failed: ${(error as Error).message}`);
+		}
+	}
+
 	async deleteAccount(userId: Types.ObjectId) {
 		const tenancies = await this.tenancyModel
 			.find({ status: TenancyStatus.ACTIVE, $or: [{ tenants: userId }, { landlord: userId }] })
@@ -216,32 +245,14 @@ export class AccountService {
 		const picKey = profile?.profilePicUrl ? publicKeyFromUrl(profile.profilePicUrl) : null;
 		const referencedCandidates = picKey ? [...keys, picKey] : keys;
 		// A file referenced anywhere else stays: another account or tenancy still needs it.
-		const tenancyKeys = new Set(
-			referencedCandidates.length ? (await this.tenancyModel.distinct("documents.key", { "documents.key": { $in: referencedCandidates } })).map(String) : []
-		);
-		const contractKeys = new Set(
-			this.moduleRef
-				? await this.moduleRef.get(ContractsService, { strict: false }).referencedDocumentKeys(referencedCandidates)
-				: referencedCandidates
-		);
-		const otherMessageKeys = new Set(
-			referencedCandidates.length
-				? (await this.messageModel.distinct("attachments.key", { user: { $ne: userId }, "attachments.key": { $in: referencedCandidates } })).map(String)
-				: []
-		);
+		const referenced = await this.referencedKeys(referencedCandidates, userId);
 		for (const key of keys) {
-			if (!tenancyKeys.has(key) && !contractKeys.has(key) && !otherMessageKeys.has(key)) {
+			if (!referenced.has(key)) {
 				await this.uploads.deletePrivateObject(key);
 			}
 		}
 		// Uploaded avatar (public/<userId>/...): erase the object too. A Google avatar URL is not ours, so it is skipped.
-		if (
-			picKey
-			&& isKeyOwnedBy(picKey, userId.toString())
-			&& !tenancyKeys.has(picKey)
-			&& !contractKeys.has(picKey)
-			&& !otherMessageKeys.has(picKey)
-		) await this.uploads.deletePublicObject(picKey);
+		if (picKey && isKeyOwnedBy(picKey, userId.toString()) && !referenced.has(picKey)) await this.uploads.deletePublicObject(picKey);
 		const result = await this.userModel.updateOne(
 			{ _id: userId, deletedAt: null },
 			{

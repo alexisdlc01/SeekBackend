@@ -300,6 +300,8 @@ class UsersService {
 			throw new BadRequestException("Documents must be uploaded privately.");
 		}
 
+		const previous = await this.userModel.findById(userId, { documents: 1 }).lean().exec();
+		const replacedKey = previous?.documents?.find(doc => doc.type === documentType)?.key;
 		const result = await this.userModel.bulkWrite([
 			{
 				updateOne: {
@@ -337,7 +339,9 @@ class UsersService {
 		return {
 			message: "Document added successfully",
 			documentType,
-			url
+			url,
+			// The file this upload replaced, for the caller to erase once nothing else uses it.
+			replacedKey: replacedKey && replacedKey !== key ? replacedKey : undefined
 		};
 	}
 

@@ -14,6 +14,7 @@ import { TenanciesService } from "../tenancies/tenancies.service";
 import { depositCapPence, depositProtectionDeadline, depositProtectionWindow } from "../tenancies/compliance";
 import { Bill, BillStatus } from "../bills/bill.schema";
 import { allowanceFor } from "../bills/bills.service";
+import { splitPence } from "../bills/shares";
 import { Payment } from "../payments/payment.schema";
 import { PaymentStatus } from "../payments/payment.enums";
 import { computeFee } from "../payments/schedule";
@@ -570,7 +571,7 @@ export class AiService {
 		// A tenant only counts bills where their own share is still unpaid.
 		const due = bills.filter(bill => bill.status === BillStatus.DUE && !bill.includedInRent
 			&& (landlord || (splitOf(bill).includes(uid) && !(bill.paidShares ?? []).some(id => id.toString() === uid))));
-		const myShare = landlord ? 0 : due.reduce((sum, bill) => sum + Math.round(bill.amount / splitOf(bill).length), 0);
+		const myShare = landlord ? 0 : due.reduce((sum, bill) => sum + (splitPence(bill.amount, splitOf(bill)).find(share => share.user === uid)?.amount ?? 0), 0);
 		const lines: string[] = [];
 
 		if (listing?.billsIncluded) {
