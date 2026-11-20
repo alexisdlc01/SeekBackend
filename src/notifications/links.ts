@@ -13,7 +13,8 @@ export enum NotificationTargetKind {
 	TENANCY = "TENANCY",
 	CONTRACTS = "CONTRACTS",
 	REPAIRS = "REPAIRS",
-	APPLICATION = "APPLICATION"
+	APPLICATION = "APPLICATION",
+	CONVERSATION = "CONVERSATION"
 }
 
 /** Logical client screens a notification can open. */
@@ -37,7 +38,9 @@ export enum NotificationScreen {
 	/** Landlord contracts and tenancies: web /contracts. */
 	CONTRACTS = "contracts",
 	/** One application: web /application?listing=<listing>&id=<id>, or /applicants without a listing. */
-	APPLICATION = "application"
+	APPLICATION = "application",
+	/** One chat: web /chat?conversation=<id> (landlord) or /student/inbox (student), mobile /(app)/chat/<id>. */
+	CONVERSATION = "conversation"
 }
 
 export type Audience = "student" | "landlord";
@@ -85,6 +88,11 @@ export const NOTIFICATION_ROUTES: Record<NotificationTargetKind, Record<Audience
 	[NotificationTargetKind.APPLICATION]: {
 		student: { screen: NotificationScreen.APPLICATIONS, web: "/student/home", mobile: "/(app)/(tabs)/applied" },
 		landlord: { screen: NotificationScreen.APPLICATION, web: "/applicants" }
+	},
+	[NotificationTargetKind.CONVERSATION]: {
+		// The student web inbox has no deep link; it opens on the most recent thread.
+		student: { screen: NotificationScreen.CONVERSATION, web: "/student/inbox", mobile: "/(app)/(tabs)/messages" },
+		landlord: { screen: NotificationScreen.CONVERSATION, web: "/chat" }
 	}
 };
 
@@ -95,6 +103,9 @@ export function linkFor(audience: Audience, kind: NotificationTargetKind, id?: s
 	// The id is the tenancy (deposit deductions): the deposit page opens on it.
 	if (kind === NotificationTargetKind.COMPLIANCE && audience === "student" && id) {
 		return `/student/home/deposit?tenancy=${encodeURIComponent(id)}`;
+	}
+	if (kind === NotificationTargetKind.CONVERSATION && audience === "landlord" && id) {
+		return `/chat?conversation=${encodeURIComponent(id)}`;
 	}
 	return NOTIFICATION_ROUTES[kind][audience].web;
 }
@@ -109,6 +120,9 @@ export function notificationTarget(
 	const value = id === undefined || id === null ? undefined : id.toString();
 	const listing = options.listing ? options.listing.toString() : undefined;
 	const route = NOTIFICATION_ROUTES[kind][audience];
+	const mobile = route.mobile && kind === NotificationTargetKind.CONVERSATION && value
+		? `/(app)/chat/${encodeURIComponent(value)}`
+		: route.mobile;
 	return {
 		link: linkFor(audience, kind, value, listing),
 		target: {
@@ -116,7 +130,7 @@ export function notificationTarget(
 			screen: route.screen,
 			...(value ? { id: value } : {}),
 			...(listing ? { listing } : {}),
-			...(route.mobile ? { mobile: route.mobile } : {})
+			...(mobile ? { mobile } : {})
 		} as NotificationTarget
 	};
 }

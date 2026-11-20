@@ -16,6 +16,7 @@ describe("ConversationGateway authorization", () => {
 	let usersService: { getUserForSession: jest.Mock };
 	let access: { assertCanAccess: jest.Mock };
 	let usersRepository: { findTeamOwner: jest.Mock };
+	let notifications: { markReadByKey: jest.Mock };
 	let gateway: ConversationGateway;
 	let client: {
 		data: { user: { _id: Types.ObjectId } };
@@ -33,11 +34,13 @@ describe("ConversationGateway authorization", () => {
 		};
 		access = { assertCanAccess: jest.fn().mockResolvedValue(undefined) };
 		usersRepository = { findTeamOwner: jest.fn().mockResolvedValue(null) };
+		notifications = { markReadByKey: jest.fn().mockResolvedValue(undefined) };
 		gateway = new ConversationGateway(
 			usersService as never,
 			messageModel as never,
 			access as never,
 			usersRepository as never,
+			notifications as never,
 		);
 		client = {
 			data: { user: { _id: userId } },
@@ -82,6 +85,8 @@ describe("ConversationGateway authorization", () => {
 				{ conversation: conversationId.toString() },
 				{ $addToSet: { seenUsers: actor } }
 			);
+			// Opening the chat reads the grouped message notification of the acting user (the owner for a team member).
+			expect(notifications.markReadByKey).toHaveBeenLastCalledWith(actor.toString(), `message:${conversationId.toString()}`);
 		}
 		validate.mockRestore();
 	});
@@ -108,6 +113,7 @@ describe("ConversationGateway authorization", () => {
 			conversationId.toString(),
 		)).rejects.toBeInstanceOf(ForbiddenException);
 		expect(messageModel.updateMany).not.toHaveBeenCalled();
+		expect(notifications.markReadByKey).not.toHaveBeenCalled();
 	});
 
 	it("does not mark a message delivered for an outsider", async () => {

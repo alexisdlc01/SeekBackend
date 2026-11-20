@@ -10026,7 +10026,8 @@
               "OFFER_WITHDRAWN",
               "APPLICATION_REJECTED",
               "LISTING_NEEDS_CHANGES",
-              "REPORT_ACTIONED"
+              "REPORT_ACTIONED",
+              "NEW_MESSAGE"
             ]
           },
           "title": {
@@ -10041,7 +10042,7 @@
           },
           "target": {
             "type": "object",
-            "description": "Typed destination: a logical `screen` plus the `id` it is about. Clients route on `screen`;\n`link` is the seek-web path and `mobile` the seek-mobile path (students only).\n\n| kind | student screen → web / mobile | landlord screen → web |\n|---|---|---|\n| PAYMENTS | rent → /student/home/rent / /(app)/(tabs)/rent | landlord-rent → /rent |\n| COMPLIANCE | deposit → /student/home/deposit / /(app)/deposit | dashboard → /dashboard |\n| TENANCY | home → /student/home / /(app)/(tabs)/my-home | contracts → /contracts |\n| CONTRACTS | contract → /student/home / /(app)/contract | contracts → /contracts |\n| REPAIRS | repairs → /student/home / /(app)/repairs | dashboard → /dashboard |\n| APPLICATION | applications → /student/home / /(app)/(tabs)/applied | application → /application?listing=<listing>&id=<id> (or /applicants) |",
+            "description": "Typed destination: a logical `screen` plus the `id` it is about. Clients route on `screen`;\n`link` is the seek-web path and `mobile` the seek-mobile path (students only).\n\n| kind | student screen → web / mobile | landlord screen → web |\n|---|---|---|\n| PAYMENTS | rent → /student/home/rent / /(app)/(tabs)/rent | landlord-rent → /rent |\n| COMPLIANCE | deposit → /student/home/deposit / /(app)/deposit | dashboard → /dashboard |\n| TENANCY | home → /student/home / /(app)/(tabs)/my-home | contracts → /contracts |\n| CONTRACTS | contract → /student/home / /(app)/contract | contracts → /contracts |\n| REPAIRS | repairs → /student/home / /(app)/repairs | dashboard → /dashboard |\n| APPLICATION | applications → /student/home / /(app)/(tabs)/applied | application → /application?listing=<listing>&id=<id> (or /applicants) |\n| CONVERSATION | conversation → /student/inbox / /(app)/chat/<id> | conversation → /chat?conversation=<id> |",
             "example": {
               "kind": "PAYMENTS",
               "screen": "rent",
