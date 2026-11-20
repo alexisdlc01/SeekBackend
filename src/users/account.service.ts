@@ -170,7 +170,7 @@ export class AccountService {
 
 	/** A Seek Passport file replaced by a new upload is erased, unless the account or anything else still uses it. A failure only logs. */
 	async eraseReplacedDocument(userId: Types.ObjectId, key?: string) {
-		if (!key?.startsWith("private/")) return;
+		if (!key?.startsWith("private/") || !isKeyOwnedBy(key, userId.toString())) return;
 		try {
 			if (await this.userModel.exists({ _id: userId, "documents.key": key })) return;
 			if ((await this.referencedKeys([key])).has(key)) return;

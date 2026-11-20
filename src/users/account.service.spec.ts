@@ -311,7 +311,7 @@ describe("AccountService eraseReplacedDocument", () => {
 	it("erases a replaced passport file only when nothing still uses it", async () => {
 		const { service, userModel, tenancyModel, messageModel, uploads } = setup();
 		const id = new Types.ObjectId();
-		const key = `private/${id}/old-passport.pdf`;
+		const key = `private/${id}/0c9a1e52-8f3b-4d2e-9a1b-7c6d5e4f3a2b.pdf`;
 		Object.assign(userModel, { exists: jest.fn().mockResolvedValue(null) });
 
 		await service.eraseReplacedDocument(id, key);
@@ -325,5 +325,13 @@ describe("AccountService eraseReplacedDocument", () => {
 		await service.eraseReplacedDocument(id, key);
 		await service.eraseReplacedDocument(id, undefined);
 		expect(uploads.deletePrivateObject).toHaveBeenCalledTimes(1);
+	});
+
+	it("never erases a key owned by another user", async () => {
+		const { service, uploads } = setup();
+		const id = new Types.ObjectId();
+		const other = new Types.ObjectId();
+		await service.eraseReplacedDocument(id, `private/${other}/0c9a1e52-8f3b-4d2e-9a1b-7c6d5e4f3a2b.pdf`);
+		expect(uploads.deletePrivateObject).not.toHaveBeenCalled();
 	});
 });
