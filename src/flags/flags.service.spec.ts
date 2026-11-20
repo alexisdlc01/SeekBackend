@@ -92,8 +92,8 @@ describe("FlagsService", () => {
 				distinct: jest.fn().mockReturnValue(exec(opts.verifiedReporters === 0 ? [] : verified)),
 				updateOne: jest.fn().mockReturnValue(exec({ modifiedCount: 1 }))
 			};
-			const listingModel = { updateMany: jest.fn().mockReturnValue(exec({})) };
-			const notifications = { notifyMany: jest.fn().mockResolvedValue(undefined) };
+			const listingModel = { updateMany: jest.fn().mockReturnValue(exec({})), find: jest.fn().mockReturnValue(exec([])) };
+			const notifications = { notifyMany: jest.fn().mockResolvedValue(undefined), notify: jest.fn().mockResolvedValue(true) };
 			// Every verified reporter shares a conversation with the reported account unless linked is false.
 			const conversationModel = { distinct: jest.fn().mockReturnValue(exec(opts.linked === false ? [] : [new Types.ObjectId(reported), ...verified])) };
 			const tenancyModel = { find: jest.fn().mockReturnValue({ lean: () => exec([]) }) };
@@ -201,6 +201,16 @@ describe("FlagsService", () => {
 			);
 			expect(listingModel.updateMany).toHaveBeenCalled();
 			expect(notifications.notifyMany).toHaveBeenCalled();
+		});
+
+		it("tells the landlord his listings went offline, and a new suspension after a lifted one notifies reporters again", async () => {
+			const { service, userModel, notifications } = setup();
+			await service.suspend(reported, "first");
+			expect(notifications.notify).toHaveBeenCalledWith(expect.objectContaining({
+				user: new Types.ObjectId(reported), kind: "LISTING_NEEDS_CHANGES", link: "/listings", body: "This account is suspended."
+			}));
+			const suspendedAt = userModel.updateOne.mock.calls[0][1].$set.suspendedAt.getTime();
+			expect(notifications.notifyMany.mock.calls[0][0][0].dedupeKey).toMatch(new RegExp(`:${suspendedAt}$`));
 		});
 
 		it("does not suspend on 3 verified reporters when only 2 dealt with the account", async () => {

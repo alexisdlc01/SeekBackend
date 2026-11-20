@@ -15,6 +15,7 @@ import { Conversation } from "../conversation/converstaion.schema";
 import { Message } from "../conversation/message.schema";
 import { Tenancy } from "../tenancies/tenancy.schema";
 import { MailService } from "../auth/mail.service";
+import { ListingsGateway } from "../listings/listings.gateway";
 
 const DAY_MS = 86_400_000;
 /** Reports count for 30 days; one still open after that is closed with CLOSED_RESPONSE. */
@@ -50,7 +51,8 @@ export class FlagsService {
 		@Optional() @InjectModel(Conversation.name) private readonly conversationModel?: Model<Conversation>,
 		@Optional() @InjectModel(Tenancy.name) private readonly tenancyModel?: Model<Tenancy>,
 		@Optional() @InjectModel(Message.name) private readonly messageModel?: Model<Message>,
-		@Optional() private readonly mail?: MailService
+		@Optional() private readonly mail?: MailService,
+		@Optional() private readonly gateway?: ListingsGateway
 	) {}
 
 	async create(createFlagDto: CreateFlagDto, user: User): Promise<Flag> {
@@ -152,19 +154,31 @@ export class FlagsService {
 
 	/** lastUpdated moves too: a moderation check already waiting on the AI must not write APPROVED over this. */
 	private async hideListings(id: Types.ObjectId, reason: string): Promise<void> {
+		if (!this.listingModel) return;
+		const now = new Date();
 		await this.listingModel
-			?.updateMany(
+			.updateMany(
 				{ landlord: id, isDraft: false },
-				{ $set: { isVerified: false, moderationStatus: ModerationStatus.NEEDS_CHANGES, moderationReasons: [reason], lastUpdated: new Date() } }
+				{ $set: { isVerified: false, moderationStatus: ModerationStatus.NEEDS_CHANGES, moderationReasons: [reason], lastUpdated: now } }
 			)
 			.exec();
+		if (this.gateway) for (const listing of await this.listingModel.find({ landlord: id, isDraft: false }).exec()) this.gateway.emitListingUpdated(listing);
+		await this.notifications?.notify({
+			user: id,
+			kind: NotificationKind.LISTING_NEEDS_CHANGES,
+			title: "Your listings are offline",
+			body: reason,
+			link: "/listings",
+			dedupeKey: `listings-hidden:${id.toString()}:${now.toISOString().slice(0, 10)}`
+		});
 	}
 
 	/** Blocks the account (JwtStrategy answers 403), hides its listings and closes open reports about it. */
 	async suspend(userId: string | Types.ObjectId, reason: string, resolvedFlag?: Types.ObjectId): Promise<void> {
 		const id = new Types.ObjectId(userId.toString());
+		const now = new Date();
 		const result = await this.userModel
-			.updateOne({ _id: id, suspendedAt: null, role: { $ne: Role.SUPERUSER } }, { $set: { suspendedAt: new Date(), suspensionReason: reason } })
+			.updateOne({ _id: id, suspendedAt: null, role: { $ne: Role.SUPERUSER } }, { $set: { suspendedAt: now, suspensionReason: reason } })
 			.exec();
 		if (result.modifiedCount === 0) return;
 		this.logger.warn(`Account ${id.toString()} suspended: ${reason}`);
@@ -179,7 +193,8 @@ export class FlagsService {
 				kind: NotificationKind.REPORT_ACTIONED,
 				title: "We acted on your report",
 				body: SUSPENDED_RESPONSE,
-				dedupeKey: `report-actioned:${id.toString()}:${reporter.toString()}`
+				// suspendedAt in the key: a new suspension after a lifted one notifies the reporter again.
+				dedupeKey: `report-actioned:${id.toString()}:${reporter.toString()}:${now.getTime()}`
 			}))
 		);
 		await this.flagModel

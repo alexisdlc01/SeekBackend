@@ -11,6 +11,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
 import { Conversation, ConversationSchema } from "../conversation/converstaion.schema";
 import { Tenancy, TenancySchema } from "../tenancies/tenancy.schema";
 import { Message, MessageSchema } from "../conversation/message.schema";
+import { ListingsModule } from "../listings/listing.module";
 
 @Module({
 	imports: [
@@ -30,7 +31,8 @@ import { Message, MessageSchema } from "../conversation/message.schema";
 		]),
 		SharedModule,
 		AuthModule,
-		NotificationsModule
+		NotificationsModule,
+		ListingsModule
 	],
 	controllers: [FlagsController],
 	providers: [FlagsService]
