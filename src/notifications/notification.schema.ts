@@ -43,7 +43,8 @@ export class Notification {
 			"| TENANCY | home → /student/home / /(app)/(tabs)/my-home | contracts → /contracts |",
 			"| CONTRACTS | contract → /student/home / /(app)/contract | contracts → /contracts |",
 			"| REPAIRS | repairs → /student/home / /(app)/repairs | dashboard → /dashboard |",
-			"| APPLICATION | applications → /student/home / /(app)/(tabs)/applied | application → /application?listing=<listing>&id=<id> (or /applicants) |"
+			"| APPLICATION | applications → /student/home / /(app)/(tabs)/applied | application → /application?listing=<listing>&id=<id> (or /applicants) |",
+			"| CONVERSATION | conversation → /student/inbox / /(app)/chat/<id> | conversation → /chat?conversation=<id> |"
 		].join("\n"),
 		example: { kind: "PAYMENTS", screen: "rent", mobile: "/(app)/(tabs)/rent" }
 	})

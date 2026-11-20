@@ -13,6 +13,7 @@ describe("ConversationService authorization", () => {
 	let messageModel: { create: jest.Mock };
 	let gateway: { emitNewMessage: jest.Mock };
 	let access: { assertCanAccess: jest.Mock };
+	let notifications: { notifyMany: jest.Mock };
 	let service: ConversationService;
 
 	beforeEach(() => {
@@ -24,11 +25,13 @@ describe("ConversationService authorization", () => {
 		messageModel = { create: jest.fn() };
 		gateway = { emitNewMessage: jest.fn() };
 		access = { assertCanAccess: jest.fn().mockResolvedValue(undefined) };
+		notifications = { notifyMany: jest.fn().mockResolvedValue(undefined) };
 		service = new ConversationService(
 			conversationModel as never,
 			messageModel as never,
 			gateway as never,
 			access as never,
+			notifications as never,
 		);
 	});
 
@@ -131,6 +134,67 @@ describe("ConversationService authorization", () => {
 			expect(payload.sender.refreshToken).toBeUndefined();
 		},
 	);
+
+	describe("message notifications", () => {
+		const landlordId = new Types.ObjectId();
+		const studentId = new Types.ObjectId();
+
+		const send = (text: string, members: unknown[]) => {
+			const chain = {
+				populate: jest.fn().mockReturnThis(),
+				lean: jest.fn().mockReturnThis(),
+				exec: jest.fn().mockResolvedValue({ _id: conversationId, users: members }),
+			};
+			conversationModel.findById.mockReturnValue(chain);
+			const plain = { _id: new Types.ObjectId(), sender: { _id: userId, name: "Alice Martin" } as unknown, conversation: conversationId, messageType: "Text", data: text, createdAt: new Date(), deliveredTo: [], seenUsers: [] };
+			messageModel.create.mockResolvedValue({ ...plain, populate: jest.fn(), toObject: () => plain });
+			return service.sendMessage({ message: text }, conversationId.toString(), userId.toString());
+		};
+
+		it("notifies every other member, grouped per conversation, never the sender", async () => {
+			await send("Hi! Is the room still free?", [
+				{ _id: userId, role: "STUDENT" },
+				{ _id: landlordId, role: "LANDLORD_AGENCY" },
+				{ _id: studentId, role: "STUDENT" },
+			]);
+
+			const [inputs] = notifications.notifyMany.mock.calls[0];
+			expect(inputs).toHaveLength(2);
+			expect(inputs[0]).toMatchObject({
+				user: landlordId,
+				kind: "NEW_MESSAGE",
+				title: "New message from Alice Martin",
+				body: "Hi! Is the room still free?",
+				link: `/chat?conversation=${conversationId.toString()}`,
+				dedupeKey: `message:${conversationId.toString()}`,
+				dedupeUntilRead: true,
+			});
+			expect(inputs[0].target.mobile).toBeUndefined();
+			expect(inputs[1]).toMatchObject({
+				user: studentId,
+				link: "/student/inbox",
+				target: { kind: "CONVERSATION", screen: "conversation", mobile: `/(app)/chat/${conversationId.toString()}` },
+				dedupeKey: `message:${conversationId.toString()}`,
+			});
+		});
+
+		it("previews at most 80 characters", async () => {
+			await send("x".repeat(200), [{ _id: landlordId, role: "LANDLORD_AGENCY" }]);
+			const [[input]] = notifications.notifyMany.mock.calls[0];
+			expect(input.body).toHaveLength(80);
+			expect(input.body.endsWith("…")).toBe(true);
+		});
+
+		it("still sends the message when the notification lookup fails", async () => {
+			conversationModel.findById.mockImplementation(() => { throw new Error("db down"); });
+			const plain = { _id: new Types.ObjectId(), sender: userId, conversation: conversationId, messageType: "Text", data: "hello", createdAt: new Date(), deliveredTo: [], seenUsers: [] };
+			messageModel.create.mockResolvedValue({ ...plain, populate: jest.fn(), toObject: () => plain });
+
+			await expect(service.sendMessage({ message: "hello" }, conversationId.toString(), userId.toString())).resolves.toBeUndefined();
+			expect(gateway.emitNewMessage).toHaveBeenCalledTimes(1);
+			expect(notifications.notifyMany).not.toHaveBeenCalled();
+		});
+	});
 });
 
 // Mimics a populated mongoose document: toObject() returns the plain shape,
@@ -198,6 +262,7 @@ describe("ConversationService.getAllForUser", () => {
 	const service = new ConversationService(
 		conversationModel as never,
 		messageModel as never,
+		{} as never,
 		{} as never,
 		{} as never
 	);

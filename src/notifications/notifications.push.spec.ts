@@ -117,3 +117,78 @@ describe("push notifications", () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });
+
+describe("grouped notifications (dedupeUntilRead)", () => {
+	const realFetch = global.fetch;
+	type Row = Record<string, any>;
+	let rows: Row[];
+	let service: NotificationsService;
+	let fetchMock: jest.Mock;
+
+	// In-memory stand-in for the collection, with the unique partial { user, dedupeKey } index.
+	const matches = (row: Row, filter: Row) =>
+		Object.entries(filter).every(([key, value]) => {
+			if (value && typeof value === "object" && "$ne" in value) return row[key] !== value.$ne;
+			return String(row[key]) === String(value);
+		});
+	const notificationModel = {
+		updateOne: jest.fn(async (filter: Row, update: Row, options?: { upsert?: boolean }) => {
+			const row = rows.find(r => matches(r, filter));
+			if (row) {
+				for (const key of Object.keys(update.$unset ?? {})) delete row[key];
+				Object.assign(row, update.$set ?? {});
+				return { upsertedCount: 0, modifiedCount: 1 };
+			}
+			if (!options?.upsert) return { upsertedCount: 0, modifiedCount: 0 };
+			const created = { _id: new Types.ObjectId(), ...filter, ...update.$setOnInsert };
+			if (rows.some(r => typeof r.dedupeKey === "string" && String(r.user) === String(created.user) && r.dedupeKey === created.dedupeKey)) {
+				throw Object.assign(new Error("E11000 duplicate key"), { code: 11000 });
+			}
+			rows.push(created);
+			return { upsertedCount: 1, upsertedId: created._id };
+		}),
+		create: jest.fn()
+	};
+
+	beforeEach(() => {
+		rows = [];
+		const userModel = { findById: jest.fn(() => ({ lean: () => ({ exec: async () => ({ pushTokens: ["ExponentPushToken[a]"] }) }) })) };
+		service = new NotificationsService(notificationModel as never, userModel as never);
+		fetchMock = jest.fn(async () => ({ json: async () => ({ data: [{ status: "ok" }] }) }));
+		global.fetch = fetchMock as never;
+	});
+	afterEach(() => {
+		global.fetch = realFetch;
+	});
+
+	const message = { user: userId, kind: NotificationKind.NEW_MESSAGE, title: "New message from Alice", dedupeKey: "message:c1", dedupeUntilRead: true };
+
+	it("stores and pushes once while unread, then again after it is read", async () => {
+		expect(await service.notify(message)).toBe(true);
+		expect(await service.notify(message)).toBe(false);
+		await flush();
+		expect(rows).toHaveLength(1);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+
+		await service.markReadByKey(userId.toString(), "message:c1");
+		expect(rows[0].readAt).toBeInstanceOf(Date);
+
+		expect(await service.notify(message)).toBe(true);
+		await flush();
+		expect(rows).toHaveLength(2);
+		expect(rows[0].dedupeKey).toBeUndefined();
+		expect(rows[1]).toMatchObject({ dedupeKey: "message:c1", readAt: null });
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it("keeps plain dedupeKey notifications stored once, even after they are read", async () => {
+		const once = { user: userId, kind: NotificationKind.PAYMENT_FAILED, title: "Autopay skipped", dedupeKey: "autopay-skipped:p1" };
+		expect(await service.notify(once)).toBe(true);
+		rows[0].readAt = new Date();
+		expect(await service.notify(once)).toBe(false);
+		await flush();
+		expect(rows).toHaveLength(1);
+		expect(rows[0].dedupeKey).toBe("autopay-skipped:p1");
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+});

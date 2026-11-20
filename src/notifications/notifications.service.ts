@@ -15,6 +15,13 @@ export interface NotificationInput {
 	target?: NotificationTarget;
 	/** Same user + key is stored once, so retries and sweeps never duplicate. */
 	dedupeKey?: string;
+	/** With dedupeKey: once that notification is read, the next notify stores and pushes a fresh one. */
+	dedupeUntilRead?: boolean;
+}
+
+/** One unread chat notification per user and conversation. */
+export function conversationDedupeKey(conversationId: { toString(): string }) {
+	return `message:${conversationId.toString()}`;
 }
 
 type BooleanPref = {
@@ -63,6 +70,13 @@ export class NotificationsService {
 				readAt: null
 			};
 			if (input.dedupeKey) {
+				if (input.dedupeUntilRead) {
+					// The unique { user, dedupeKey } index holds one row per key: a read row gives its key up.
+					await this.notificationModel.updateOne(
+						{ user, dedupeKey: input.dedupeKey, readAt: { $ne: null } },
+						{ $unset: { dedupeKey: 1 } }
+					);
+				}
 				const result = await this.notificationModel.updateOne(
 					{ user, dedupeKey: input.dedupeKey },
 					{ $setOnInsert: { ...doc, dedupeKey: input.dedupeKey } },
@@ -184,6 +198,18 @@ export class NotificationsService {
 			throw new NotFoundException("Notification not found.");
 		}
 		return notification;
+	}
+
+	/** Marks the user's unread notification with this key as read. Never throws. */
+	async markReadByKey(userId: string, dedupeKey: string) {
+		try {
+			await this.notificationModel.updateOne(
+				{ user: new Types.ObjectId(userId), dedupeKey, readAt: null },
+				{ $set: { readAt: new Date() } }
+			);
+		} catch (error) {
+			this.logger.warn(`Notification not marked read: ${(error as Error)?.message}`);
+		}
 	}
 
 	private async allows(userId: Types.ObjectId | string, pref: BooleanPref) {

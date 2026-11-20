@@ -9,6 +9,7 @@ import { Message, MessageSchema } from "./message.schema";
 import { UsersModule } from "../users/users.module";
 import { Application, ApplicationSchema } from "../application/application.schema";
 import { ConversationAccessService } from "./conversation-access.service";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 @Module({
 	imports: [
@@ -30,6 +31,7 @@ import { ConversationAccessService } from "./conversation-access.service";
 		]),
 		UsersModule,
 		SharedModule,
+		NotificationsModule,
 	],
 	controllers: [ConversationController],
 	providers: [ConversationAccessService, ConversationGateway, ConversationService],

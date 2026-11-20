@@ -26,6 +26,7 @@ import { TokenPayload } from "../auth/token-payload.interface";
 import { UsersRepository } from "../users/users.repository";
 import { Role } from "../auth/role.enum";
 import { TeamScope } from "../users/types/team-scope";
+import { NotificationsService, conversationDedupeKey } from "../notifications/notifications.service";
 
 const SESSION_REVALIDATION_INTERVAL_MS = 30_000;
 /** Same scopes as @TeamAccess on ConversationController. */
@@ -71,6 +72,7 @@ export class ConversationGateway
 		private readonly messageModel: Model<Message>,
 		private readonly conversationAccessService: ConversationAccessService,
 		private readonly usersRepository: UsersRepository,
+		private readonly notificationsService: NotificationsService,
 	) { }
 
 	afterInit(server: Server) {
@@ -159,6 +161,8 @@ export class ConversationGateway
 			{ conversation: conversationId },
 			{ $addToSet: { seenUsers: new Types.ObjectId(userId) } }
 		);
+		// Opening the chat reads its grouped notification, so the next message notifies again.
+		await this.notificationsService.markReadByKey(userId, conversationDedupeKey(conversationId));
 
 		await this.emitSeen(conversationId, userId);
 	}
