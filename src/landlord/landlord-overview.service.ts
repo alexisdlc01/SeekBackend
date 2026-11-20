@@ -10,6 +10,7 @@ import { Payment } from "../payments/payment.schema";
 import { PaymentKind, PaymentStatus } from "../payments/payment.enums";
 import { RentPlan } from "../payments/rent-plan.schema";
 import { monthRange } from "../payments/payments.service";
+import { proportionalRefund } from "../payments/refund";
 import { Repair, RepairStatus } from "../repairs/repair.schema";
 import { propertyComplianceStatus, propertyRentStatus } from "./property-rows";
 import { ComplianceItem, listingCompliance, sortCompliance, tenancyCompliance } from "../tenancies/compliance";
@@ -58,7 +59,7 @@ export class LandlordOverviewService {
 			this.paymentModel
 				// Holding deposits are not rent.
 				.find({ landlord, kind: { $ne: PaymentKind.HOLDING_DEPOSIT }, dueDate: { $gte: month.start, $lt: month.end } })
-				.select("amount seekFee status tenancy remindersSent")
+				.select("amount seekFee status tenancy remindersSent refundedAt refundedAmount")
 				.lean()
 				.exec(),
 			this.applicationModel
@@ -89,7 +90,8 @@ export class LandlordOverviewService {
 			rent.expected += payment.amount;
 			if (payment.status === PaymentStatus.PAID) {
 				rent.collected += payment.amount;
-				rent.seekFee += payment.seekFee;
+				// A refund gives back Seek's fee pro rata, as in the payments ledger.
+				rent.seekFee += payment.refundedAt ? proportionalRefund(payment.amount, payment.refundedAmount ?? payment.amount, payment.seekFee).keptSeekFee : payment.seekFee;
 			}
 			if (payment.status === PaymentStatus.LATE) {
 				rent.late += 1;

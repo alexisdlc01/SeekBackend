@@ -30,9 +30,9 @@ interface GraphMessage {
 	internetMessageHeaders?: { name?: string; value?: string }[];
 }
 
-/** Outlook / Microsoft 365 through Microsoft Graph (Mail.Read + Mail.Send). */
+/** Outlook / Microsoft 365 through Microsoft Graph (Mail.ReadWrite for createReply + Mail.Send). */
 export class OutlookClient implements MailProviderClient {
-	readonly scopes = "offline_access User.Read Mail.Read Mail.Send";
+	readonly scopes = "offline_access User.Read Mail.ReadWrite Mail.Send";
 
 	authUrl({ clientId, redirectUri, state }: { clientId: string; redirectUri: string; state: string }) {
 		const params = new URLSearchParams({

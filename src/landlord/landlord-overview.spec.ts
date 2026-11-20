@@ -56,4 +56,14 @@ describe("LandlordOverviewService todo", () => {
 		expect(overview.rentExpectedThisMonth).toBe(62000);
 		expect(overview.rentCollectedThisMonth).toBe(62000);
 	});
+
+	it("counts only the Seek fee kept on a refunded rent", async () => {
+		const payments = [{ amount: 62000, seekFee: 620, status: "PAID", kind: "RENT", refundedAt: now, refundedAmount: 31000 }];
+		const paymentModel = { find: jest.fn().mockReturnValueOnce(query(payments)).mockReturnValue(query([])), countDocuments: async () => 0, distinct: () => query([]) };
+		const service = new LandlordOverviewService(
+			model() as never, model() as never, paymentModel as never, model() as never,
+			model() as never, model() as never, model() as never
+		);
+		expect((await service.overview(new Types.ObjectId().toString(), now)).seekFeeThisMonth).toBe(310);
+	});
 });

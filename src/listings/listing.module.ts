@@ -33,6 +33,6 @@ import { ListingModerationService } from "./listing-moderation.service";
 	controllers: [ListingsController],
 	// The AI clients are provided here, not imported: AiModule imports ListingsModule.
 	providers: [ListingsService, ListingsGateway, ListingModerationService],
-	exports: [ListingsService]
+	exports: [ListingsService, ListingsGateway]
 })
 export class ListingsModule {}
