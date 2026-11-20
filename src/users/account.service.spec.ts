@@ -335,3 +335,65 @@ describe("AccountService eraseReplacedDocument", () => {
 		expect(uploads.deletePrivateObject).not.toHaveBeenCalled();
 	});
 });
+
+describe("AccountService eraseStaleIdentityDocuments", () => {
+	const now = new Date("2026-11-20T03:00:00Z");
+	const daysAgo = (days: number) => new Date(now.getTime() - days * 24 * 3_600_000);
+	const found = <T>(value: T) => ({ select: () => ({ limit: () => lean(value) }) });
+
+	function withUser(documents: object[]) {
+		const ctx = setup();
+		const user = { _id: new Types.ObjectId(), documents };
+		ctx.userModel.find.mockReturnValue(found([user]));
+		return { ...ctx, user };
+	}
+
+	it("erases an identity file shared over 30 days ago and drops its entry, keeping fresh and never-shared ones", async () => {
+		const id = new Types.ObjectId();
+		// Owner-scoped key format: private/<userId>/<uuid>.<ext>.
+		const key = (n: string) => `private/${id}/0c9a1e52-8f3b-4d2e-9a1b-7c6d5e4f3a${n}.pdf`;
+		const { service, userModel, uploads, user } = withUser([
+			{ type: "PASSPORT", key: key("01"), lastSharedAt: daysAgo(31) },
+			{ type: "RIGHT_TO_RENT", key: key("02"), lastSharedAt: daysAgo(29) },
+			{ type: "VISA", key: key("03") },
+			{ type: "PROOF_OF_FUNDS", key: key("04"), lastSharedAt: daysAgo(90) }
+		]);
+		user._id = id;
+
+		await expect(service.eraseStaleIdentityDocuments(now)).resolves.toBe(1);
+		const cutoff = daysAgo(30);
+		expect(userModel.find).toHaveBeenCalledWith({
+			documents: { $elemMatch: { type: { $in: ["PASSPORT", "IDENTIFICATION", "VISA", "RIGHT_TO_RENT"] }, lastSharedAt: { $lt: cutoff } } }
+		});
+		expect(uploads.deletePrivateObject.mock.calls).toEqual([[key("01")]]);
+		expect(userModel.updateOne).toHaveBeenCalledWith({ _id: id }, { $pull: { documents: { type: "PASSPORT", lastSharedAt: { $lt: cutoff } } } });
+		expect(userModel.updateOne).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps the file a tenancy still references, but still drops the passport entry", async () => {
+		const id = new Types.ObjectId();
+		const key = `private/${id}/0c9a1e52-8f3b-4d2e-9a1b-7c6d5e4f3a2b.pdf`;
+		const { service, user, uploads, userModel, tenancyModel } = withUser([{ type: "PASSPORT", key, lastSharedAt: daysAgo(40) }]);
+		user._id = id;
+		tenancyModel.distinct.mockResolvedValue([key]);
+
+		await service.eraseStaleIdentityDocuments(now);
+		expect(uploads.deletePrivateObject).not.toHaveBeenCalled();
+		expect(userModel.updateOne).toHaveBeenCalledTimes(1);
+	});
+
+	it("never deletes a file minted for another account", async () => {
+		const { service, uploads } = withUser([{ type: "PASSPORT", key: `private/${new Types.ObjectId()}/0c9a1e52-8f3b-4d2e-9a1b-7c6d5e4f3a2b.pdf`, lastSharedAt: daysAgo(40) }]);
+		await service.eraseStaleIdentityDocuments(now);
+		expect(uploads.deletePrivateObject).not.toHaveBeenCalled();
+	});
+
+	it("keeps the entry for the next run when the S3 delete fails", async () => {
+		const id = new Types.ObjectId();
+		const { service, user, uploads, userModel } = withUser([{ type: "PASSPORT", key: `private/${id}/0c9a1e52-8f3b-4d2e-9a1b-7c6d5e4f3a2b.pdf`, lastSharedAt: daysAgo(40) }]);
+		user._id = id;
+		uploads.deletePrivateObject.mockRejectedValueOnce(new Error("S3 down"));
+		await expect(service.eraseStaleIdentityDocuments(now)).resolves.toBe(0);
+		expect(userModel.updateOne).not.toHaveBeenCalled();
+	});
+});
