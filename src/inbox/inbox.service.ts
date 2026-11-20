@@ -14,6 +14,7 @@ import { TenancyStatus } from "../tenancies/tenancy.enums";
 import { Listing } from "../listings/listings.schema";
 import { ConnectorsService } from "../connectors/connectors.service";
 import { ConnectionStatus, EmailConnection, EmailProvider } from "../connectors/email-connection.schema";
+import { NotificationsService, conversationDedupeKey } from "../notifications/notifications.service";
 import { EmailMessage } from "./email-message.schema";
 import { EmailCategory } from "./email-category.enum";
 import { InboxReplyDto } from "./dto/inbox.dto";
@@ -79,7 +80,8 @@ export class InboxService {
 		@InjectModel(Payment.name) private readonly paymentModel: Model<Payment>,
 		private readonly conversations: ConversationService,
 		private readonly access: ConversationAccessService,
-		private readonly connectors: ConnectorsService
+		private readonly connectors: ConnectorsService,
+		private readonly notifications: NotificationsService
 	) {}
 
 	// ---------------------------------------------------------------- list
@@ -319,7 +321,9 @@ export class InboxService {
 					{ conversation: conversationId, sender: { $ne: uid }, seenUsers: { $ne: uid } },
 					{ $addToSet: { seenUsers: uid } }
 				),
-				this.emailModel.updateMany({ user: uid, conversation: conversationId, read: false }, { $set: { read: true } })
+				this.emailModel.updateMany({ user: uid, conversation: conversationId, read: false }, { $set: { read: true } }),
+				// Frees the grouped bell entry, so the next message in this chat notifies again.
+				this.notifications.markReadByKey(uid.toString(), conversationDedupeKey(conversationId))
 			]);
 			const replyFrom = await this.replyFrom(emails as EmailLean[]);
 			const items = [

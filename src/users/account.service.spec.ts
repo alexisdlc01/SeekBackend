@@ -31,6 +31,7 @@ function setup() {
 		settleForDeletedTenant: jest.fn().mockResolvedValue(undefined)
 	};
 	const applications = { releaseDeletedMember: jest.fn().mockResolvedValue(undefined) };
+	const mail = { sendTeamInviteEmail: jest.fn().mockResolvedValue(undefined) };
 	const service = new AccountService(
 		userModel as any,
 		tenancyModel as any,
@@ -41,9 +42,10 @@ function setup() {
 		uploads as any,
 		listingModel as any,
 		messageModel as any,
-		{ get: (token: { name: string }) => (token.name === "ApplicationService" ? applications : contracts) } as any
+		{ get: (token: { name: string }) => (token.name === "ApplicationService" ? applications : contracts) } as any,
+		mail as any
 	);
-	return { service, userModel, tenancyModel, paymentModel, shareModel, connectionModel, connectors, uploads, listingModel, messageModel, contracts, applications };
+	return { service, userModel, tenancyModel, paymentModel, shareModel, connectionModel, connectors, uploads, listingModel, messageModel, contracts, applications, mail };
 }
 
 describe("AccountService team", () => {
@@ -59,6 +61,20 @@ describe("AccountService team", () => {
 		expect(userModel.updateOne.mock.calls[1][1].$push.team).toMatchObject({ email: "sam@example.com", scopes: [TeamScope.VIEWINGS_INBOX] });
 		expect(result).toMatchObject({ email: "sam@example.com", name: null, canSeePayouts: false, hasAccount: false });
 		expect(Object.values(TeamScope)).not.toContain("PAYOUTS");
+	});
+
+	it("emails only new invites, and a mail failure does not fail the invite", async () => {
+		const { service, userModel, mail } = setup();
+		const named = { ...owner, name: "Lee Landlord" };
+		userModel.findById.mockReturnValue(selectLean({ team: [] }));
+
+		await service.invite(named as any, { email: "a@example.com", scopes: [TeamScope.REPAIRS] }); // existing member: scopes updated
+		expect(mail.sendTeamInviteEmail).not.toHaveBeenCalled();
+
+		userModel.updateOne.mockResolvedValueOnce({ matchedCount: 0 }).mockResolvedValueOnce({ matchedCount: 1 });
+		mail.sendTeamInviteEmail.mockRejectedValueOnce(new Error("mailgun down"));
+		await expect(service.invite(named as any, { email: "B@example.com", scopes: [TeamScope.REPAIRS] })).resolves.toBeUndefined();
+		expect(mail.sendTeamInviteEmail).toHaveBeenCalledWith("b@example.com", "Lee Landlord");
 	});
 
 	it("refuses inviting yourself", async () => {

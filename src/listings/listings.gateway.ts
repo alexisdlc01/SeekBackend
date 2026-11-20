@@ -10,6 +10,8 @@ import { Listing } from "./listings.schema";
 import { ListingSocketPayload, ServerToClientEvents } from "./types/listings";
 import { WsJwtGuard } from "../auth/guards/ws-jwt.guard";
 import UsersService from "../users/users.service";
+import { UsersRepository } from "../users/users.repository";
+import { TeamScope } from "../users/types/team-scope";
 import * as process from "node:process";
 import { JwtPayload, verify } from "jsonwebtoken";
 import { TokenPayload } from "../auth/token-payload.interface";
@@ -47,7 +49,10 @@ export class ListingsGateway
 
 	private readonly socketTimers = new Map<string, SocketTimers>();
 
-	constructor(private readonly usersService: UsersService) {}
+	constructor(
+		private readonly usersService: UsersService,
+		private readonly usersRepository: UsersRepository
+	) {}
 
 	afterInit(server: Server) {
 		server.use(async (client, next) => {
@@ -83,7 +88,10 @@ export class ListingsGateway
 		if (user.role === Role.SUPERUSER) {
 			await client.join(SUPERUSER_ROOM);
 		} else {
-			await client.join(landlordListingsRoom(user._id.toString()));
+			// As the REST side does: a team member with listings access follows the owner's room.
+			const membership = await this.usersRepository.findTeamOwner(user._id);
+			const roomOwner = membership?.scopes.includes(TeamScope.LISTINGS) ? membership.owner._id : user._id;
+			await client.join(landlordListingsRoom(roomOwner.toString()));
 		}
 
 		this.scheduleSessionChecks(client, session);

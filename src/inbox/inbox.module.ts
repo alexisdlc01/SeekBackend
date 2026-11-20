@@ -5,6 +5,7 @@ import { ConversationModule } from "../conversation/conversation.module";
 import { Conversation, ConversationSchema } from "../conversation/converstaion.schema";
 import { Message, MessageSchema } from "../conversation/message.schema";
 import { ConnectorsModule } from "../connectors/connectors.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 import { TenanciesModule } from "../tenancies/tenancies.module";
 import { InboxController } from "./inbox.controller";
 import { InboxService } from "./inbox.service";
@@ -18,7 +19,8 @@ import { InboxService } from "./inbox.service";
 		SharedModule,
 		ConversationModule,
 		ConnectorsModule,
-		TenanciesModule
+		TenanciesModule,
+		NotificationsModule
 	],
 	controllers: [InboxController],
 	providers: [InboxService]

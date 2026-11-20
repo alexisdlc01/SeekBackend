@@ -177,6 +177,20 @@ export class MailService {
 		});
 	}
 
+	/** A landlord added this address to their team: sign in (or sign up) and accept from the Team card on the profile page. */
+	async sendTeamInviteEmail(email: string, ownerName: string) {
+		const base = this.configService.getOrThrow<string>("FRONTEND_URL").split(",")[0].trim().replace(/\/$/, "");
+		const link = `${base}/signin/landlord`;
+		const intro = `${ownerName} invited you to help manage their properties on Seek.`;
+		await this.send({
+			from: `Seek <noreply@${this.domain}>`,
+			to: [email],
+			subject: `${ownerName} invited you to their team on Seek`,
+			text: `${intro} Sign in with this email address, then accept the invite under Team in your profile (Edit profile): ${link}`,
+			html: `<p>${escapeHtml(intro)}</p><p><a href="${escapeHtml(link)}">Sign in to Seek</a> with this email address, then accept the invite under Team in your profile.</p>`
+		});
+	}
+
 	/** A rent reminder (automatic or sent by the landlord) also reaches the tenant's inbox. */
 	async sendRentReminderEmail(email: string, name: string, title: string, body: string, path: string) {
 		const link = `${this.configService.getOrThrow<string>("FRONTEND_URL").split(",")[0].trim().replace(/\/$/, "")}${path}`;
