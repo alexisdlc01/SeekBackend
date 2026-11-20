@@ -871,6 +871,14 @@ describe("ApplicationService pipeline", () => {
 			expect(sharesService.shareForApplication).toHaveBeenCalledWith({ ownerIds: [studentId], viewer: landlordId, listing: listingId, application: applicationId });
 		});
 
+		it("does not extend the document shares when approve is re-run on an already ACCEPTED application", async () => {
+			queue({ id: applicationId, qualified: true });
+			applicationModel.findById.mockReturnValue(exec(stored(ApplicationStage.ACCEPTED)));
+			applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.ACCEPTED)));
+			await service.approve(applicationId.toString());
+			expect(sharesService.shareForApplication).not.toHaveBeenCalled();
+		});
+
 		it("refuses to approve or offer once another household has accepted (no double let)", async () => {
 			queue({ id: applicationId, qualified: true });
 			applicationModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });

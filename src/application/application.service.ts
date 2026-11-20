@@ -464,7 +464,8 @@ export class ApplicationService {
 		if (!application) {
 			throw new BadRequestException("Only open applications can be accepted.");
 		}
-		await this.refreshShares(application);
+		// Not on an ACCEPTED retry: a re-run must not extend the document shares again.
+		if (current.stage !== ApplicationStage.ACCEPTED) await this.refreshShares(application);
 		const tenancy = await this.createOrReopen(application, current.stage as ApplicationStage);
 		// Only once the tenancy exists (a 409 reopens the offer, whose deposits must stay payable); also on an ACCEPTED retry, in case it failed here.
 		if (current.stage === ApplicationStage.OFFERED || current.stage === ApplicationStage.ACCEPTED) await this.dropUnpaidHoldingDeposits(application._id);
