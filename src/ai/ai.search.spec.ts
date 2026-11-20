@@ -41,6 +41,19 @@ describe("AiService searchChat with a model answer", () => {
 	});
 });
 
+describe("AiService findListings candidate window", () => {
+	it("still returns a near-university home that sits beyond the first 60 raw results", async () => {
+		const far = Array.from({ length: 70 }, (_, i) => ({ _id: `far${i}`, lat: 51.5, lng: -0.1, bedroomsCount: 2 }));
+		const near = { _id: "near", lat: 56.342, lng: -2.794, bedroomsCount: 2 };
+		// Like the real query: the DB truncates to `limit`, the near home is the 71st.
+		const filters = jest.fn(async (q: any) => [...far, near].slice(0, q.limit));
+		const none = {} as any;
+		const service = new AiService({} as any, { filters } as any, none, none, none, none, none, none, none, none, { get: () => undefined } as any);
+		const { listings } = await (service as any).findListings({ city: "St Andrews", nearUniversity: "University of St Andrews" });
+		expect(listings.map((l: any) => l.id)).toEqual(["near"]);
+	});
+});
+
 describe("search result checks and quick replies", () => {
 	it("asks for what the search still lacks", () => {
 		expect(quickReplies({})).toEqual(["Bristol", "Manchester", "Leeds"]);
