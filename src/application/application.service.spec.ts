@@ -139,6 +139,15 @@ describe("ApplicationService", () => {
 		expect(conversationModel.create).not.toHaveBeenCalled();
 	});
 
+	it("refuses a new application once the listing's available-until date has passed", async () => {
+		applicationModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) });
+		listingService.findPublishedListingById.mockResolvedValue({ ...listing, availableUntil: new Date(Date.now() - 1000) });
+
+		await expect(service.create(listingId.toString(), user)).rejects.toThrow("This property is no longer available for the dates listed.");
+		expect(conversationModel.create).not.toHaveBeenCalled();
+		expect(applicationModel.create).not.toHaveBeenCalled();
+	});
+
 	it("does not ask for a guarantor when the listing's criterion is \"No guarantor needed\"", async () => {
 		applicationModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) });
 		listingService.findPublishedListingById.mockResolvedValue({
@@ -939,6 +948,18 @@ describe("ApplicationService pipeline", () => {
 		expect(docs[0]).toMatchObject({ kind: "HOLDING_DEPOSIT", amount: 15000, seekFee: 0, payout: 15000 });
 	});
 
+	it("refuses an offer once the listing's available-until date has passed, before any write", async () => {
+		queue({ id: applicationId, qualified: true });
+		listingService.findListingById.mockResolvedValue({
+			_id: listingId, landlord: landlordId, propertyTitle: "Cotham Flat", holdingDeposit: 150, availableUntil: new Date(Date.now() - 1000)
+		});
+		applicationModel.findById.mockReturnValue(exec(stored(ApplicationStage.VIEWED)));
+
+		await expect(service.offer(applicationId.toString())).rejects.toThrow("This listing's available-until date has passed. Edit the dates before making an offer.");
+		expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
+		expect(paymentModel.insertMany).not.toHaveBeenCalled();
+	});
+
 	it("caps an existing listing's holding deposit at one week of rent when offering", async () => {
 		queue({ id: applicationId, qualified: true });
 		listingService.findListingById.mockResolvedValue({
@@ -1451,5 +1472,19 @@ describe("ApplicationService.getAllMyApplications", () => {
 		expect(queueFor).toHaveBeenCalledTimes(1);
 		expect(dto.queuePosition).toBe(2);
 		expect(dto.queueSize).toBe(2);
+	});
+
+	it("puts a household whose offer lapsed behind everyone else in the queue", async () => {
+		const lapsed = { _id: new Types.ObjectId(), applicants: [], stage: ApplicationStage.VIEWED, offerExpiredAt: new Date(Date.now() - 1000) };
+		const waiting = { _id: new Types.ObjectId(), applicants: [], stage: ApplicationStage.SENT, offerExpiredAt: null };
+		// The database order: the lapsed household applied first.
+		const chain = { populate: jest.fn().mockReturnThis(), sort: jest.fn().mockReturnThis(), lean: jest.fn().mockReturnThis(), exec: jest.fn().mockResolvedValue([lapsed, waiting]) };
+		const applicationModel = { find: jest.fn().mockReturnValue(chain), exists: jest.fn().mockResolvedValue(null) };
+		const listingService = { findListingById: jest.fn().mockResolvedValue({ _id: listingId }) };
+		const queueService = new ApplicationService(applicationModel as never, {} as never, listingService as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never);
+		jest.spyOn(queueService as any, "householdEntry").mockImplementation((application: any) => ({ id: application._id.toString(), application, qualified: true }));
+
+		const { qualified } = await (queueService as any).queueFor(listingId, new Date());
+		expect(qualified.map((entry: { id: string }) => entry.id)).toEqual([waiting._id.toString(), lapsed._id.toString()]);
 	});
 });
