@@ -77,6 +77,24 @@ describe("ListingsGateway", () => {
 		gateway.handleDisconnect(client);
 	});
 
+	it("moves a member back to their own room when the team scope is removed", async () => {
+		const ownerId = new Types.ObjectId();
+		const user = makeUser(Role.LANDLORD_AGENCY);
+		usersRepository.findTeamOwner.mockResolvedValue({ owner: { _id: ownerId }, scopes: ["LISTINGS"] });
+		usersService.getUserForSession.mockResolvedValue(user);
+		const client = makeAuthenticatedSocket();
+		client.leave = jest.fn().mockResolvedValue(undefined);
+		await runMiddleware(captureMiddleware(gateway), client);
+		await gateway.handleConnection(client);
+
+		usersRepository.findTeamOwner.mockResolvedValue(null);
+		await (gateway as any).revalidateClient(client);
+
+		expect(client.leave).toHaveBeenCalledWith(landlordListingsRoom(ownerId.toString()));
+		expect(client.join).toHaveBeenLastCalledWith(landlordListingsRoom(landlordId.toString()));
+		gateway.handleDisconnect(client);
+	});
+
 	it("rejects students before they can subscribe", async () => {
 		usersService.getUserForSession.mockResolvedValue(
 			makeUser(Role.STUDENT)

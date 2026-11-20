@@ -88,10 +88,9 @@ export class ListingsGateway
 		if (user.role === Role.SUPERUSER) {
 			await client.join(SUPERUSER_ROOM);
 		} else {
-			// As the REST side does: a team member with listings access follows the owner's room.
-			const membership = await this.usersRepository.findTeamOwner(user._id);
-			const roomOwner = membership?.scopes.includes(TeamScope.LISTINGS) ? membership.owner._id : user._id;
-			await client.join(landlordListingsRoom(roomOwner.toString()));
+			const room = await this.landlordRoomFor(user);
+			client.data.listingsRoom = room;
+			await client.join(room);
 		}
 
 		this.scheduleSessionChecks(client, session);
@@ -184,10 +183,27 @@ export class ListingsGateway
 				throw new Error("Role is no longer permitted");
 			}
 			client.data.user = user;
+			// Re-read so a removed member or scope stops receiving the owner's updates.
+			const joined = client.data.listingsRoom as string | undefined;
+			if (joined) {
+				const room = await this.landlordRoomFor(user);
+				if (room !== joined) {
+					await client.leave(joined);
+					await client.join(room);
+					client.data.listingsRoom = room;
+				}
+			}
 		} catch {
 			this.clearSessionChecks(client.id);
 			client.disconnect();
 		}
+	}
+
+	/** As the REST side does: a team member with listings access follows the owner's room. */
+	private async landlordRoomFor(user: User): Promise<string> {
+		const membership = await this.usersRepository.findTeamOwner(user._id);
+		const roomOwner = membership?.scopes.includes(TeamScope.LISTINGS) ? membership.owner._id : user._id;
+		return landlordListingsRoom(roomOwner.toString());
 	}
 
 	private clearSessionChecks(socketId: string) {

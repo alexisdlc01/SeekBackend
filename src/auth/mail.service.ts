@@ -178,7 +178,9 @@ export class MailService {
 	}
 
 	/** A landlord added this address to their team: sign in (or sign up) and accept from the Team card on the profile page. */
-	async sendTeamInviteEmail(email: string, ownerName: string) {
+	async sendTeamInviteEmail(email: string, rawOwnerName: string) {
+		// The name is user-controlled and lands in the subject: no line breaks, bounded length.
+		const ownerName = rawOwnerName.replace(/[\r\n]+/g, " ").trim().slice(0, 80);
 		const base = this.configService.getOrThrow<string>("FRONTEND_URL").split(",")[0].trim().replace(/\/$/, "");
 		const link = `${base}/signin/landlord`;
 		const intro = `${ownerName} invited you to help manage their properties on Seek.`;
