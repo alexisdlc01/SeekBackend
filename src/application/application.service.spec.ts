@@ -690,7 +690,7 @@ describe("ApplicationService pipeline", () => {
 	let listingService: { findListingById: jest.Mock };
 	let notifications: { notifyMany: jest.Mock; notify: jest.Mock };
 	let paymentModel: Record<string, jest.Mock>;
-	let sharesService: { revokeForApplication: jest.Mock };
+	let sharesService: { revokeForApplication: jest.Mock; shareForApplication: jest.Mock };
 	let service: ApplicationService;
 
 	const exec = (value: unknown) => ({ exec: jest.fn().mockResolvedValue(value), populate: jest.fn().mockReturnThis() });
@@ -721,7 +721,7 @@ describe("ApplicationService pipeline", () => {
 			}),
 		};
 		notifications = { notifyMany: jest.fn().mockResolvedValue(undefined), notify: jest.fn() };
-		sharesService = { revokeForApplication: jest.fn().mockResolvedValue(undefined) };
+		sharesService = { revokeForApplication: jest.fn().mockResolvedValue(undefined), shareForApplication: jest.fn().mockResolvedValue(undefined) };
 		service = new ApplicationService(
 			applicationModel as never,
 			{} as never,
@@ -867,6 +867,16 @@ describe("ApplicationService pipeline", () => {
 			applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.ACCEPTED)));
 			await expect(service.approve(applicationId.toString())).resolves.toHaveProperty("tenancy");
 			expect(applicationModel.findOneAndUpdate.mock.calls[0][0].stage).toBe(ApplicationStage.VIEWED);
+			// The landlord gets a fresh 14 days on the household's documents.
+			expect(sharesService.shareForApplication).toHaveBeenCalledWith({ ownerIds: [studentId], viewer: landlordId, listing: listingId, application: applicationId });
+		});
+
+		it("does not extend the document shares when approve is re-run on an already ACCEPTED application", async () => {
+			queue({ id: applicationId, qualified: true });
+			applicationModel.findById.mockReturnValue(exec(stored(ApplicationStage.ACCEPTED)));
+			applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.ACCEPTED)));
+			await service.approve(applicationId.toString());
+			expect(sharesService.shareForApplication).not.toHaveBeenCalled();
 		});
 
 		it("refuses to approve or offer once another household has accepted (no double let)", async () => {
@@ -920,6 +930,7 @@ describe("ApplicationService pipeline", () => {
 		expect(holdingDeposit).toBe(150);
 		expect(offerExpiresAt.getTime() - offeredAt.getTime()).toBe(30 * 24 * 60 * 60 * 1000);
 		expect(notifications.notifyMany).toHaveBeenCalled();
+		expect(sharesService.shareForApplication).toHaveBeenCalledWith({ ownerIds: [studentId], viewer: landlordId, listing: listingId, application: applicationId });
 		// One holding-deposit payment per member, in pence. Seek's fee is on rent only.
 		const [docs] = paymentModel.insertMany.mock.calls[0];
 		expect(docs).toHaveLength(1);

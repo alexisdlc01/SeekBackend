@@ -146,3 +146,54 @@ describe("ConnectorsService disconnect", () => {
 		});
 	});
 });
+
+describe("ConnectorsService store files a referee's reply", () => {
+	const student = {
+		_id: owner,
+		role: "STUDENT",
+		referenceRequests: [{ type: "LANDLORD_REFERENCE", name: "Jo", email: "jo@oldlets.co.uk", requestedAt: new Date() }]
+	};
+	const reply = (from: string, senderAuthenticated: boolean) => ({
+		providerThreadId: "t",
+		providerMessageId: "m",
+		from,
+		to: ["maya@example.com"],
+		subject: "Re: Landlord reference for Maya",
+		body: "Attached.",
+		receivedAt: new Date(),
+		senderAuthenticated,
+		attachments: [{ name: "maya.pdf", mimeType: "application/pdf", size: 10, load: async () => null }]
+	});
+	const run = async (from: string, authenticated: boolean) => {
+		const gmail = conn(EmailProvider.GMAIL);
+		const { service, messageModel } = setup([gmail]);
+		Object.assign(messageModel, {
+			create: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(), toObject: () => ({ attachments: [{ name: "maya.pdf" }] }) }),
+			updateOne: jest.fn().mockResolvedValue({})
+		});
+		(service as any).connectionModel.exists = jest.fn().mockResolvedValue({ _id: gmail._id });
+		jest.spyOn(service as any, "tenancyFor").mockResolvedValue(null);
+		jest.spyOn(service as any, "storeFile").mockResolvedValue({ url: "https://files/x.pdf", key: "x.pdf" });
+		const addReference = jest.spyOn(service as any, "addReference").mockResolvedValue(undefined);
+		const filed = await (service as any).store(gmail, student, reply(from, authenticated), { category: "OTHER", contact: null }, false);
+		return { filed, addReference };
+	};
+
+	it("files the PDF under the requested type when the asked referee's authenticated address sent it", async () => {
+		const { filed, addReference } = await run("Jo@OldLets.co.uk", true);
+		expect(filed).toBe(1);
+		expect(addReference).toHaveBeenCalledWith(student, "LANDLORD_REFERENCE", "maya.pdf", { url: "https://files/x.pdf", key: "x.pdf" });
+	});
+
+	it("ignores the same address when SPF/DKIM did not pass", async () => {
+		const { filed, addReference } = await run("jo@oldlets.co.uk", false);
+		expect(filed).toBe(0);
+		expect(addReference).not.toHaveBeenCalled();
+	});
+
+	it("ignores an authenticated sender the student never asked", async () => {
+		const { filed, addReference } = await run("someone@else.co.uk", true);
+		expect(filed).toBe(0);
+		expect(addReference).not.toHaveBeenCalled();
+	});
+});

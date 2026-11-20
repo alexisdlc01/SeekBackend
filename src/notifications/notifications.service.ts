@@ -128,7 +128,10 @@ export class NotificationsService {
 			const user = await this.userModel.findById(userId, { pushTokens: 1 }).lean().exec();
 			const tokens = user?.pushTokens ?? [];
 			if (!tokens.length) return;
-			const data = { notificationId, link: input.link, path: input.target?.mobile };
+			const mobile = input.target?.mobile;
+			// Deposit deductions carry the tenancy id: open that tenancy's deposit, not the current one.
+			const path = mobile === "/(app)/deposit" && input.target?.id ? `${mobile}?tenancy=${encodeURIComponent(input.target.id)}` : mobile;
+			const data = { notificationId, link: input.link, path };
 			const headers: Record<string, string> = {
 				"Content-Type": "application/json",
 				Accept: "application/json"
