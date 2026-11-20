@@ -32,6 +32,10 @@ export class UserDocument {
 
 	@Prop({ default: Date.now })
 	uploadedAt?: Date;
+
+	/** Identity documents only: when a landlord last got access to it. Erased 30 days later (privacy policy); never shared = kept. */
+	@Prop()
+	lastSharedAt?: Date;
 }
 
 export const UserDocumentSchema = SchemaFactory.createForClass(UserDocument);
@@ -400,6 +404,8 @@ export const UserSchema = SchemaFactory.createForClass(User);
 
 UserSchema.index({ "team.user": 1 }, { sparse: true });
 UserSchema.index({ pushTokens: 1 });
+// The daily identity-document erasure looks up stale shares without scanning every user.
+UserSchema.index({ "documents.lastSharedAt": 1 }, { sparse: true });
 
 UserSchema.pre(["findOneAndUpdate", "updateOne"], function () {
 	withRegistrationStatus(this.getUpdate() as { $set?: Record<string, unknown> });

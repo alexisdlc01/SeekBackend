@@ -20,8 +20,11 @@ import { ContractsService } from "../contracts/contracts.service";
 import { ApplicationService } from "../application/application.service";
 import { MailService } from "../auth/mail.service";
 import { EmailMessage } from "../inbox/email-message.schema";
+import { DocumentType, IDENTITY_DOCUMENT_TYPES } from "./types/document-type";
 
 const MAX_TEAM = 20;
+/** Privacy policy: identity documents are kept 30 days after their last share with a landlord. */
+export const IDENTITY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** Object key of a stored public file (`https://bucket.s3.region.amazonaws.com/<key>`), or null if not a public/ key. */
 function publicKeyFromUrl(url: string): string | null {
@@ -178,6 +181,46 @@ export class AccountService {
 		} catch (error) {
 			this.logger.warn(`Erasing replaced document for ${userId.toString()} failed: ${(error as Error).message}`);
 		}
+	}
+
+	/**
+	 * Privacy policy: identity documents are erased 30 days after the student last shared them with a landlord.
+	 * Never-shared ones stay. The entry is removed so the Passport shows the item as missing and the student can
+	 * upload again; the file stays when a tenancy, contract or email still points at it. Returns how many were erased.
+	 */
+	async eraseStaleIdentityDocuments(now: Date = new Date(), limit = 200): Promise<number> {
+		const cutoff = new Date(now.getTime() - IDENTITY_RETENTION_MS);
+		const isStale = (doc: { type: DocumentType; lastSharedAt?: Date }) =>
+			IDENTITY_DOCUMENT_TYPES.includes(doc.type) && !!doc.lastSharedAt && new Date(doc.lastSharedAt) < cutoff;
+		const users = await this.userModel
+			.find({ documents: { $elemMatch: { type: { $in: IDENTITY_DOCUMENT_TYPES }, lastSharedAt: { $lt: cutoff } } } })
+			.select("documents")
+			.limit(limit)
+			.lean()
+			.exec();
+		const stale = users.flatMap(user => (user.documents ?? []).filter(isStale).map(doc => ({ user, doc })));
+		const referenced = await this.referencedKeys(
+			stale.map(({ doc }) => doc.key).filter((key): key is string => !!key?.startsWith("private/"))
+		);
+		let erased = 0;
+		for (const { user, doc } of stale) {
+			try {
+				// Another document of the same account may still use the file (same key under a fresher entry).
+				const keptByAccount = (user.documents ?? []).some(other => other !== doc && !isStale(other) && other.key === doc.key);
+				if (doc.key?.startsWith("private/") && isKeyOwnedBy(doc.key, user._id.toString()) && !referenced.has(doc.key) && !keptByAccount) {
+					await this.uploads.deletePrivateObject(doc.key);
+				}
+				// Matches the stale entry only: a re-upload in the meantime has no (or a fresh) lastSharedAt.
+				await this.userModel.updateOne(
+					{ _id: user._id },
+					{ $pull: { documents: { type: doc.type, lastSharedAt: { $lt: cutoff } } } }
+				);
+				erased += 1;
+			} catch (error) {
+				this.logger.warn(`Erasing identity document ${doc.type} for ${user._id.toString()} failed: ${(error as Error).message}`);
+			}
+		}
+		return erased;
 	}
 
 	async deleteAccount(userId: Types.ObjectId) {

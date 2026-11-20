@@ -44,7 +44,7 @@ import { AddDocumentDto } from "./dto/add-document.dto";
 import { UpdateUserProfileDto } from "./dto/update-user-profile.dto";
 import { DocumentSharesService } from "./shares/document-shares.service";
 import { ParseObjectIdPipe } from "../shared/parse-object-id.pipe";
-import { DocumentType } from "./types/document-type";
+import { DocumentType, IDENTITY_DOCUMENT_TYPES } from "./types/document-type";
 import { Throttle, ThrottlerStorage } from "@nestjs/throttler";
 import { StudentVerificationService } from "./student-verification.service";
 import { StudentEmailCodeDto, StudentEmailDto, StudentVerificationResultDto } from "./dto/student-verification.dto";
@@ -265,6 +265,9 @@ export class UsersController {
 			{ label: body.label, expiresAt: body.expiresAt }
 		);
 		await this.accountService.eraseReplacedDocument(user._id, replacedKey);
+		if (IDENTITY_DOCUMENT_TYPES.includes(body.documentType)) {
+			await this.sharesService.markIdentitySharedIfActive(user._id);
+		}
 	}
 
 	@Get(":id")

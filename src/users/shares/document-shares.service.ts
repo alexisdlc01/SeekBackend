@@ -2,6 +2,8 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { DocumentShare, SHARE_TTL_MS } from "./document-share.schema";
+import { User } from "../users.schema";
+import { IDENTITY_DOCUMENT_TYPES } from "../types/document-type";
 
 export interface ShareView {
 	_id: string;
@@ -25,8 +27,30 @@ export function isShareActive(
 export class DocumentSharesService {
 	constructor(
 		@InjectModel(DocumentShare.name)
-		private readonly shareModel: Model<DocumentShare>
+		private readonly shareModel: Model<DocumentShare>,
+		@InjectModel(User.name)
+		private readonly userModel: Model<User>
 	) {}
+
+	/** Starts (or restarts) the 30-day erasure clock of these students' identity documents: a landlord can now open them. */
+	async markIdentityShared(ownerIds: (Types.ObjectId | string)[], now: Date = new Date()): Promise<void> {
+		if (ownerIds.length === 0) return;
+		await this.userModel.updateMany(
+			{ _id: { $in: ownerIds.map(id => new Types.ObjectId(id.toString())) } },
+			{ $set: { "documents.$[doc].lastSharedAt": now } },
+			{ arrayFilters: [{ "doc.type": { $in: IDENTITY_DOCUMENT_TYPES } }] }
+		);
+	}
+
+	/** An identity document uploaded while a share is live is exposed too, so its clock starts now. */
+	async markIdentitySharedIfActive(ownerId: Types.ObjectId | string, now: Date = new Date()): Promise<void> {
+		const live = await this.shareModel.exists({
+			owner: new Types.ObjectId(ownerId.toString()),
+			revokedAt: null,
+			expiresAt: { $gt: now }
+		});
+		if (live) await this.markIdentityShared([ownerId], now);
+	}
 
 	/**
 	 * Grants the landlord a fresh 14-day window on each applicant's files.
@@ -64,6 +88,7 @@ export class DocumentSharesService {
 				}
 			}))
 		);
+		await this.markIdentityShared(params.ownerIds, now);
 	}
 
 	/** Access ends when the application closes: revokes its shares (only these owners' when given). */
