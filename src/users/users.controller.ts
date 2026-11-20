@@ -257,13 +257,14 @@ export class UsersController {
 	@Student()
 	@ApiAddDocumentDocs()
 	async addDocument(@Body() body: AddDocumentDto, @CurrentUser() user: User) {
-		await this.usersService.addDocument(
+		const { replacedKey } = await this.usersService.addDocument(
 			user._id.toString(),
 			body.documentType,
 			body.url,
 			body.key,
 			{ label: body.label, expiresAt: body.expiresAt }
 		);
+		await this.accountService.eraseReplacedDocument(user._id, replacedKey);
 	}
 
 	@Get(":id")

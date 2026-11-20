@@ -121,6 +121,16 @@ describe("AiService bills advice", () => {
 		const draft = await (service as any).billsAdvice({ _id: maya, role: "STUDENT" }, { _id: "t1", tenants: [maya, tom], documents: [] }, { propertyTitle: "14 Cotham Grove" });
 		expect(draft.advice).toContain("1 bill is unpaid; your share is £30.");
 	});
+
+	it("quotes the same penny split as the Bills screen", async () => {
+		const [a, b, c] = ["64b000000000000000000011", "64b000000000000000000012", "64b000000000000000000013"];
+		const bills = [{ amount: 10001, status: "DUE", includedInRent: false, splitBetween: [a, b, c], paidShares: [] }];
+		const billModel = { find: () => ({ sort() { return this; }, lean() { return this; }, exec: async () => bills }) };
+		const none = {} as any;
+		const service = new AiService({ isConfigured: () => false } as any, none, none, none, none, billModel as any, none, none, none, none, { get: () => undefined } as any);
+		const draft = await (service as any).billsAdvice({ _id: c, role: "STUDENT" }, { _id: "t1", tenants: [a, b, c], documents: [] }, { propertyTitle: "14 Cotham Grove" });
+		expect(draft.advice).toContain("your share is £33.33.");
+	});
 });
 
 describe("AiService contract advice", () => {

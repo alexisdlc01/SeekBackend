@@ -555,7 +555,7 @@ describe("ApplicationService", () => {
 
 			await service.releaseDeletedMember(userId);
 
-			expect(find.mock.calls[0][0]).toMatchObject({ applicants: userId, stage: { $in: ["NOT_SENT", "SENT", "VIEWED"] } });
+			expect(find.mock.calls[0][0]).toMatchObject({ applicants: userId, stage: { $in: ["NOT_SENT", "SENT", "VIEWED", "OFFERED"] } });
 			expect((applicationModel as any).updateOne).toHaveBeenCalledWith(
 				{ _id: applicationId },
 				{ $pull: { applicants: { $in: [userId] } }, $set: { owner: memberId } },
@@ -836,6 +836,42 @@ describe("ApplicationService pipeline", () => {
 			const [nextUp, pref] = notifications.notify.mock.calls[1];
 			expect(nextUp).toMatchObject({ user: landlordId, kind: "NEW_QUALIFIED_HOUSEHOLD", target: expect.objectContaining({ id: next.toString() }) });
 			expect(pref).toBe("newQualifiedHousehold");
+		});
+
+		it("releases a closing member of an offered household: the leaver's holding deposit is refunded, or a lone household's offer is withdrawn", async () => {
+			const memberId = new Types.ObjectId();
+			const conversation = new Types.ObjectId();
+			const paid = { _id: new Types.ObjectId(), tenant: studentId, amount: 15000, status: "PAID", provider: "simulated", providerRef: "sim_paid", refundedAt: null, refundedAmount: 0 };
+			const offered = stored(ApplicationStage.OFFERED, { conversation, owner: studentId, applicants: [studentId, memberId] });
+			applicationModel.find.mockReturnValue({ exec: jest.fn().mockResolvedValue([offered]) });
+			usersRepository.getUserById.mockImplementation(async (id: string) => ({ deletedAt: id === memberId.toString() ? null : new Date() }));
+			paymentModel.find.mockImplementation((filter: any) => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(filter.refundDue ? [paid] : []) }) }));
+			(service as any).converstaionModel = { updateOne: jest.fn().mockReturnValue({ exec: jest.fn() }) };
+
+			await service.releaseDeletedMember(studentId);
+
+			expect(applicationModel.find.mock.calls[0][0].stage.$in).toContain(ApplicationStage.OFFERED);
+			expect(applicationModel.updateOne).toHaveBeenCalledWith({ _id: applicationId }, { $pull: { applicants: { $in: [studentId] } }, $set: { owner: memberId } });
+			expect(paymentModel.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ application: applicationId, tenant: { $in: [studentId] } }));
+			expect(paymentModel.updateMany).toHaveBeenCalledWith(expect.objectContaining({ tenant: { $in: [studentId] } }), { $set: { refundDue: true, autoRefund: true } });
+			expect(paymentModel.updateOne).toHaveBeenCalledWith({ _id: paid._id, refundedAt: null }, expect.objectContaining({ $set: expect.objectContaining({ refundedAmount: 15000 }) }));
+			expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
+
+			// Alone in the household: the offer is withdrawn through the usual path.
+			const lone = stored(ApplicationStage.OFFERED, { conversation, owner: studentId, applicants: [studentId] });
+			applicationModel.find.mockReturnValue({ exec: jest.fn().mockResolvedValue([lone]) });
+			applicationModel.findById.mockReturnValue({ lean: () => exec(lone) });
+			applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.WITHDRAWN)));
+			queue();
+
+			await service.releaseDeletedMember(studentId);
+
+			expect(applicationModel.findOneAndUpdate).toHaveBeenCalledWith(
+				{ _id: applicationId, stage: ApplicationStage.OFFERED },
+				expect.objectContaining({ $set: expect.objectContaining({ stage: ApplicationStage.WITHDRAWN }) }),
+				{ new: true }
+			);
+			expect(notifications.notify.mock.calls[0][0]).toMatchObject({ user: landlordId, kind: "OFFER_WITHDRAWN" });
 		});
 	});
 

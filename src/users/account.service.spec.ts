@@ -306,3 +306,24 @@ describe("AccountService deleteAccount", () => {
 		expect(userModel.updateOne).not.toHaveBeenCalled();
 	});
 });
+
+describe("AccountService eraseReplacedDocument", () => {
+	it("erases a replaced passport file only when nothing still uses it", async () => {
+		const { service, userModel, tenancyModel, messageModel, uploads } = setup();
+		const id = new Types.ObjectId();
+		const key = `private/${id}/old-passport.pdf`;
+		Object.assign(userModel, { exists: jest.fn().mockResolvedValue(null) });
+
+		await service.eraseReplacedDocument(id, key);
+		expect(uploads.deletePrivateObject).toHaveBeenCalledWith(key);
+		// Any account's synced email counts, the uploader's own included: that account is not being deleted.
+		expect(messageModel.distinct).toHaveBeenCalledWith("attachments.key", { "attachments.key": { $in: [key] } });
+
+		tenancyModel.distinct.mockResolvedValueOnce([key]);
+		await service.eraseReplacedDocument(id, key);
+		(userModel as any).exists.mockResolvedValueOnce({ _id: id });
+		await service.eraseReplacedDocument(id, key);
+		await service.eraseReplacedDocument(id, undefined);
+		expect(uploads.deletePrivateObject).toHaveBeenCalledTimes(1);
+	});
+});

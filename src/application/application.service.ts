@@ -833,8 +833,8 @@ export class ApplicationService {
 	 * are closed first so nobody pays a row that no longer exists. One Stripe already
 	 * took (or is taking) payment on keeps its row, so the webhook can still mark it paid.
 	 */
-	private async dropUnpaidHoldingDeposits(applicationId: Types.ObjectId) {
-		const unpaid = { application: applicationId, kind: PaymentKind.HOLDING_DEPOSIT, status: { $ne: PaymentStatus.PAID } };
+	private async dropUnpaidHoldingDeposits(applicationId: Types.ObjectId, tenants?: Types.ObjectId[]) {
+		const unpaid = { application: applicationId, kind: PaymentKind.HOLDING_DEPOSIT, status: { $ne: PaymentStatus.PAID }, ...(tenants ? { tenant: { $in: tenants } } : {}) };
 		const keep: Types.ObjectId[] = [];
 		if (process.env.STRIPE_SECRET_KEY) {
 			const withSession = await this.paymentModel.find({ ...unpaid, providerRef: /^(cs|pi)_/ }, { providerRef: 1, stripeAccountId: 1 }).lean().exec();
@@ -844,14 +844,15 @@ export class ApplicationService {
 		await this.paymentModel.deleteMany({ ...unpaid, _id: { $nin: keep } });
 	}
 
-	/** Flags every retained holding deposit and immediately refunds each settled payment. */
-	private async refundHoldingDeposits(applicationId: Types.ObjectId) {
+	/** Flags every retained holding deposit (only these tenants' when given) and immediately refunds each settled payment. */
+	private async refundHoldingDeposits(applicationId: Types.ObjectId, tenants?: Types.ObjectId[]) {
+		const scope = { application: applicationId, kind: PaymentKind.HOLDING_DEPOSIT, ...(tenants ? { tenant: { $in: tenants } } : {}) };
 		const result = await this.paymentModel.updateMany(
-			{ application: applicationId, kind: PaymentKind.HOLDING_DEPOSIT, refundDue: { $ne: true }, autoRefund: { $ne: true }, refundedAt: null },
+			{ ...scope, refundDue: { $ne: true }, autoRefund: { $ne: true }, refundedAt: null },
 			{ $set: { refundDue: true, autoRefund: true } }
 		);
 		const due = await this.paymentModel
-			.find({ application: applicationId, kind: PaymentKind.HOLDING_DEPOSIT, refundDue: true, autoRefund: true, status: PaymentStatus.PAID, refundedAt: null })
+			.find({ ...scope, refundDue: true, autoRefund: true, status: PaymentStatus.PAID, refundedAt: null })
 			.lean()
 			.exec();
 		let acceptedCount = 0;
@@ -1144,10 +1145,13 @@ export class ApplicationService {
 		).exec();
 	}
 
-	/** A deleted account leaves its open households: ownership passes to the next member, and an application left with nobody is deleted. */
+	/**
+	 * A deleted account leaves its open or offered households: ownership passes to the next member, and an application
+	 * left with nobody is deleted (an offer is withdrawn). The leaver's holding deposit is dropped or refunded.
+	 */
 	async releaseDeletedMember(userId: Types.ObjectId): Promise<void> {
 		const applications = await this.applicationModel
-			.find({ applicants: userId, stage: { $in: HOUSEHOLD_OPEN_STAGES } })
+			.find({ applicants: userId, stage: { $in: [...HOUSEHOLD_OPEN_STAGES, ApplicationStage.OFFERED] } })
 			.exec();
 		for (const application of applications) {
 			const users = await Promise.all(application.applicants.map(applicant => this.userSevice.getUserById(applicant.toString())));
@@ -1165,6 +1169,10 @@ export class ApplicationService {
 			);
 			await this.sharesService.revokeForApplication(application._id.toString(), gone);
 			await this.converstaionModel.updateOne({ _id: application.conversation }, { $pull: { users: { $in: gone } } }).exec();
+			if (application.stage === ApplicationStage.OFFERED) {
+				await this.dropUnpaidHoldingDeposits(application._id, gone);
+				await this.refundHoldingDeposits(application._id, gone);
+			}
 		}
 	}
 

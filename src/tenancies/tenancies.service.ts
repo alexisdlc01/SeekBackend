@@ -51,12 +51,13 @@ export function depositReceivedDate(value?: string, now: Date = new Date()): Dat
  * Refuses (409) once the availability has ended, else the tenancy would end before it starts and schedule no rent.
  */
 export function applicationTenancyPeriod(listing: Pick<Listing, "availableFrom" | "availableUntil">, now = new Date()) {
-	const startDate = listing.availableFrom && new Date(listing.availableFrom) > now ? new Date(listing.availableFrom) : now;
+	const future = listing.availableFrom && new Date(listing.availableFrom) > now ? new Date(listing.availableFrom) : null;
 	const endDate = listing.availableUntil ? new Date(listing.availableUntil) : null;
-	if (endDate && endDate <= startDate) {
+	if (endDate && endDate <= (future ?? now)) {
 		throw new ConflictException("This listing's availability has ended. The landlord needs to update its 'available until' date before the tenancy can be agreed.");
 	}
-	return { startDate, endDate };
+	// Starting now: anchor on the London day at midnight UTC, like every other tenancy date.
+	return { startDate: future ?? londonCalendarDay(now), endDate };
 }
 
 type Viewer = Pick<User, "_id" | "role">;

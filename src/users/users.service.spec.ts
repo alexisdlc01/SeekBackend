@@ -150,6 +150,16 @@ describe("UsersService", () => {
 			(userModel as Record<string, unknown>).bulkWrite = jest
 				.fn()
 				.mockResolvedValue({ matchedCount: 1 });
+			(userModel as Record<string, unknown>).findById = jest.fn().mockReturnValue({
+				lean: () => ({ exec: async () => ({ documents: [{ type: "IDENTIFICATION", key: "private/507f1f77bcf86cd799439011/old.pdf" }] }) })
+			});
+		});
+
+		it("returns the replaced file's key so it can be erased", async () => {
+			await expect(service.addDocument("507f1f77bcf86cd799439011", "IDENTIFICATION" as never, "https://example.com/doc.pdf", OWNED_KEY))
+				.resolves.toMatchObject({ replacedKey: "private/507f1f77bcf86cd799439011/old.pdf" });
+			await expect(service.addDocument("507f1f77bcf86cd799439011", DocumentType.PROOF_OF_FUNDS, "https://example.com/doc.pdf", OWNED_KEY))
+				.resolves.toMatchObject({ replacedKey: undefined });
 		});
 
 		it("accepts a key issued to the calling user", async () => {
