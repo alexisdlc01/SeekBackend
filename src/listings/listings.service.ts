@@ -53,6 +53,9 @@ export type ListingWithCoordinates = Listing & {
 	rentPerPerson: number | null;
 };
 
+/** Public reads only: a listing whose availableUntil has passed can no longer be let (null also matches a missing field). */
+const stillAvailable = () => ({ $or: [{ availableUntil: null }, { availableUntil: { $gt: new Date() } }] });
+
 function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -281,7 +284,7 @@ export class ListingsService {
 
 	async getAllVerifiedListings(): Promise<Listing[]> {
 		const listings = await this.listingModel
-			.find({ isVerified: true, isDraft: false, _id: { $nin: await this.letListingIds() } })
+			.find({ isVerified: true, isDraft: false, _id: { $nin: await this.letListingIds() }, $and: [stillAvailable()] })
 			.select("-registerOfTitleKey -registrationNumber -likedBy")
 			.exec();
 		return listings;
@@ -361,7 +364,8 @@ export class ListingsService {
 			.find({
 				likedBy: user._id,
 				isVerified: true,
-				isDraft: false
+				isDraft: false,
+				$and: [stillAvailable()]
 			})
 			.select("-registerOfTitleKey -registrationNumber -likedBy")
 			.exec();
@@ -404,7 +408,9 @@ export class ListingsService {
 		const query: any = {
 			isDraft: false,
 			isVerified: true,
-			_id: { $nin: await this.letListingIds() }
+			_id: { $nin: await this.letListingIds() },
+			// $and, so the text search's $or below does not replace it.
+			$and: [stillAvailable()]
 		};
 		const toNumber = (value: unknown): number | undefined => {
 			if (value === undefined || value === null || value === "") {

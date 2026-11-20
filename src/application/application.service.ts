@@ -83,6 +83,9 @@ export class ApplicationService {
 			return this.toDto(existingApplication);
 		}
 
+		if (listing.availableUntil && new Date(listing.availableUntil) <= new Date()) {
+			throw new BadRequestException("This property is no longer available for the dates listed.");
+		}
 		await this.assertNotLet({ listing: listing._id });
 		const missing = missingDocuments(listing, (user.documents ?? []).map(document => document.type));
 		if (missing.length > 0) {
@@ -268,7 +271,9 @@ export class ApplicationService {
 			this.listingService.findListingById(listingId.toString()).catch(() => null),
 			this.applicationModel.exists({ listing: listingId, stage: { $in: [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] } }),
 		]);
-		const all = (open ?? []).map(application => this.householdEntry(application, listing, now));
+		const all = (open ?? []).map(application => this.householdEntry(application, listing, now))
+			// A household whose offer lapsed goes to the back of the queue (stable sort keeps the rest in order).
+			.sort((a, b) => Number(!!a.application.offerExpiredAt) - Number(!!b.application.offerExpiredAt));
 		// A let property has no queue: nobody waiting on it is in line any more.
 		return { all, qualified: letTo ? [] : all.filter(entry => entry.qualified), listing };
 	}
@@ -489,6 +494,9 @@ export class ApplicationService {
 		}
 		await this.assertNextInQueue(current, now);
 		const listing = await this.listingService.findListingById(current.listing.toString());
+		if (listing.availableUntil && new Date(listing.availableUntil) <= now) {
+			throw new BadRequestException("This listing's available-until date has passed. Edit the dates before making an offer.");
+		}
 		const holdingDeposit = listing.holdingDeposit == null || !Number.isFinite(listing.monthlyRent)
 			? listing.holdingDeposit ?? null
 			: Math.min(listing.holdingDeposit, holdingDepositPerPersonCapPence(Math.round(listing.monthlyRent! * 100), listing.numOfPeople) / 100);

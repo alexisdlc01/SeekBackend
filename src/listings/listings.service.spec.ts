@@ -306,6 +306,14 @@ describe("ListingsService", () => {
 			expect(listingModel.find.mock.calls[0][0]._id).toEqual({ $nin: [let_] });
 		});
 
+		it("hides listings whose availableUntil has passed, alongside a text search", async () => {
+			await service.filters({ text: "flat" } as never);
+
+			const [mongoQuery] = listingModel.find.mock.calls[0];
+			expectStillAvailable(mongoQuery);
+			expect(mongoQuery.$or).toHaveLength(6);
+		});
+
 		it("returns everything when no page size is given", async () => {
 			await service.filters({} as never);
 
@@ -313,6 +321,38 @@ describe("ListingsService", () => {
 			expect(query.limit).not.toHaveBeenCalled();
 		});
 	});
+
+	describe("public lists skip listings whose availableUntil has passed", () => {
+		beforeEach(() => {
+			const query = { select: jest.fn().mockReturnThis(), exec: jest.fn().mockResolvedValue([]) };
+			listingModel.find = jest.fn().mockReturnValue(query);
+			listingModel.findOne = jest.fn().mockReturnValue({ select: jest.fn().mockReturnThis(), exec: jest.fn().mockResolvedValue(null) });
+		});
+
+		it("all verified listings", async () => {
+			await service.getAllVerifiedListings();
+			expectStillAvailable(listingModel.find.mock.calls[0][0]);
+		});
+
+		it("liked listings", async () => {
+			await service.getLiked(makeLandlord());
+			expectStillAvailable(listingModel.find.mock.calls[0][0]);
+		});
+
+		it("but one published listing stays readable for households that already applied", async () => {
+			await expect(service.findPublishedListingById(new Types.ObjectId().toString())).rejects.toThrow("Listing not found");
+			const [mongoQuery] = listingModel.findOne.mock.calls[0];
+			expect(mongoQuery.$and).toBeUndefined();
+			expect(mongoQuery.availableUntil).toBeUndefined();
+		});
+	});
+
+	function expectStillAvailable(mongoQuery: { $and?: { $or: Record<string, unknown>[] }[] }) {
+		const [condition] = mongoQuery.$and ?? [];
+		expect(condition.$or).toEqual([{ availableUntil: null }, { availableUntil: { $gt: expect.any(Date) } }]);
+		const after = (condition.$or[1].availableUntil as { $gt: Date }).$gt;
+		expect(Math.abs(after.getTime() - Date.now())).toBeLessThan(5000);
+	}
 
 	function makeLandlord(): User {
 		return { _id: new Types.ObjectId("64b64b64b64b64b64b64b64b") } as User;
