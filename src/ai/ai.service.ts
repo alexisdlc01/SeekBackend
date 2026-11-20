@@ -342,7 +342,8 @@ export class AiService {
 	}
 
 	private async queryListings(filters: SearchFilters, student?: { documents?: PassportDocumentInput[] }) {
-		const query: Partial<ListingFilterDto> = { limit: 60 };
+		// shortcut: distance and move-in filters run in memory, so fetch a wide candidate set (300); upgrade to a geo query past that many homes in one city.
+		const query: Partial<ListingFilterDto> = { limit: 300 };
 		if (filters.city) query.city = filters.city;
 		if (filters.maxRent) query.maxRent = filters.maxRent;
 		if (filters.minBedrooms) query.minBedrooms = filters.minBedrooms;
