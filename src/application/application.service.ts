@@ -430,8 +430,8 @@ export class ApplicationService {
 				body: `${user.name ?? "Someone"} set the viewing time.`,
 				...(recipient.toString() === application.landlord?.toString()
 					? notificationTarget("landlord", NotificationTargetKind.APPLICATION, application._id, { listing: application.listing })
-					: notificationTarget("student", NotificationTargetKind.APPLICATION, application._id)),
-				dedupeKey: `viewing:${application._id.toString()}:${when.toISOString()}`
+					: notificationTarget("student", NotificationTargetKind.APPLICATION, application._id))
+				// No dedupeKey: each booking is a user action, and moving back to an earlier time must notify again.
 			}))
 		);
 		return this.toDto(application);
@@ -740,7 +740,14 @@ export class ApplicationService {
 	async acceptOffer(applicationId: string): Promise<{ tenancy: string }> {
 		const offered = await this.applicationModel.findById(applicationId).lean().exec();
 		if (offered) await this.assertNotLet(offered);
-		if (offered?.stage === ApplicationStage.OFFERED) await this.tenanciesService.assertNoCurrentTenancy(offered.applicants, offered.listing);
+		if (offered?.stage === ApplicationStage.OFFERED) {
+			await this.tenanciesService.assertNoCurrentTenancy(offered.applicants, offered.listing);
+			// Rent to a deleted or suspended landlord can never be paid (payments refuse them), so don't create the tenancy.
+			const landlord = offered.landlord ? await this.userSevice.getUserById(offered.landlord.toString()) : null;
+			if (!landlord || landlord.deletedAt || landlord.suspendedAt) {
+				throw new BadRequestException("This landlord is no longer active on Seek, so the offer can't be accepted.");
+			}
+		}
 		const application = await this.applicationModel
 			.findOneAndUpdate({
 				_id: applicationId,

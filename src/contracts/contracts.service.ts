@@ -110,6 +110,10 @@ export class ContractsService {
 			.lean()
 			.exec();
 		if (!tenancy) throw new NotFoundException("Tenancy not found.");
+		const signatures = contract.signatures ?? [];
+		const signers = signatures.length && this.userModel
+			? await this.userModel.find({ _id: { $in: signatures.map(s => s.user) } }, { name: 1, email: 1 }).lean().exec()
+			: [];
 		const listing = tenancy.listing as unknown as {
 			streetAddress?: string;
 			cityTown?: string;
@@ -131,7 +135,11 @@ export class ContractsService {
 			depositReceivedAt: tenancy.depositReceivedAt,
 			depositProtectedAt: tenancy.depositProtectedAt,
 			billsIncluded: listing?.billsIncluded,
-			licenceNumber: listing?.licenceNumber
+			licenceNumber: listing?.licenceNumber,
+			signatures: signatures.map(s => {
+				const signer = signers.find(u => u._id.equals(s.user));
+				return { name: signer?.name, email: signer?.email, signedAt: s.signedAt };
+			})
 		};
 		return doc === "agreement" ? renderAgreement(data) : renderPrescribedInformation(data);
 	}

@@ -33,6 +33,17 @@ describe("Seek agreement documents", () => {
 		expect(html).toContain("Contract-holders");
 	});
 
+	it("lists each recorded tenant signature and does not claim the landlord signs", () => {
+		const unsigned = renderAgreement(data);
+		expect(unsigned).toContain("Each tenant signs this agreement electronically in Seek.");
+		expect(unsigned).not.toContain("and the landlord sign");
+		expect(unsigned).toContain("No signatures yet.");
+		const html = renderAgreement({ ...data, signatures: [{ name: "Maya", signedAt: new Date("2026-09-02T08:05:00Z") }, { email: "tom@example.com", signedAt: new Date("2026-09-03T17:30:00Z") }] });
+		expect(html).toContain("<td>Maya</td><td>Signed 2026-09-02 08:05 UTC</td>");
+		expect(html).toContain("<td>tom@example.com</td><td>Signed 2026-09-03 17:30 UTC</td>");
+		expect(html).not.toContain("No signatures yet.");
+	});
+
 	it("lists the deposit scheme in the prescribed information", () => {
 		const html = renderPrescribedInformation(data);
 		expect(html).toContain("Deposit Protection Service");
@@ -45,6 +56,33 @@ describe("Seek agreement documents", () => {
 		expect(isValidSignature("secret", "abc", "prescribed-information", sig)).toBe(false);
 		expect(isValidSignature("other", "abc", "agreement", sig)).toBe(false);
 		expect(isValidSignature("secret", "abc", "agreement", "nope")).toBe(false);
+	});
+});
+
+describe("ContractsService renderDocument", () => {
+	const lean = <T>(value: T) => ({ lean: () => ({ exec: () => Promise.resolve(value) }) });
+
+	it("shows who signed and when on the filed agreement", async () => {
+		const maya = new Types.ObjectId();
+		const contract = {
+			_id: new Types.ObjectId(),
+			tenancy: new Types.ObjectId(),
+			title: "Assured periodic tenancy agreement",
+			templateKind: ContractTemplateKind.ENGLAND_ASSURED_PERIODIC,
+			signatures: [{ user: maya, signedAt: new Date("2026-09-02T08:05:00Z") }]
+		};
+		const tenancy = { landlord: { name: "Priya" }, tenants: [{ name: "Maya" }, { name: "Tom" }], startDate: new Date("2026-09-01"), monthlyRent: 50000, depositAmount: 50000 };
+		const tenancyQuery: any = { populate: () => tenancyQuery, ...lean(tenancy) };
+		const userModel = { find: jest.fn(() => lean([{ _id: maya, name: "Maya" }])) };
+		const service = new ContractsService(
+			{ findById: () => lean(contract) } as any, {} as any, {} as any, { findById: () => tenancyQuery } as any, {} as any,
+			{} as any, {} as any, { get: () => "secret" } as any, userModel as any
+		);
+		const id = contract._id.toString();
+		const html = await service.renderDocument(id, "agreement", documentSignature("secret", id, "agreement"));
+		expect(html).toContain("<td>Maya</td><td>Signed 2026-09-02 08:05 UTC</td>");
+		expect(html).not.toContain("<td>Tom</td><td>Signed");
+		expect(userModel.find).toHaveBeenCalledWith({ _id: { $in: [maya] } }, { name: 1, email: 1 });
 	});
 });
 
