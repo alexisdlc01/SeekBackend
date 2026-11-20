@@ -23,7 +23,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { NotificationKind } from "../notifications/notification-kind.enum";
 import { notificationTarget, NotificationTargetKind } from "../notifications/links";
 import { buildPassport, PassportDocumentInput, StudentEmailProof, withoutFiles } from "../users/passport";
-import { compareForLandlord, householdReadiness, ReadinessCriteria } from "./readiness";
+import { compareForLandlord, householdCap, householdReadiness, ReadinessCriteria } from "./readiness";
 import { parseUniversityDetails } from "./university-details";
 import { OFFER_WINDOW_DAYS } from "./offer";
 import { missingDocuments } from "./required-documents";
@@ -585,6 +585,7 @@ export class ApplicationService {
 		if (!listing || (listing.availableUntil && new Date(listing.availableUntil) <= new Date())) {
 			throw new BadRequestException("This property is no longer available.");
 		}
+		return listing;
 	}
 
 	/** `_id` is the household's own application, left out for one not created yet. */
@@ -1087,7 +1088,17 @@ export class ApplicationService {
 			throw new BadRequestException("You already have an application for this listing.");
 		}
 
-		await this.assertListingOpen(application);
+		const listing = await this.assertListingOpen(application);
+		const cap = householdCap(listing.numOfPeople, listing.criteria);
+		const alreadyMember = application.applicants.some(applicant => applicant.toString() === userId);
+		if (cap && !alreadyMember && application.applicants.length >= cap) {
+			throw new BadRequestException("This household is already full for this property.");
+		}
+		const joiner = await this.userSevice.getUserById(userId);
+		const missing = missingDocuments(listing, (joiner?.documents ?? []).map(document => document.type));
+		if (missing.length > 0) {
+			throw new BadRequestException(`Missing required documents: ${missing.join(", ")}. Add them to your Seek Passport, then join.`);
+		}
 
 		// Once an offer is made (or the application is closed) the household is fixed.
 		const joinable = HOUSEHOLD_OPEN_STAGES;

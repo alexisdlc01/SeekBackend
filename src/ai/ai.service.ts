@@ -9,7 +9,7 @@ import { ListingFilterDto } from "../listings/dto/listing-filter.dto";
 import { Listing } from "../listings/listings.schema";
 import { Nation } from "../listings/enums/nation.enum";
 import { isConfirmedTenancyAgreement, Tenancy } from "../tenancies/tenancy.schema";
-import { DepositScheme, TenancyDocumentType, TenancyStatus } from "../tenancies/tenancy.enums";
+import { DepositScheme, SCOTTISH_SCHEMES, TenancyDocumentType, TenancyStatus } from "../tenancies/tenancy.enums";
 import { TenanciesService } from "../tenancies/tenancies.service";
 import { depositCapPence, depositProtectionDeadline, depositProtectionWindow } from "../tenancies/compliance";
 import { Bill, BillStatus } from "../bills/bill.schema";
@@ -116,7 +116,6 @@ export function addsUnsafeDetails(advice: string, trusted = ""): boolean {
 }
 
 export const STUDENT_PROTECTS_DEPOSIT = /(^|[.!?]\s+)protect (your|the) deposit/i;
-const SCOTTISH_SCHEMES = [DepositScheme.SAFEDEPOSITS_SCOTLAND, DepositScheme.LPS_SCOTLAND, DepositScheme.MYDEPOSITS_SCOTLAND];
 
 /** Deposit law of the nation the home is in: Scotland differs on cap, deadline and schemes. */
 function depositRules(nation?: unknown) {

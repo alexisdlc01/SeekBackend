@@ -77,5 +77,17 @@ describe("household readiness", () => {
 			expect(result.criteria.map(c => c.key)).toEqual(["PASSPORTS", "HOUSEHOLD_SIZE", "MAX_HOUSEHOLD"]);
 			expect(result.qualified).toBe(false);
 		});
+
+		it("caps the household at the property's size when the landlord set no maximum", () => {
+			const result = householdReadiness([ready, ready, ready, ready, ready], 3, new Date(), { referencesRequired: false });
+			expect(result.criteria.find(c => c.key === "MAX_HOUSEHOLD")).toMatchObject({ passed: false, label: "At most 3 people" });
+			expect(result.qualified).toBe(false);
+		});
+
+		it("sets no cap on an old listing with neither a size nor a maximum", () => {
+			const result = householdReadiness([ready, ready, ready], undefined);
+			expect(result.criteria.map(c => c.key)).not.toContain("MAX_HOUSEHOLD");
+			expect(result.qualified).toBe(true);
+		});
 	});
 });

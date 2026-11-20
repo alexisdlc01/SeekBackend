@@ -46,6 +46,11 @@ function countLine(count: number, total: number, what: string) {
 	return `${count} of ${total} ${total === 1 ? "member has" : "members have"} ${what}`;
 }
 
+/** The landlord's "up to N people", else the property's own size (what students are shown); none for an old listing without a size. */
+export function householdCap(numOfPeople: number | undefined, criteria?: ReadinessCriteria | null): number | undefined {
+	return criteria?.maxHousehold || numOfPeople || undefined;
+}
+
 /**
  * A household is qualified when each member's Seek Passport is ready and the
  * group is big enough for the property, so the landlord can offer straight away.
@@ -73,11 +78,12 @@ export function householdReadiness(
 			detail: `${count} of ${needed} ${needed === 1 ? "person" : "people"}`
 		}
 	];
-	if (criteria?.maxHousehold) {
+	const max = householdCap(numOfPeople, criteria);
+	if (max) {
 		results.push({
 			key: "MAX_HOUSEHOLD",
-			label: `At most ${criteria.maxHousehold} people`,
-			passed: count > 0 && count <= criteria.maxHousehold,
+			label: `At most ${max} ${max === 1 ? "person" : "people"}`,
+			passed: count > 0 && count <= max,
 			detail: `${count} ${count === 1 ? "person" : "people"} applying`
 		});
 	}

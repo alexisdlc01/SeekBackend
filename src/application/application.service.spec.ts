@@ -49,6 +49,7 @@ describe("ApplicationService", () => {
 		assertCanAccess: jest.Mock;
 	};
 	let sharesService: { shareForApplication: jest.Mock; revokeForApplication: jest.Mock };
+	let usersRepository: { getUserById: jest.Mock };
 	let service: ApplicationService;
 
 	beforeEach(() => {
@@ -74,11 +75,12 @@ describe("ApplicationService", () => {
 			shareForApplication: jest.fn().mockResolvedValue(undefined),
 			revokeForApplication: jest.fn().mockResolvedValue(undefined),
 		};
+		usersRepository = { getUserById: jest.fn().mockResolvedValue({ documents: [] }) };
 		service = new ApplicationService(
 			applicationModel as never,
 			conversationModel as never,
 			listingService as never,
-			{} as never,
+			usersRepository as never,
 			conversationAccessService as never,
 			sharesService as never,
 			{} as never,
@@ -361,6 +363,7 @@ describe("ApplicationService", () => {
 				_id: applicationId,
 				listing: listingId,
 				conversation: conversationId,
+				applicants: [],
 				stage: ApplicationStage.NOT_SENT,
 				inviteTokenHash: hashToken(VALID_INVITE),
 				inviteTokenExpires: new Date(Date.now() + 60_000),
@@ -491,6 +494,25 @@ describe("ApplicationService", () => {
 				.rejects.toThrow("no longer available");
 			expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
 			expect(sharesService.shareForApplication).not.toHaveBeenCalled();
+		});
+
+		it("refuses to join a household that already fills the property", async () => {
+			mockApplication({ stage: ApplicationStage.SENT, applicants: [new Types.ObjectId(), new Types.ObjectId()] });
+			listingService.findPublishedListingById.mockResolvedValue({ ...listing, numOfPeople: 2 });
+			await expect(service.join(applicationId.toString(), new Types.ObjectId().toString(), VALID_INVITE))
+				.rejects.toThrow(new BadRequestException("This household is already full for this property."));
+			expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
+		});
+
+		it("refuses a joiner missing the listing's required documents", async () => {
+			mockApplication({ stage: ApplicationStage.SENT });
+			listingService.findPublishedListingById.mockResolvedValue({
+				...listing,
+				requirements: [{ name: "Identification", desc: "National ID or Passport", required: true }],
+			});
+			await expect(service.join(applicationId.toString(), new Types.ObjectId().toString(), VALID_INVITE))
+				.rejects.toThrow("Missing required documents: Identification");
+			expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
 		});
 
 		it("refuses when no invite has ever been issued", async () => {
