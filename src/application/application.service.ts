@@ -387,6 +387,9 @@ export class ApplicationService {
 		}
 
 		const listing = await this.listingService.findListingById(application.listing.toString());
+		if (listing.availableUntil && new Date(listing.availableUntil) <= new Date()) {
+			throw new BadRequestException("This property is no longer available for the dates listed.");
+		}
 		// Lapsed slots stay stored until the landlord next saves the listing; only future ones bind the student.
 		const slots = (listing.viewingSlots ?? []).map(slot => new Date(slot).getTime()).filter(t => t > Date.now());
 		// Students choose from the times the landlord offered; the landlord may
@@ -571,6 +574,16 @@ export class ApplicationService {
 		const first = queue.qualified.find(entry => !lapsed(entry)) ?? queue.qualified[0];
 		if (first.id !== id) {
 			throw new ConflictException("First come, first served: only the first qualified household in this listing's queue can get an offer or be accepted.");
+		}
+	}
+
+	/** create() checks the listing once; a draft sent or joined later must still find it published, in date and not let. */
+	private async assertListingOpen(application: Pick<Application, "listing"> & { _id?: Types.ObjectId }) {
+		await this.assertNotLet(application);
+		const listing = await this.listingService.findPublishedListingById(application.listing.toString())
+			.catch(error => { if (error instanceof NotFoundException) return null; throw error; });
+		if (!listing || (listing.availableUntil && new Date(listing.availableUntil) <= new Date())) {
+			throw new BadRequestException("This property is no longer available.");
 		}
 	}
 
@@ -938,7 +951,7 @@ export class ApplicationService {
 
 	async send(applicationId: string): Promise<void> {
 		const pending = await this.applicationModel.findById(applicationId).lean().exec();
-		if (pending) await this.assertNotLet(pending);
+		if (pending) await this.assertListingOpen(pending);
 		const application = await this.applicationModel
 			.findOneAndUpdate({
 				_id: applicationId,
@@ -1073,6 +1086,8 @@ export class ApplicationService {
 		})) {
 			throw new BadRequestException("You already have an application for this listing.");
 		}
+
+		await this.assertListingOpen(application);
 
 		// Once an offer is made (or the application is closed) the household is fixed.
 		const joinable = HOUSEHOLD_OPEN_STAGES;

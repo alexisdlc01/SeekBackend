@@ -188,6 +188,17 @@ describe("ApplicationService", () => {
 		expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
 	});
 
+	it("refuses to send a draft once its listing was hidden, and shares nothing", async () => {
+		applicationModel.findById.mockReturnValue({
+			lean: () => ({ exec: jest.fn().mockResolvedValue({ _id: applicationId, listing: listingId, stage: ApplicationStage.NOT_SENT }) }),
+		});
+		listingService.findPublishedListingById.mockRejectedValue(new NotFoundException("Listing not found"));
+
+		await expect(service.send(applicationId.toString())).rejects.toThrow(new BadRequestException("This property is no longer available."));
+		expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
+		expect(sharesService.shareForApplication).not.toHaveBeenCalled();
+	});
+
 	it("rejects applications for listings that are not published and verified", async () => {
 		listingService.findPublishedListingById.mockRejectedValue(
 			new NotFoundException("Listing not found"),
@@ -348,6 +359,7 @@ describe("ApplicationService", () => {
 		function mockApplication(overrides: Record<string, unknown> = {}) {
 			applicationModel.findById.mockResolvedValue({
 				_id: applicationId,
+				listing: listingId,
 				conversation: conversationId,
 				stage: ApplicationStage.NOT_SENT,
 				inviteTokenHash: hashToken(VALID_INVITE),
@@ -470,6 +482,15 @@ describe("ApplicationService", () => {
 			await expect(service.join(applicationId.toString(), new Types.ObjectId().toString(), VALID_INVITE))
 				.rejects.toBeInstanceOf(BadRequestException);
 			expect(conversationModel.updateOne).not.toHaveBeenCalled();
+		});
+
+		it("refuses to join a household whose listing has expired", async () => {
+			mockApplication({ stage: ApplicationStage.SENT });
+			listingService.findPublishedListingById.mockResolvedValue({ ...listing, availableUntil: new Date(Date.now() - 1000) });
+			await expect(service.join(applicationId.toString(), new Types.ObjectId().toString(), VALID_INVITE))
+				.rejects.toThrow("no longer available");
+			expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
+			expect(sharesService.shareForApplication).not.toHaveBeenCalled();
 		});
 
 		it("refuses when no invite has ever been issued", async () => {
@@ -1437,6 +1458,18 @@ describe("ApplicationService pipeline", () => {
 		await expect(
 			service.scheduleViewing(applicationId.toString(), otherSlot.toISOString(), landlord),
 		).resolves.toBeDefined();
+	});
+
+	it("refuses a viewing on a listing past its available-until date", async () => {
+		const student = { _id: studentId, name: "Student" } as User;
+		listingService.findListingById.mockResolvedValueOnce({
+			_id: listingId, landlord: landlordId, viewingSlots: [future], availableUntil: new Date(Date.now() - 1000),
+		});
+		applicationModel.findById.mockReturnValue(exec(stored(ApplicationStage.SENT)));
+		await expect(
+			service.scheduleViewing(applicationId.toString(), future.toISOString(), student),
+		).rejects.toThrow("no longer available");
+		expect(notifications.notifyMany).not.toHaveBeenCalled();
 	});
 
 	it("lets a student propose any time once every offered slot has passed", async () => {

@@ -142,7 +142,14 @@ export class RepairsService {
 				kind: NotificationKind.REPAIR_UPDATED,
 				title: `"${repair.title}" ${STATUS_COPY[dto.status]}`,
 				body: updated?.scheduledFor && dto.status === RepairStatus.SCHEDULED
-					? `Booked for ${updated.scheduledFor.toUTCString()}`
+					? `Booked for ${updated.scheduledFor.toLocaleString("en-GB", {
+						weekday: "short",
+						day: "numeric",
+						month: "short",
+						hour: "2-digit",
+						minute: "2-digit",
+						timeZone: "Europe/London"
+					})}`
 					: undefined,
 				...notificationTarget("student", NotificationTargetKind.REPAIRS, tenancy._id)
 			}))

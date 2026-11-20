@@ -252,6 +252,15 @@ export class TenanciesService {
 		if (activated) {
 			const listing = await this.listingModel.findById(activated.listing).lean().exec();
 			if (listing) await this.afterCreate(activated as TenancyLean, listing);
+			// The contract can only be sent once the tenancy is ACTIVE: tell the landlord it is.
+			await this.notifications.notify({
+				user: activated.landlord,
+				kind: NotificationKind.TENANCY_CREATED,
+				title: `Every tenant accepted ${listing?.propertyTitle || listing?.streetAddress || "your tenancy"}`,
+				body: "The tenancy is active. You can now send the contract.",
+				...notificationTarget("landlord", NotificationTargetKind.TENANCY, activated._id),
+				dedupeKey: `tenancy-active:${activated._id.toString()}`
+			});
 		}
 		return this.getDetail(id, student);
 	}

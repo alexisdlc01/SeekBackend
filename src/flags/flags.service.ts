@@ -156,12 +156,14 @@ export class FlagsService {
 	private async hideListings(id: Types.ObjectId, reason: string): Promise<void> {
 		if (!this.listingModel) return;
 		const now = new Date();
-		await this.listingModel
+		const hidden = await this.listingModel
 			.updateMany(
 				{ landlord: id, isDraft: false },
 				{ $set: { isVerified: false, moderationStatus: ModerationStatus.NEEDS_CHANGES, moderationReasons: [reason], lastUpdated: now } }
 			)
 			.exec();
+		// A student, or a landlord with no published listing, has nothing offline to be told about.
+		if (!hidden.matchedCount) return;
 		if (this.gateway) for (const listing of await this.listingModel.find({ landlord: id, isDraft: false }).exec()) this.gateway.emitListingUpdated(listing);
 		await this.notifications?.notify({
 			user: id,

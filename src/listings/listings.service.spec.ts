@@ -339,6 +339,13 @@ describe("ListingsService", () => {
 			expectStillAvailable(listingModel.find.mock.calls[0][0]);
 		});
 
+		it("liked listings leave out a property another household already let", async () => {
+			const let_ = new Types.ObjectId();
+			applicationModel.distinct.mockResolvedValue([let_]);
+			await service.getLiked(makeLandlord());
+			expect(listingModel.find.mock.calls[0][0]._id).toEqual({ $nin: [let_] });
+		});
+
 		it("but one published listing stays readable for households that already applied", async () => {
 			await expect(service.findPublishedListingById(new Types.ObjectId().toString())).rejects.toThrow("Listing not found");
 			const [mongoQuery] = listingModel.findOne.mock.calls[0];
