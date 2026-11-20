@@ -237,6 +237,23 @@ describe("ContractsService send", () => {
 	});
 });
 
+describe("ContractsService listForTenancy", () => {
+	it("hides draft contracts from a tenant but not from the landlord", async () => {
+		const maya = new Types.ObjectId();
+		const tenancy = { _id: new Types.ObjectId(), landlord: new Types.ObjectId(), tenants: [maya] };
+		const find = jest.fn().mockReturnValue({ populate: () => ({ sort: () => ({ lean: () => ({ exec: () => Promise.resolve([]) }) }) }) });
+		const service = new ContractsService(
+			{ find } as any, {} as any, {} as any, {} as any, {} as any,
+			{ findForMember: jest.fn().mockResolvedValue(tenancy) } as any,
+			{} as any, { get: () => "secret" } as any, {} as any, {} as any
+		);
+		await service.listForTenancy(tenancy._id.toString(), { _id: maya } as any);
+		await service.listForTenancy(tenancy._id.toString(), { _id: tenancy.landlord } as any);
+		expect(find.mock.calls[0][0]).toEqual({ tenancy: tenancy._id, status: { $ne: ContractStatus.DRAFT } });
+		expect(find.mock.calls[1][0]).toEqual({ tenancy: tenancy._id });
+	});
+});
+
 describe("ContractsService signed email", () => {
 	const lean = <T>(value: T) => ({ lean: () => ({ exec: () => Promise.resolve(value) }) });
 	const maya = new Types.ObjectId();

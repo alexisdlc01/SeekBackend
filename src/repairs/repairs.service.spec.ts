@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { Types } from "mongoose";
 import { RepairsService } from "./repairs.service";
 import { Role } from "../auth/role.enum";
+import { RepairStatus } from "./repair.schema";
 
 describe("RepairsService create", () => {
 	const landlordId = new Types.ObjectId();
@@ -84,5 +85,30 @@ describe("RepairsService create", () => {
 		const [repair] = await service.listForTenancy(tenancy._id.toString(), { _id: new Types.ObjectId(), role: Role.SUPERUSER } as any);
 		expect(repair.photoUrls).toEqual([]);
 		expect(uploads.getPresignedDownloadUrl).not.toHaveBeenCalled();
+	});
+});
+
+describe("RepairsService update", () => {
+	it("gives the tenants the booked time in London time, not UTC", async () => {
+		const landlordId = new Types.ObjectId();
+		const tenantId = new Types.ObjectId();
+		const tenancy = { _id: new Types.ObjectId(), landlord: landlordId, tenants: [tenantId] };
+		const repair = { _id: new Types.ObjectId(), landlord: landlordId, tenancy: tenancy._id, title: "Boiler" };
+		// 13:00 UTC in July is 14:00 BST.
+		const scheduledFor = new Date("2026-07-15T13:00:00Z");
+		const lean = (value: unknown) => ({ lean: () => ({ exec: async () => value }) });
+		const repairModel = {
+			findById: jest.fn(() => lean(repair)),
+			findByIdAndUpdate: jest.fn(() => lean({ ...repair, status: RepairStatus.SCHEDULED, scheduledFor }))
+		};
+		const notifications = { notify: jest.fn(), notifyMany: jest.fn() };
+		const service = new RepairsService(
+			repairModel as any,
+			{ findForLandlord: jest.fn().mockResolvedValue(tenancy) } as any,
+			notifications as any,
+			{} as any
+		);
+		await service.update(repair._id.toString(), { status: RepairStatus.SCHEDULED, scheduledFor: scheduledFor.toISOString() } as any, { _id: landlordId } as any);
+		expect(notifications.notifyMany.mock.calls[0][0][0].body).toBe("Booked for Wed 15 Jul, 14:00");
 	});
 });

@@ -19,7 +19,7 @@ import { User } from "../users/users.schema";
 import { DocumentShare } from "../users/shares/document-share.schema";
 import { DocumentAccess } from "../users/shares/document-access.schema";
 import { Tenancy } from "../tenancies/tenancy.schema";
-import { Contract } from "../contracts/contract.schema";
+import { Contract, ContractStatus } from "../contracts/contract.schema";
 import {
 	ALLOWED_UPLOAD_TYPES,
 	MAX_UPLOAD_BYTES
@@ -240,10 +240,15 @@ export class UploadService {
 			$or: [{ landlord: new Types.ObjectId(userId) }, { tenants: new Types.ObjectId(userId) }]
 		};
 		if (await this.tenancyModel.exists({ ...member, "documents.key": key })) return true;
-		const contracts = await this.contractModel.find({ key }).select("tenancy").lean().exec();
+		const contracts = await this.contractModel.find({ key }).select("tenancy status").lean().exec();
 		if (!contracts.length) return false;
+		const tenancies = (list: typeof contracts) => ({ $in: list.map(contract => contract.tenancy) });
+		// A draft is the landlord's until it is sent: tenants may open only sent contracts.
 		return Boolean(
-			await this.tenancyModel.exists({ ...member, _id: { $in: contracts.map(contract => contract.tenancy) } })
+			await this.tenancyModel.exists({ $or: [
+				{ landlord: new Types.ObjectId(userId), _id: tenancies(contracts) },
+				{ tenants: new Types.ObjectId(userId), _id: tenancies(contracts.filter(contract => contract.status !== ContractStatus.DRAFT)) },
+			] })
 		);
 	}
 

@@ -348,9 +348,11 @@ export class ContractsService {
 	}
 
 	async listForTenancy(tenancyId: string, viewer: Viewer) {
-		await this.tenancies.findForMember(tenancyId, viewer);
+		const tenancy = await this.tenancies.findForMember(tenancyId, viewer);
+		// Tenants see a contract once it is sent; the landlord and their team keep the drafts.
+		const sentOnly = isTenant(tenancy, viewer._id.toString()) ? { status: { $ne: ContractStatus.DRAFT } } : {};
 		return this.contractModel
-			.find({ tenancy: new Types.ObjectId(tenancyId) })
+			.find({ tenancy: new Types.ObjectId(tenancyId), ...sentOnly })
 			.populate({ path: "signatures.user", select: "name profilePicUrl" })
 			.sort({ createdAt: -1 })
 			.lean()

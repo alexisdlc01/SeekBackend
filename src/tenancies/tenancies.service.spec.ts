@@ -133,7 +133,7 @@ describe("TenanciesService create / accept", () => {
 	});
 
 	it("schedules rent only when the last invited student accepts", async () => {
-		const { service, tenancyModel, rentSchedule } = setup();
+		const { service, tenancyModel, rentSchedule, notifications } = setup();
 		const a = new Types.ObjectId();
 		const b = new Types.ObjectId();
 		const tenancyId = new Types.ObjectId();
@@ -156,6 +156,7 @@ describe("TenanciesService create / accept", () => {
 			{ $pull: { pendingTenants: a }, $addToSet: { tenants: a } }
 		);
 		expect(rentSchedule.ensureDefaultPlans).not.toHaveBeenCalled();
+		expect(notifications.notify).not.toHaveBeenCalled();
 
 		// Last student: the guarded update flips the tenancy to ACTIVE.
 		tenancyModel.findById.mockReturnValue(lean({ ...pending, tenants: [a], pendingTenants: [b] }));
@@ -170,6 +171,10 @@ describe("TenanciesService create / accept", () => {
 		);
 		expect(rentSchedule.ensureDefaultPlans).toHaveBeenCalledTimes(1);
 		expect(rentSchedule.ensureDefaultPlans.mock.calls[0][0].tenants).toEqual([a, b]);
+		// The landlord learns the contract can now be sent.
+		expect(notifications.notify).toHaveBeenCalledWith(expect.objectContaining({
+			user: landlordId, link: "/contracts", dedupeKey: `tenancy-active:${tenancyId.toString()}`
+		}));
 	});
 
 	it("starts an accepted application's tenancy on the listing's available date, not today", async () => {

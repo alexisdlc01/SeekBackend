@@ -74,9 +74,16 @@ export class AccountService {
 	}
 
 	/** Adds the email to the team, or updates its scopes if it is already there. */
-	async invite(owner: Pick<User, "_id" | "email" | "name">, dto: InviteTeamMemberDto) {
+	async invite(owner: Pick<User, "_id" | "email" | "name"> & { teamOf?: unknown }, dto: InviteTeamMemberDto) {
+		// This route acts as the caller: a member's invitee would join the member's empty account, not the owner's.
+		if (owner.teamOf) throw new ForbiddenException("Only the account owner can invite people to the team.");
 		const email = dto.email.trim().toLowerCase();
 		if (email === owner.email?.toLowerCase()) throw new BadRequestException("You are already the owner of this account.");
+		// Accepting is landlord-only and emails are unique, so a student's invite could never be accepted.
+		const existing = await this.userModel.findOne({ email }).select("role").lean().exec();
+		if (existing && existing.role !== Role.LANDLORD_AGENCY) {
+			throw new BadRequestException("That email belongs to a student account. Ask them to use a landlord email.");
+		}
 		const scopes = [...new Set(dto.scopes)];
 		const updated = await this.userModel.updateOne(
 			{ _id: owner._id, "team.email": email },

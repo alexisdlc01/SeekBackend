@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException } from "@nes
 import { Types } from "mongoose";
 import { AccountService } from "./account.service";
 import { TeamScope } from "./types/team-scope";
+import { Role } from "../auth/role.enum";
 
 const lean = <T>(value: T) => ({ lean: () => ({ exec: () => Promise.resolve(value) }) });
 const selectLean = <T>(value: T) => ({ select: () => lean(value) });
@@ -77,6 +78,20 @@ describe("AccountService team", () => {
 		expect(mail.sendTeamInviteEmail).toHaveBeenCalledWith("b@example.com", "Lee Landlord");
 	});
 
+	it("refuses an email that belongs to a student account, which could never accept", async () => {
+		const { service, userModel } = setup();
+		userModel.findOne.mockReturnValue(selectLean({ _id: new Types.ObjectId(), role: Role.STUDENT }));
+		await expect(service.invite(owner as any, { email: "kim@example.com", scopes: [TeamScope.REPAIRS] })).rejects.toThrow("student account");
+		expect(userModel.updateOne).not.toHaveBeenCalled();
+	});
+
+	it("refuses an invite from a team member, whose invitee would join the member's empty account", async () => {
+		const { service, userModel } = setup();
+		const member = { ...owner, teamOf: { ownerId: new Types.ObjectId().toString(), ownerName: "Owner", scopes: [] } };
+		await expect(service.invite(member as any, { email: "kim@example.com", scopes: [TeamScope.REPAIRS] })).rejects.toBeInstanceOf(ForbiddenException);
+		expect(userModel.updateOne).not.toHaveBeenCalled();
+	});
+
 	it("refuses inviting yourself", async () => {
 		const { service } = setup();
 		await expect(service.invite(owner as any, { email: "LANDLORD@example.com", scopes: [TeamScope.REPAIRS] })).rejects.toBeInstanceOf(
@@ -93,7 +108,7 @@ describe("AccountService team invites", () => {
 		const { service, userModel } = setup();
 		userModel.updateOne.mockResolvedValueOnce({ matchedCount: 0 }).mockResolvedValueOnce({ matchedCount: 1 });
 		userModel.findById.mockReturnValue(selectLean({ team: [] }));
-		userModel.findOne.mockReturnValue(selectLean({ _id: invitee._id }));
+		userModel.findOne.mockReturnValue(selectLean({ _id: invitee._id, role: Role.LANDLORD_AGENCY }));
 		await service.invite({ _id: ownerId, email: "a@example.com" } as any, { email: invitee.email, scopes: [TeamScope.REPAIRS] }).catch(() => null);
 		expect(userModel.updateOne.mock.calls[1][1].$push.team.user).toBeNull();
 	});

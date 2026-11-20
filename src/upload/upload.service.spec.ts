@@ -2,6 +2,7 @@ import { ForbiddenException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Types } from "mongoose";
 import { UploadService } from "./upload.service";
+import { ContractStatus } from "../contracts/contract.schema";
 import { Role } from "../auth/role.enum";
 import { TeamScope } from "../users/types/team-scope";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -254,10 +255,29 @@ describe("UploadService private-file authorization", () => {
 				{ _id: new Types.ObjectId(), role } as any
 			)).resolves.toBe("https://signed.example/file");
 		}
-		expect(tenancyModel.exists).toHaveBeenCalledWith(
-			expect.objectContaining({ _id: { $in: [tenancyId] } })
-		);
+		expect(tenancyModel.exists).toHaveBeenCalledWith({ $or: [
+			expect.objectContaining({ _id: { $in: [tenancyId] } }),
+			expect.objectContaining({ _id: { $in: [tenancyId] } }),
+		] });
 		expect(userModel.distinct).not.toHaveBeenCalled();
+	});
+
+	it("never lets a tenant open a draft contract, but the landlord still can", async () => {
+		const { service, listingModel, tenancyModel, contractModel } = setup();
+		const tenancyId = new Types.ObjectId();
+		listingModel.exists.mockResolvedValue(null);
+		contractModel.find.mockReturnValue({
+			select: () => ({ lean: () => ({ exec: () => Promise.resolve([{ tenancy: tenancyId, status: ContractStatus.DRAFT }]) }) })
+		});
+		const studentId = new Types.ObjectId();
+		await service.getAuthorizedPrivateDownloadUrl(
+			`private/${new Types.ObjectId().toHexString()}/123e4567-e89b-12d3-a456-426614174000.pdf`,
+			{ _id: studentId, role: Role.STUDENT } as any
+		).catch(() => null);
+		expect(tenancyModel.exists).toHaveBeenCalledWith({ $or: [
+			{ landlord: studentId, _id: { $in: [tenancyId] } },
+			{ tenants: studentId, _id: { $in: [] } },
+		] });
 	});
 
 	it("never lets another student use a share, even a live one", async () => {

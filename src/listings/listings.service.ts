@@ -365,6 +365,7 @@ export class ListingsService {
 				likedBy: user._id,
 				isVerified: true,
 				isDraft: false,
+				_id: { $nin: await this.letListingIds() },
 				$and: [stillAvailable()]
 			})
 			.select("-registerOfTitleKey -registrationNumber -likedBy")
