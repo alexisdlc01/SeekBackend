@@ -691,6 +691,7 @@ describe("ApplicationService pipeline", () => {
 	let notifications: { notifyMany: jest.Mock; notify: jest.Mock };
 	let paymentModel: Record<string, jest.Mock>;
 	let sharesService: { revokeForApplication: jest.Mock; shareForApplication: jest.Mock };
+	let usersRepository: { getUserById: jest.Mock };
 	let service: ApplicationService;
 
 	const exec = (value: unknown) => ({ exec: jest.fn().mockResolvedValue(value), populate: jest.fn().mockReturnThis() });
@@ -722,11 +723,12 @@ describe("ApplicationService pipeline", () => {
 		};
 		notifications = { notifyMany: jest.fn().mockResolvedValue(undefined), notify: jest.fn() };
 		sharesService = { revokeForApplication: jest.fn().mockResolvedValue(undefined), shareForApplication: jest.fn().mockResolvedValue(undefined) };
+		usersRepository = { getUserById: jest.fn().mockResolvedValue({ _id: landlordId, deletedAt: null, suspendedAt: null }) };
 		service = new ApplicationService(
 			applicationModel as never,
 			{} as never,
 			listingService as never,
-			{} as never,
+			usersRepository as never,
 			{} as never,
 			sharesService as never,
 			{ createFromApplication: jest.fn().mockResolvedValue({ _id: new Types.ObjectId() }), assertNoCurrentTenancy: jest.fn() } as never,
@@ -1222,6 +1224,19 @@ describe("ApplicationService pipeline", () => {
 		expect(paymentModel.deleteMany).not.toHaveBeenCalled();
 	});
 
+	it.each([
+		["deleted", { deletedAt: new Date() }],
+		["suspended", { suspendedAt: new Date() }],
+		["missing", null],
+	])("refuses to accept an offer from a %s landlord, before any write", async (_label, landlord) => {
+		applicationModel.findById.mockReturnValue({ lean: () => exec(stored(ApplicationStage.OFFERED, { offerExpiresAt: future })) });
+		usersRepository.getUserById.mockResolvedValue(landlord && { _id: landlordId, ...landlord });
+		await expect(service.acceptOffer(applicationId.toString())).rejects.toThrow("no longer active on Seek");
+		expect(usersRepository.getUserById).toHaveBeenCalledWith(landlordId.toString());
+		expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
+		expect((service as any).tenanciesService.createFromApplication).not.toHaveBeenCalled();
+	});
+
 	it("tells the landlord once when a household accepts the offer", async () => {
 		const tenancyId = new Types.ObjectId();
 		applicationModel.findById.mockReturnValue({ lean: () => exec(stored(ApplicationStage.OFFERED, { offerExpiresAt: future })) });
@@ -1350,6 +1365,8 @@ describe("ApplicationService pipeline", () => {
 		const toLandlord = inputs.find((input: any) => input.user === landlordId);
 		expect(toLandlord.link).not.toContain("/student");
 		expect(toLandlord.target.listing).toBe(listingId.toString());
+		// Moving back to a time booked before must notify again, so no dedupe on this user action.
+		expect(toLandlord.dedupeKey).toBeUndefined();
 	});
 
 	it("refuses a viewing time the landlord did not offer, but lets the landlord move it", async () => {

@@ -25,6 +25,8 @@ export interface ContractDocumentData {
 	depositProtectedAt?: Date | null;
 	billsIncluded?: boolean;
 	licenceNumber?: string | null;
+	/** Recorded tenant signatures, in signing order. */
+	signatures?: { name?: string; email?: string; signedAt: Date }[];
 }
 
 const SCHEMES: Record<string, { name: string; site: string }> = {
@@ -45,6 +47,8 @@ export function escapeHtml(value: unknown): string {
 const pounds = (pence: number) => `£${(pence / 100).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const day = (date?: Date | null) =>
 	date ? new Date(date).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" }) : "to be confirmed";
+const utc = (date: Date) => `${new Date(date).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+const capitalise = (word: string) => word.charAt(0).toUpperCase() + word.slice(1);
 function ordinal(n: number): string {
 	if (n % 100 >= 11 && n % 100 <= 13) return `${n}th`;
 	return `${n}${{ 1: "st", 2: "nd", 3: "rd" }[n % 10] ?? "th"}`;
@@ -135,7 +139,10 @@ ${rows([
 <h2>7. Ending the agreement</h2>
 <ul>${ending}</ul>
 <h2>8. Signatures</h2>
-<p>Each ${tenantWord} and the landlord sign this agreement electronically in Seek. Seek records who signed and when.</p>
+<p>Each ${tenantWord} signs this agreement electronically in Seek. Seek records who signed and when.</p>
+${data.signatures?.length
+		? rows(data.signatures.map(s => [s.name || s.email || capitalise(tenantWord), `Signed ${utc(s.signedAt)}`]))
+		: "<p>No signatures yet.</p>"}
 <p class="muted">Seek template, November 2026. This template is a starting point, not legal advice: check it against current law before relying on it.</p>`;
 	return page(data.title, body);
 }
