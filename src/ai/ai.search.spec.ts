@@ -52,6 +52,19 @@ describe("AiService findListings candidate window", () => {
 		const { listings } = await (service as any).findListings({ city: "St Andrews", nearUniversity: "University of St Andrews" });
 		expect(listings.map((l: any) => l.id)).toEqual(["near"]);
 	});
+
+	it("keeps the best match when more than 12 homes fit, not the newest", async () => {
+		// Newest first like the DB; only the oldest home has bills included.
+		const newer = Array.from({ length: 20 }, (_, i) => ({ _id: `new${i}`, bedroomsCount: 2, rentPerPerson: 650 }));
+		const best = { _id: "best", bedroomsCount: 2, rentPerPerson: 650, billsIncluded: true };
+		const filters = jest.fn(async () => [...newer, best]);
+		const none = {} as any;
+		const service = new AiService({} as any, { filters } as any, none, none, none, none, none, none, none, none, { get: () => undefined } as any);
+		const { listings } = await (service as any).findListings({ city: "Bristol", maxRent: 700 });
+		expect(listings).toHaveLength(12);
+		expect(listings[0].id).toBe("best");
+		expect(listings[0].match).toBeGreaterThan(listings[1].match);
+	});
 });
 
 describe("search result checks and quick replies", () => {

@@ -370,8 +370,9 @@ export class AiService {
 				// Available by the move-in date, give or take a fortnight.
 				return (!from || from.getTime() <= moveIn.getTime() + 14 * DAY_MS) && (!until || until >= moveIn);
 			})
-			.sort((a, b) => (a.distanceKm ?? 0) - (b.distanceKm ?? 0))
-			.map(({ listing, distanceKm }) => ({ ...this.summary(listing, distanceKm, filters), checks: listingChecks(listing, filters, student) }));
+			.map(({ listing, distanceKm }) => ({ ...this.summary(listing, distanceKm, filters), checks: listingChecks(listing, filters, student) }))
+			// Best match first, so findListings' MAX_RESULTS cut keeps the best homes, not the newest.
+			.sort((a, b) => b.match - a.match || (a.distanceKm ?? 0) - (b.distanceKm ?? 0));
 	}
 
 	private summary(
