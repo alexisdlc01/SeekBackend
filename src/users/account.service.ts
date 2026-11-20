@@ -18,6 +18,7 @@ import { Listing } from "../listings/listings.schema";
 import { ModerationStatus } from "../listings/enums/moderation-status.enum";
 import { ContractsService } from "../contracts/contracts.service";
 import { ApplicationService } from "../application/application.service";
+import { MailService } from "../auth/mail.service";
 import { EmailMessage } from "../inbox/email-message.schema";
 
 const MAX_TEAM = 20;
@@ -47,7 +48,8 @@ export class AccountService {
 		@InjectModel(Listing.name) private readonly listingModel: Model<Listing>,
 		@InjectModel(EmailMessage.name) private readonly messageModel: Model<EmailMessage>,
 		// Looked up at call time: importing ContractsModule here would loop back through AuthModule to UsersModule.
-		private readonly moduleRef?: ModuleRef
+		private readonly moduleRef?: ModuleRef,
+		private readonly mail?: MailService
 	) {}
 
 	async listTeam(ownerId: Types.ObjectId): Promise<TeamMemberDto[]> {
@@ -69,7 +71,7 @@ export class AccountService {
 	}
 
 	/** Adds the email to the team, or updates its scopes if it is already there. */
-	async invite(owner: Pick<User, "_id" | "email">, dto: InviteTeamMemberDto) {
+	async invite(owner: Pick<User, "_id" | "email" | "name">, dto: InviteTeamMemberDto) {
 		const email = dto.email.trim().toLowerCase();
 		if (email === owner.email?.toLowerCase()) throw new BadRequestException("You are already the owner of this account.");
 		const scopes = [...new Set(dto.scopes)];
@@ -84,6 +86,7 @@ export class AccountService {
 				{ $push: { team: { email, scopes, user: null, invitedAt: new Date() } } }
 			);
 			if (!pushed.matchedCount) throw new BadRequestException(`A team can have up to ${MAX_TEAM} people.`);
+			await this.mail?.sendTeamInviteEmail(email, owner.name || "A landlord").catch(err => this.logger.error(`Team invite email failed: ${err}`));
 		}
 		return (await this.listTeam(owner._id)).find(member => member.email === email)!;
 	}

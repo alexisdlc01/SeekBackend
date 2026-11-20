@@ -4,6 +4,9 @@ import {
 	Delete,
 	Get,
 	HttpCode,
+	HttpException,
+	HttpStatus,
+	Inject,
 	ParseEnumPipe,
 	Param,
 	Patch,
@@ -42,11 +45,14 @@ import { UpdateUserProfileDto } from "./dto/update-user-profile.dto";
 import { DocumentSharesService } from "./shares/document-shares.service";
 import { ParseObjectIdPipe } from "../shared/parse-object-id.pipe";
 import { DocumentType } from "./types/document-type";
-import { Throttle } from "@nestjs/throttler";
+import { Throttle, ThrottlerStorage } from "@nestjs/throttler";
 import { StudentVerificationService } from "./student-verification.service";
 import { StudentEmailCodeDto, StudentEmailDto, StudentVerificationResultDto } from "./dto/student-verification.dto";
 import { PassportDto, RequestReferenceDto } from "./dto/passport.dto";
 
+
+const TEAM_INVITE_LIMIT = 10;
+const TEAM_INVITE_TTL_MS = 60 * 60_000;
 
 @Controller("users")
 export class UsersController {
@@ -54,7 +60,8 @@ export class UsersController {
 		private readonly usersService: UsersService,
 		private readonly sharesService: DocumentSharesService,
 		private readonly accountService: AccountService,
-		private readonly studentVerification: StudentVerificationService
+		private readonly studentVerification: StudentVerificationService,
+		@Inject(ThrottlerStorage) private readonly storage: ThrottlerStorage
 	) { }
 
 	@Post("me/student-email")
@@ -98,10 +105,15 @@ export class UsersController {
 
 	@Post("me/team/invite")
 	@LandlordAgency()
+	@Throttle({ default: { limit: 20, ttl: 60 * 60_000 } })
 	@ApiOperation({ summary: "Invite someone by email with the scopes they may help with (e.g. VIEWINGS_INBOX). No payouts scope exists." })
 	@ApiResponse({ status: 201, type: TeamMemberDto })
 	@ApiResponse({ status: 400, type: ErrorDto })
+	@ApiResponse({ status: 429, type: ErrorDto })
 	async inviteTeamMember(@Body() body: InviteTeamMemberDto, @CurrentUser() user: User) {
+		// Per account, on top of the per-IP limit: each invite sends an email. Block for one window once over.
+		const hit = await this.storage.increment(`team-invite:${user._id}`, TEAM_INVITE_TTL_MS, TEAM_INVITE_LIMIT, TEAM_INVITE_TTL_MS, "team-invite");
+		if (hit.isBlocked) throw new HttpException("Too many team invites. Try again in an hour.", HttpStatus.TOO_MANY_REQUESTS);
 		return this.accountService.invite(user, body);
 	}
 

@@ -35,4 +35,11 @@ describe("MailService send gate", () => {
 		await build({}).sendOtpEmail("a@st-andrews.ac.uk", "123456");
 		expect(create).toHaveBeenCalledTimes(1);
 	});
+
+	it("caps the team invite owner name and strips line breaks from the subject", async () => {
+		await build({ NODE_ENV: "production" }).sendTeamInviteEmail("a@example.org", `Eve\r\nBcc: x@y.z ${"a".repeat(200)}`);
+		const subject: string = create.mock.calls[0][1].subject;
+		expect(subject).not.toMatch(/[\r\n]/);
+		expect(subject.replace(" invited you to their team on Seek", "")).toHaveLength(80);
+	});
 });

@@ -12,6 +12,7 @@ describe("ListingsGateway", () => {
 	const landlordId = new Types.ObjectId();
 	let gateway: ListingsGateway;
 	let usersService: { getUserForSession: jest.Mock };
+	let usersRepository: { findTeamOwner: jest.Mock };
 	let previousSecret: string | undefined;
 	let previousVerificationFlag: string | undefined;
 
@@ -21,7 +22,8 @@ describe("ListingsGateway", () => {
 		process.env.JWT_ACCESS_TOKEN_SECRET = secret;
 		process.env.AUTH_EMAIL_VERIFICATION_ENABLED = "false";
 		usersService = { getUserForSession: jest.fn() };
-		gateway = new ListingsGateway(usersService as unknown as UsersService);
+		usersRepository = { findTeamOwner: jest.fn().mockResolvedValue(null) };
+		gateway = new ListingsGateway(usersService as unknown as UsersService, usersRepository as any);
 	});
 
 	afterEach(() => {
@@ -60,6 +62,36 @@ describe("ListingsGateway", () => {
 				role: Role.LANDLORD_AGENCY
 			})
 		);
+		gateway.handleDisconnect(client);
+	});
+
+	it("puts a team member with listings access in the owner's room", async () => {
+		const ownerId = new Types.ObjectId();
+		usersRepository.findTeamOwner.mockResolvedValue({ owner: { _id: ownerId }, scopes: ["LISTINGS"] });
+		usersService.getUserForSession.mockResolvedValue(makeUser(Role.LANDLORD_AGENCY));
+		const client = makeAuthenticatedSocket();
+		await runMiddleware(captureMiddleware(gateway), client);
+		await gateway.handleConnection(client);
+
+		expect(client.join).toHaveBeenCalledWith(landlordListingsRoom(ownerId.toString()));
+		gateway.handleDisconnect(client);
+	});
+
+	it("moves a member back to their own room when the team scope is removed", async () => {
+		const ownerId = new Types.ObjectId();
+		const user = makeUser(Role.LANDLORD_AGENCY);
+		usersRepository.findTeamOwner.mockResolvedValue({ owner: { _id: ownerId }, scopes: ["LISTINGS"] });
+		usersService.getUserForSession.mockResolvedValue(user);
+		const client = makeAuthenticatedSocket();
+		client.leave = jest.fn().mockResolvedValue(undefined);
+		await runMiddleware(captureMiddleware(gateway), client);
+		await gateway.handleConnection(client);
+
+		usersRepository.findTeamOwner.mockResolvedValue(null);
+		await (gateway as any).revalidateClient(client);
+
+		expect(client.leave).toHaveBeenCalledWith(landlordListingsRoom(ownerId.toString()));
+		expect(client.join).toHaveBeenLastCalledWith(landlordListingsRoom(landlordId.toString()));
 		gateway.handleDisconnect(client);
 	});
 
