@@ -1,5 +1,7 @@
 import { Types } from 'mongoose';
+import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { ConversationController } from './conversation.controller';
+import { SendMessageDto } from './dto/send-message.dto';
 
 describe('ConversationController', () => {
   let controller: ConversationController;
@@ -48,5 +50,11 @@ describe('ConversationController', () => {
       conversationId,
       userId.toString(),
     );
+  });
+
+  it('rejects a whitespace-only message with a 400', async () => {
+    const pipe = new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true });
+    await expect(pipe.transform({ message: '   ' }, { type: 'body', metatype: SendMessageDto }))
+      .rejects.toBeInstanceOf(BadRequestException);
   });
 });

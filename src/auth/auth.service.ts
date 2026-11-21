@@ -409,7 +409,8 @@ export class AuthService {
 	async resetPassword(email: string, isMobile: boolean) {
 		const response = { message: GENERIC_RESET_RESPONSE };
 		const user = await this.usersRepo.getUserByEmail(this.normalizeEmail(email));
-		if (!user || user.isGoogle || !user.password) {
+		// A password account that also linked Google keeps its password, so it can reset it; a Google-only one cannot set one here.
+		if (!user || !user.password) {
 			return response;
 		}
 

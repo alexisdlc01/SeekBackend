@@ -293,6 +293,16 @@ describe("TenanciesService create / accept", () => {
 		expect(lastSet()).not.toHaveProperty("energyAllowance");
 	});
 
+	it("refuses a deposit scheme from the other side of the Scottish border", async () => {
+		const { service, tenancyModel, listingModel } = setup();
+		jest.spyOn(service, "findForLandlord").mockResolvedValue({ _id: new Types.ObjectId(), listing: listingId, monthlyRent: 69500, depositAmount: 50000 } as any);
+		listingModel.findById.mockReturnValue(lean({ ...listing, nation: "SCOTLAND" }));
+		await expect(service.updateDeposit("t", { depositScheme: "DPS", depositReference: "DPS-1" } as any, landlord)).rejects.toThrow(/Scotland/);
+		listingModel.findById.mockReturnValue(lean({ ...listing, nation: "ENGLAND" }));
+		await expect(service.updateDeposit("t", { depositScheme: "SAFEDEPOSITS_SCOTLAND", depositReference: "S-1" } as any, landlord)).rejects.toThrow(/only covers homes in Scotland/);
+		expect(tenancyModel.updateOne).not.toHaveBeenCalled();
+	});
+
 	it("refuses a new deposit amount once the Seek agreement is signed", async () => {
 		const { service, tenancyModel, contractModel } = setup();
 		jest.spyOn(service, "findForLandlord").mockResolvedValue({ _id: new Types.ObjectId(), listing: listingId, monthlyRent: 69500, depositAmount: 50000 } as any);

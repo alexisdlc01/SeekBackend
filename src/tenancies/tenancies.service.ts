@@ -9,7 +9,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Contract, ContractStatus } from "../contracts/contract.schema";
 import { Model, Types } from "mongoose";
 import { Tenancy, TenancyDocument } from "./tenancy.schema";
-import { DocumentSource, InventoryStage, TenancyDocumentType, TenancyStatus } from "./tenancy.enums";
+import { DepositScheme, DocumentSource, InventoryStage, SCOTTISH_SCHEMES, TenancyDocumentType, TenancyStatus } from "./tenancy.enums";
 import { Listing } from "../listings/listings.schema";
 import { User } from "../users/users.schema";
 import { Role } from "../auth/role.enum";
@@ -188,6 +188,7 @@ export class TenanciesService {
 
 		const depositAmount = dto.depositAmount ?? 0;
 		this.assertDepositWithinCap(depositAmount, dto.monthlyRent, listing.nation);
+		this.assertSchemeForNation(dto.depositScheme, listing.nation);
 		if (dto.endDate && new Date(dto.endDate) <= new Date(dto.startDate)) {
 			throw new BadRequestException("The end date must be after the start date.");
 		}
@@ -378,6 +379,7 @@ export class TenanciesService {
 		}
 		const listing = await this.listingModel.findById(tenancy.listing, { nation: 1 }).lean().exec();
 		this.assertDepositWithinCap(depositAmount, tenancy.monthlyRent, listing?.nation);
+		this.assertSchemeForNation(dto.depositScheme, listing?.nation);
 		await this.tenancyModel.updateOne(
 			{ _id: tenancy._id },
 			{
@@ -591,6 +593,18 @@ export class TenanciesService {
 			// A pending tenancy already needs its deposit receipt recorded; only an ended one has nothing left to do.
 			...(tenancy.status !== TenancyStatus.ENDED ? tenancyCompliance(tenancy, listingLike, now) : [])
 		]);
+	}
+
+	/** A Scottish home's deposit must sit in a Scottish scheme, and only there; an unknown nation accepts any. */
+	private assertSchemeForNation(scheme?: DepositScheme | null, nation?: Nation) {
+		if (!scheme || !nation) return;
+		if (SCOTTISH_SCHEMES.includes(scheme) !== (nation === Nation.SCOTLAND)) {
+			throw new BadRequestException(
+				nation === Nation.SCOTLAND
+					? "A home in Scotland must protect the deposit with SafeDeposits Scotland, Letting Protection Service Scotland or mydeposits Scotland."
+					: "This deposit scheme only covers homes in Scotland. Choose DPS, TDS or mydeposits."
+			);
+		}
 	}
 
 	private assertDepositWithinCap(depositPence: number, monthlyRentPence: number, nation?: Nation) {

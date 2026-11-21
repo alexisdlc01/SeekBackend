@@ -493,6 +493,17 @@ describe("AuthService", () => {
 		expect(link).not.toContain(storedHash);
 	});
 
+	it("sends a reset link to a password account that also signed in with Google, but not to a Google-only one", async () => {
+		usersRepo.getUserByEmail.mockResolvedValue(makeUser({ isGoogle: true, password: undefined as never }));
+		await service.resetPassword("google-only@example.com", true);
+		expect(mailService.sendResetPasswordEmail).not.toHaveBeenCalled();
+
+		const linked = makeUser({ isGoogle: true });
+		usersRepo.getUserByEmail.mockResolvedValue(linked);
+		await service.resetPassword(linked.email, true);
+		expect(mailService.sendResetPasswordEmail).toHaveBeenCalledTimes(1);
+	});
+
 	it("atomically consumes a reset token and revokes all refresh sessions", async () => {
 		const rawToken = "raw-reset-token";
 		const user = makeUser({
