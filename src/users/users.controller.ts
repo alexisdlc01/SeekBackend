@@ -112,7 +112,7 @@ export class UsersController {
 	@ApiResponse({ status: 429, type: ErrorDto })
 	async inviteTeamMember(@Body() body: InviteTeamMemberDto, @CurrentUser() user: User) {
 		// Per account, on top of the per-IP limit: each invite sends an email. Block for one window once over.
-		const hit = await this.storage.increment(`team-invite:${user._id}`, TEAM_INVITE_TTL_MS, TEAM_INVITE_LIMIT, TEAM_INVITE_TTL_MS, "team-invite");
+		const hit = await this.storage.increment(`team-invite:${user._id}`, TEAM_INVITE_TTL_MS, TEAM_INVITE_LIMIT, TEAM_INVITE_TTL_MS, `team-invite:${user._id}`);
 		if (hit.isBlocked) throw new HttpException("Too many team invites. Try again in an hour.", HttpStatus.TOO_MANY_REQUESTS);
 		return this.accountService.invite(user, body);
 	}

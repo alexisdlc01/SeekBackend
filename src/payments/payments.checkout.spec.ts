@@ -569,6 +569,35 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 		expect(doc).toMatchObject({ status: PaymentStatus.PAID, providerRef: "pi_autopay" });
 	});
 
+	it("retries autopay on a Stripe 429/503 with the same idempotency key, but fails and notifies on a 402 decline", async () => {
+		const { service, notifications } = setup({ dueDate: new Date("2026-11-01T00:00:00Z"), providerRef: null });
+		const answering = global.fetch;
+		const keys: string[] = [];
+		const chargeAnswers = (status?: number) => {
+			global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+				if (!url.endsWith("/payment_intents")) return (answering as any)(url, init);
+				keys.push((init?.headers as Record<string, string>)["Idempotency-Key"]);
+				return status ? ({ ok: false, status, json: async () => ({ error: { message: "Stripe says no", code: status === 402 ? "card_declined" : undefined } }) } as Response) : (answering as any)(url, init);
+			}) as never;
+		};
+		for (const status of [429, 503]) {
+			chargeAnswers(status);
+			await (service as any).sweepStripeAutopay(new Date("2026-11-07T00:00:00Z"));
+			expect(doc.status).toBe(PaymentStatus.SCHEDULED);
+		}
+		expect(notifications.notify).not.toHaveBeenCalled();
+		chargeAnswers();
+		await (service as any).sweepStripeAutopay(new Date("2026-11-07T01:00:00Z"));
+		expect(doc).toMatchObject({ status: PaymentStatus.PAID, providerRef: "pi_autopay" });
+		expect(keys).toEqual(Array(3).fill(`seek-autopay-${id.toString()}`));
+
+		const declined = setup({ dueDate: new Date("2026-11-01T00:00:00Z"), providerRef: null });
+		chargeAnswers(402);
+		await (declined.service as any).sweepStripeAutopay(new Date("2026-11-07T00:00:00Z"));
+		expect(doc.status).toBe(PaymentStatus.FAILED);
+		expect(declined.notifications.notify.mock.calls.map(([n]) => n.dedupeKey)).toEqual([`autopay-failed:${id.toString()}`]);
+	});
+
 	it("closes an open Checkout session before autopay charges, and skips when it can't", async () => {
 		const { service } = setup({ dueDate: new Date("2026-11-01T00:00:00Z") });
 		session.status = "open";

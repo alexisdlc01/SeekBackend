@@ -1,7 +1,7 @@
 import { Types } from "mongoose";
 import { Logger } from "@nestjs/common";
-import { PaymentProvider, PaymentStatus, PayoutStatus } from "./payment.enums";
-import { proportionalRefund, refundPayment } from "./refund";
+import { PaymentKind, PaymentProvider, PaymentStatus, PayoutStatus } from "./payment.enums";
+import { notifyHoldingRefund, proportionalRefund, refundPayment } from "./refund";
 import { StripeApiError, StripeClient } from "./stripe";
 
 describe("automatic payment refunds", () => {
@@ -174,5 +174,38 @@ describe("automatic payment refunds", () => {
 	it("does not falsely complete a Checkout-session reference it cannot refund", async () => {
 		await expect(refundPayment(paymentModel as any, { ...base, providerRef: "cs_paid" }, "sk_test")).resolves.toBe(false);
 		expect(paymentModel.updateOne).not.toHaveBeenCalled();
+	});
+
+	it("tells the student a holding-deposit refund started or failed, and says nothing while Stripe is unreachable", async () => {
+		const deposit = { ...base, kind: PaymentKind.HOLDING_DEPOSIT, tenant: new Types.ObjectId(), landlord: new Types.ObjectId(), amount: 25000 };
+		const notifications = { notify: jest.fn().mockResolvedValue(true) };
+		let refundFailed = false;
+		const model = {
+			updateOne: jest.fn(async (_filter: unknown, update: { $set: { refundFailed?: boolean } }) => {
+				if (update.$set.refundFailed) refundFailed = true;
+				return { modifiedCount: 1 };
+			}),
+			exists: jest.fn(async () => (refundFailed ? { _id: deposit._id } : null))
+		};
+		const attempt = async () => notifyHoldingRefund(notifications as any, model as any, deposit, await refundPayment(model as any, deposit, "sk_test"));
+		jest.spyOn(StripeClient.prototype, "retrievePaymentIntent").mockResolvedValue({} as never);
+		const create = jest.spyOn(StripeClient.prototype, "createRefund").mockRejectedValue(new StripeApiError("Service unavailable", 503));
+		jest.spyOn(Logger.prototype, "error").mockImplementation();
+
+		await attempt();
+		expect(notifications.notify).not.toHaveBeenCalled();
+
+		create.mockResolvedValue({ id: "re_1", status: "pending" });
+		await attempt();
+		expect(notifications.notify.mock.calls.map(([n]) => [n.user, n.dedupeKey])).toEqual([[deposit.tenant, `holding-refund-started:${deposit._id}`]]);
+		expect(notifications.notify.mock.calls[0][0].title).toContain("£250.00");
+
+		notifications.notify.mockClear();
+		create.mockResolvedValue({ id: "re_1", status: "failed" });
+		await attempt();
+		expect(notifications.notify.mock.calls.map(([n]) => [n.user, n.dedupeKey])).toEqual([
+			[deposit.tenant, `holding-refund-failed:${deposit._id}`],
+			[deposit.landlord, `holding-refund-failed:${deposit._id}`]
+		]);
 	});
 });

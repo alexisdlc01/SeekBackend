@@ -161,6 +161,28 @@ describe("AI advice privacy and abuse limits", () => {
 	});
 });
 
+describe("per-user throttling on shared in-memory storage", () => {
+	it("a returning blocked user does not stop other users' hits from expiring", async () => {
+		jest.useFakeTimers();
+		const storage = new ThrottlerStorageService();
+		const ai = { advice: jest.fn().mockResolvedValue({}) } as any;
+		const controller = new AiController(ai, storage);
+		try {
+			for (let i = 0; i < 11; i++) await controller.advice({ topic: "bills" } as any, { _id: "x" } as any).catch(() => undefined);
+			jest.advanceTimersByTime(30_000);
+			for (let i = 0; i < 9; i++) await controller.advice({ topic: "bills" } as any, { _id: "a" } as any);
+			jest.advanceTimersByTime(31_000);
+			// x's block has ended and x returns: a's expiry timers (due in 29s) must survive.
+			await controller.advice({ topic: "bills" } as any, { _id: "x" } as any);
+			jest.advanceTimersByTime(30_000);
+			for (let i = 0; i < 10; i++) await controller.advice({ topic: "bills" } as any, { _id: "a" } as any);
+		} finally {
+			storage.onApplicationShutdown();
+			jest.useRealTimers();
+		}
+	});
+});
+
 describe("deposit question keyword routing", () => {
 	it("routes common questions to the matching answer", () => {
 		expect(depositAnswer("Can my landlord keep part of it?")).toMatch(/fair wear and tear/);

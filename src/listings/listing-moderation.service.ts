@@ -17,7 +17,7 @@ const RETRY_BATCH = 25;
 export async function withinAiQuota(storage: ThrottlerStorage | undefined, userId: string): Promise<boolean> {
 	if (!storage) return true;
 	for (const { name, ttl, limit } of AI_USER_LIMITS) {
-		const hit = await storage.increment(`${name}:${userId}`, ttl, limit, ttl, name);
+		const hit = await storage.increment(`${name}:${userId}`, ttl, limit, ttl, `${name}:${userId}`);
 		if (hit.isBlocked) return false;
 	}
 	return true;

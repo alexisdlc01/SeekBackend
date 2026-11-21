@@ -10025,6 +10025,7 @@
               "OFFER_ACCEPTED",
               "OFFER_WITHDRAWN",
               "APPLICATION_REJECTED",
+              "HOLDING_DEPOSIT_REFUND",
               "LISTING_NEEDS_CHANGES",
               "REPORT_ACTIONED",
               "IDENTITY_DOCUMENTS_ERASED",
