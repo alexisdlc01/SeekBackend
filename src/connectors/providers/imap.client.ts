@@ -61,7 +61,7 @@ export function decodeHeader(value: string) {
 	});
 }
 
-const firstMessageId = (value?: string) => /<[^<>\s]+>/.exec(value ?? "")?.[0];
+const messageIds = (value?: string) => (value ?? "").match(/<[^<>\s]+>/g) ?? [];
 
 function parseHeaders(raw: string): Record<string, string> {
 	const headers: Record<string, string> = {};
@@ -97,8 +97,10 @@ export function parseFetchHeaders(text: string): MailFull[] {
 		const receivedAt = new Date(headers.date ?? internalDate ?? Date.now());
 		mails.push({
 			providerMessageId: uid,
-			// A reply joins its thread: the root is the first References id, else the message it answers.
-			providerThreadId: firstMessageId(headers.references) ?? firstMessageId(headers["in-reply-to"]) ?? headers["message-id"] ?? `imap-${uid}`,
+			// Message-ID and References are written by the sender: a new thread is keyed on the UID, and
+			// ConnectorsService.store() decides whether the referenced messages may pull it into a stored thread.
+			providerThreadId: `imap-${uid}`,
+			references: [...messageIds(headers.references), ...messageIds(headers["in-reply-to"])],
 			internetMessageId: headers["message-id"] ?? null,
 			from: from.email,
 			fromName: from.name,

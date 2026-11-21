@@ -26,6 +26,8 @@ export interface MailFull extends MailMeta {
 	attachments: MailAttachment[];
 	/** True only when the receiving provider authenticated the From domain (see fromAuthenticated). Missing = not authenticated. */
 	senderAuthenticated?: boolean;
+	/** IMAP only: Message-IDs from References/In-Reply-To, sender-written. Gmail/Outlook thread on the provider's own id. */
+	references?: string[];
 }
 
 export interface TokenSet {
