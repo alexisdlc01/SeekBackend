@@ -45,6 +45,11 @@ const CONNECT_NOT_ENABLED = new Set([
 const canCharge = (account: StripeAccount) => account.capabilities?.card_payments === "active";
 /** Releasing a legacy held payment is a transfer: that needs `transfers` (v2 recipient `stripe_transfers`). */
 const canTransfer = (account: StripeAccount) => account.capabilities?.transfers === "active";
+/**
+ * Stripe's "No such account" (404, including "a similar object exists in test mode"). Not a 403: that can be a
+ * restricted key missing a permission, and must never make Seek forget or replace a landlord's account.
+ */
+const isGoneAccount = (error: unknown): error is StripeApiError => error instanceof StripeApiError && error.status === 404;
 
 const CARD_NOT_READY = "Your landlord hasn't finished setting up card payments on Seek yet, so this can't be paid by card. Use the bank transfer details or ask them to finish setup.";
 import {
@@ -592,9 +597,9 @@ export class PaymentsService {
 			const key = claimed.landlord.toString();
 			if (!destinations.has(key)) {
 				// Stripe couldn't be asked: the payout stays held and is retried next run.
+				// A timeout or network error too: one landlord must not stop the hourly sweep.
 				destinations.set(key, await this.accountFor(stripe, claimed.landlord, canTransfer).catch(error => {
-					if (!(error instanceof StripeApiError)) throw error;
-					this.logger.warn(`Held payouts for landlord ${key} not released: Stripe error ${error.status}`);
+					this.logger.warn(`Held payouts for landlord ${key} not released: Stripe account could not be checked (${error instanceof StripeApiError ? error.status : (error as Error).message})`);
 					return null;
 				}));
 			}
@@ -1065,6 +1070,11 @@ export class PaymentsService {
 		);
 	}
 
+	/** Drops a connected account Stripe no longer knows, unless the landlord already has another one. */
+	private async forgetAccount(landlordId: Types.ObjectId | string, accountId: string) {
+		await this.userModel.updateOne({ _id: landlordId, stripeAccountId: accountId }, { $unset: { stripeAccountId: 1, payoutBank: 1 } });
+	}
+
 	/** The landlord's connected account, when Stripe lets it take card payments (or, for legacy releases, transfers). */
 	private async accountFor(stripe: StripeClient, landlordId: Types.ObjectId, ready = canCharge): Promise<string | null> {
 		const landlord = await this.userModel.findById(landlordId, { stripeAccountId: 1, suspendedAt: 1, deletedAt: 1 }).lean().exec();
@@ -1124,31 +1134,47 @@ export class PaymentsService {
 		}
 
 		const stripe = new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!);
+		const create = async (idempotencyKey: string) => {
+			const account = await stripe.createRecipientAccount(
+				{
+					...(user.email ? { contact_email: user.email } : {}),
+					metadata: { userId: landlord._id.toString() }
+				},
+				idempotencyKey
+			);
+			await this.userModel.updateOne({ _id: landlord._id }, { $set: { stripeAccountId: account.id } }).exec();
+			return account.id;
+		};
+		const frontend = this.config.get<string>("FRONTEND_URL") ?? "";
+		const link = (account: string) => stripe.createAccountLink({
+			account,
+			return_url: this.config.get<string>("STRIPE_CONNECT_RETURN_URL") || `${frontend}/edit-profile?connect=return`,
+			refresh_url: this.config.get<string>("STRIPE_CONNECT_REFRESH_URL") || `${frontend}/edit-profile?connect=refresh`
+		});
+		const stored = user.stripeAccountId;
 		try {
-			let accountId = user.stripeAccountId;
-			if (!accountId) {
-				const account = await stripe.createRecipientAccount(
-					{
-						...(user.email ? { contact_email: user.email } : {}),
-						metadata: { userId: landlord._id.toString() }
-					},
-					`seek-connect-${landlord._id.toString()}`
-				);
-				accountId = account.id;
-				await this.userModel.updateOne({ _id: landlord._id }, { $set: { stripeAccountId: accountId } }).exec();
-			} else {
-				// Accounts made before direct charges were recipient-only: ask for card payments so onboarding collects what they need.
-				// shortcut: v2 update body for merchant card_payments follows Stripe's documented shape, confirm in test mode
-				await stripe.updateAccount(accountId, { configuration: { merchant: { capabilities: { card_payments: { requested: true } } } } })
-					.catch((error: Error) => this.logger.error(`Requesting card payments on ${accountId} failed: ${error.message}`));
+			let accountId = stored ?? (await create(`seek-connect-${landlord._id.toString()}`));
+			let url: string;
+			try {
+				if (stored) {
+					// Accounts made before direct charges were recipient-only: ask for card payments so onboarding collects what they need.
+					// shortcut: v2 update body for merchant card_payments follows Stripe's documented shape, confirm in test mode
+					await stripe.updateAccount(stored, { configuration: { merchant: { capabilities: { card_payments: { requested: true } } } } })
+						.catch((error: Error) => {
+							if (isGoneAccount(error)) throw error;
+							this.logger.error(`Requesting card payments on ${stored} failed: ${error.message}`);
+						});
+				}
+				url = (await link(accountId)).url;
+			} catch (error) {
+				if (!stored || !isGoneAccount(error)) throw error;
+				// The stored account doesn't exist for this Stripe key (e.g. a test id after going live): start a new one.
+				this.logger.warn(`Stripe account ${stored} is gone (${error.status}); creating a new one for ${landlord._id.toString()}`);
+				await this.forgetAccount(landlord._id, stored);
+				accountId = await create(`seek-connect-${landlord._id.toString()}-${stored}`);
+				url = (await link(accountId)).url;
 			}
-			const frontend = this.config.get<string>("FRONTEND_URL") ?? "";
-			const link = await stripe.createAccountLink({
-				account: accountId,
-				return_url: this.config.get<string>("STRIPE_CONNECT_RETURN_URL") || `${frontend}/edit-profile?connect=return`,
-				refresh_url: this.config.get<string>("STRIPE_CONNECT_REFRESH_URL") || `${frontend}/edit-profile?connect=refresh`
-			});
-			return { mode: "stripe", accountId, url: link.url };
+			return { mode: "stripe", accountId, url };
 		} catch (error) {
 			if (error instanceof StripeApiError) {
 				this.logger.error(`Stripe Connect onboarding failed (${error.status} ${error.code ?? "no code"}): ${error.message}`);
@@ -1203,6 +1229,12 @@ export class PaymentsService {
 				detailsSubmitted: account.details_submitted
 			};
 		} catch (error) {
+			if (isGoneAccount(error)) {
+				// Not this Stripe key's account (e.g. a test id after going live): the landlord starts onboarding again.
+				this.logger.warn(`Stripe account ${accountId} is gone (${error.status}); forgetting it`);
+				await this.forgetAccount(landlordId, accountId);
+				return { ...none, accountId: null, payoutBank: null };
+			}
 			if (error instanceof StripeApiError) {
 				this.logger.error(`Stripe account lookup failed (${error.status}): ${error.message}`);
 				throw new ServiceUnavailableException("Payout status could not be checked. Please try again.");

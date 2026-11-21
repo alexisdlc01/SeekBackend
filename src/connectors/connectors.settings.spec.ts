@@ -459,8 +459,9 @@ describe("ConnectorsService settings", () => {
 			await off.run(withFile("Your landlord reference", "Landlord-reference.pdf"));
 			expect(off.userModel.updateOne).not.toHaveBeenCalled();
 			const on = storeSetup({}, "STUDENT", fromLandlord);
+			on.userModel.updateOne.mockResolvedValue({ modifiedCount: 1 });
 			await expect(on.run(withFile("Your landlord reference", "Landlord-reference.pdf"))).resolves.toBe(1);
-			const [, update] = on.userModel.updateOne.mock.calls[0] as any;
+			const [, update] = on.userModel.updateOne.mock.calls[1] as any;
 			expect(update.$push.documents).toMatchObject({ type: "LANDLORD_REFERENCE", status: "PENDING" });
 		});
 

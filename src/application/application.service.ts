@@ -386,7 +386,10 @@ export class ApplicationService {
 			throw new BadRequestException("Pick a viewing time in the future.");
 		}
 
-		const listing = await this.listingService.findListingById(application.listing.toString());
+		// A student only books on a listing still published (not hidden, unverified or let); the landlord may still move one.
+		const listing = isLandlord
+			? await this.listingService.findListingById(application.listing.toString())
+			: await this.assertListingOpen(application);
 		if (listing.availableUntil && new Date(listing.availableUntil) <= new Date()) {
 			throw new BadRequestException("This property is no longer available for the dates listed.");
 		}

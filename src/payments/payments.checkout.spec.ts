@@ -306,6 +306,31 @@ describe("PaymentsService.checkout (Stripe)", () => {
 		error.mockRestore();
 	});
 
+	it("keeps releasing other landlords' held payments when one landlord's account check times out", async () => {
+		const service = setup(READY, false);
+		const other = new Types.ObjectId();
+		(service as any).userModel.findById = jest.fn((id: Types.ObjectId) => lean({ stripeAccountId: id.equals(other) ? "acct_ok" : "acct_slow" }));
+		const slow = { ...payment, _id: new Types.ObjectId(), status: PaymentStatus.PAID, payoutStatus: PayoutStatus.HELD, providerRef: "pi_1" };
+		const ok = { ...slow, _id: new Types.ObjectId(), landlord: other };
+		lastPaymentModel.find = jest.fn().mockReturnValue(lean([slow, ok]));
+		lastPaymentModel.findOneAndUpdate.mockImplementation((filter: { _id: Types.ObjectId }) => lean(filter._id.equals(slow._id) ? slow : ok));
+		calls.length = 0;
+		global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+			if (url.endsWith("/accounts/acct_slow")) throw new Error("The operation was aborted due to timeout");
+			calls.push({ url, body: new URLSearchParams(String(init?.body ?? "")) });
+			const body = url.includes("/accounts/") ? { capabilities: { transfers: "active" } } : url.includes("/payment_intents/") ? { latest_charge: "ch_1" } : { id: "tr_1" };
+			return { ok: true, status: 200, json: async () => body } as Response;
+		}) as never;
+		const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation();
+
+		expect(await service.releaseHeldPayouts()).toBe(1);
+		expect(calls.find(call => call.url.endsWith("/transfers"))!.body.get("destination")).toBe("acct_ok");
+		// The unchecked landlord's row is unlocked for the next run.
+		expect(lastPaymentModel.updateOne).toHaveBeenCalledWith({ _id: slow._id, payoutStatus: PayoutStatus.HELD }, { $set: { payoutReleaseStartedAt: null } });
+		expect(warn).toHaveBeenCalledWith(expect.stringContaining("timeout"));
+		warn.mockRestore();
+	});
+
 	it("excludes failed refunds from both held-payout release filters", async () => {
 		const service = setup(READY, false);
 		const held = { ...payment, status: PaymentStatus.PAID, payoutStatus: PayoutStatus.HELD, providerRef: "pi_1" };
@@ -1054,6 +1079,84 @@ describe("PaymentsService.connectOnboard (Stripe Accounts v2)", () => {
 		};
 		expect(await status({ card_payments: "active" })).toBe(true);
 		expect(await status({ card_payments: "pending" })).toBe(false);
+	});
+
+	const gone = { ok: false, status: 404, body: { error: { message: "No such account: 'acct_test'" } } };
+
+	it("forgets an account Stripe no longer knows (e.g. a test id after going live) so the landlord can onboard again", async () => {
+		const { service, userModel } = setup(() => gone);
+		userModel.findById.mockReturnValue(lean({ stripeAccountId: "acct_test", payoutBank: { last4: "1234" } }));
+		const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation();
+
+		await expect(service.connectStatus(landlord.toString())).resolves.toMatchObject({ connected: false, accountId: null, payoutBank: null });
+		expect(userModel.updateOne).toHaveBeenCalledWith(
+			{ _id: landlord.toString(), stripeAccountId: "acct_test" },
+			{ $unset: { stripeAccountId: 1, payoutBank: 1 } }
+		);
+		warn.mockRestore();
+	});
+
+	it("still reports a restricted key (403), an outage or a rate limit on the status check as unavailable, keeping the account", async () => {
+		const error = jest.spyOn(Logger.prototype, "error").mockImplementation();
+		for (const status of [403, 429]) {
+			const { service, userModel } = setup(() => ({ ok: false, status, body: { error: { message: "The provided key does not have the required permissions" } } }));
+			userModel.findById.mockReturnValue(lean({ stripeAccountId: "acct_1" }));
+
+			await expect(service.connectStatus(landlord.toString())).rejects.toThrow(ServiceUnavailableException);
+			expect(userModel.updateOne).not.toHaveBeenCalled();
+		}
+		error.mockRestore();
+	});
+
+	it("never replaces the stored account on a 403 during onboarding (502, no new account)", async () => {
+		const { service, calls, userModel } = setup((url) =>
+			url.endsWith("/v2/core/account_links") ? { ok: false, status: 403, body: { error: { message: "The provided key does not have the required permissions" } } } : { ok: true, status: 200, body: { id: "acct_1" } }
+		);
+		userModel.findById.mockReturnValue(lean({ stripeAccountId: "acct_1" }));
+		const error = jest.spyOn(Logger.prototype, "error").mockImplementation();
+
+		await expect(service.connectOnboard({ _id: landlord } as any)).rejects.toMatchObject({ status: 502 });
+		expect(calls.some(call => call.url.endsWith("/v2/core/accounts"))).toBe(false);
+		expect(userModel.updateOne).not.toHaveBeenCalled();
+		error.mockRestore();
+	});
+
+	it("replaces a dead stored account with a new one when onboarding, whether the update or the link finds it gone", async () => {
+		const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation();
+		for (const deadAt of ["/v2/core/accounts/acct_test", "/v2/core/account_links"]) {
+			let created = false;
+			const { service, calls, userModel } = setup((url) => {
+				if (url.endsWith("/v2/core/accounts")) {
+					created = true;
+					return { ok: true, status: 200, body: { id: "acct_live" } };
+				}
+				if (url.endsWith(deadAt) && !created) return gone;
+				return { ok: true, status: 200, body: { id: "acct_test", url: "https://connect.stripe.com/setup/e/acct_live/x" } };
+			});
+			userModel.findById.mockReturnValue(lean({ email: "landlord@example.com", stripeAccountId: "acct_test" }));
+
+			await expect(service.connectOnboard({ _id: landlord } as any)).resolves.toMatchObject({ mode: "stripe", accountId: "acct_live" });
+			const create = calls.find(call => call.url.endsWith("/v2/core/accounts"))!;
+			// A new key: Stripe would otherwise replay the first account created for this landlord.
+			expect((create.init.headers as Record<string, string>)["Idempotency-Key"]).toBe(`seek-connect-${landlord.toString()}-acct_test`);
+			expect(userModel.updateOne).toHaveBeenCalledWith({ _id: landlord, stripeAccountId: "acct_test" }, { $unset: { stripeAccountId: 1, payoutBank: 1 } });
+			expect(userModel.updateOne).toHaveBeenCalledWith({ _id: landlord }, { $set: { stripeAccountId: "acct_live" } });
+			expect(JSON.parse(String(calls.at(-1)!.init.body))).toMatchObject({ account: "acct_live" });
+		}
+		warn.mockRestore();
+	});
+
+	it("keeps the stored account when Stripe is down during onboarding (502, no new account)", async () => {
+		const { service, calls, userModel } = setup((url) =>
+			url.endsWith("/v2/core/account_links") ? { ok: false, status: 503, body: { error: { message: "Service unavailable" } } } : { ok: true, status: 200, body: { id: "acct_1" } }
+		);
+		userModel.findById.mockReturnValue(lean({ stripeAccountId: "acct_1" }));
+		const error = jest.spyOn(Logger.prototype, "error").mockImplementation();
+
+		await expect(service.connectOnboard({ _id: landlord } as any)).rejects.toMatchObject({ status: 502 });
+		expect(calls.some(call => call.url.endsWith("/v2/core/accounts"))).toBe(false);
+		expect(userModel.updateOne).not.toHaveBeenCalled();
+		error.mockRestore();
 	});
 
 	it("says Connect is off only when Stripe says so; any other Stripe error is a 502", async () => {
