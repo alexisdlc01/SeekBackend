@@ -242,6 +242,25 @@ describe("FlagsService", () => {
 			expect(b.userModel.updateOne).not.toHaveBeenCalled();
 		});
 
+		it("a member of the reported account's own team does not count against it", async () => {
+			const owner = new Types.ObjectId(reported);
+			const team = [{ _id: owner, team: [{ user: reporter._id }] }];
+			const a = setup({ verifiedReporters: 3 });
+			a.userModel.find.mockReturnValue({ lean: () => exec(team) });
+			a.conversationModel.distinct.mockReturnValue(exec([owner, ...a.verified]));
+			await a.service.create(report("Rude messages"), reporter as never);
+			expect(a.userModel.updateOne).not.toHaveBeenCalled();
+
+			// Another reporter's report: the member among the open reporters is not a linked reporter.
+			const b = setup({ verifiedReporters: 3 });
+			const other = b.verified[1];
+			b.userModel.distinct.mockReturnValue(exec([reporter._id, other, b.verified[2]]));
+			b.userModel.find.mockReturnValue({ lean: () => exec(team) });
+			b.conversationModel.distinct.mockReturnValue(exec([owner, other, b.verified[2]]));
+			await b.service.create(report("Rude messages"), { ...reporter, _id: other } as never);
+			expect(b.userModel.updateOne).not.toHaveBeenCalled();
+		});
+
 		it("does not suspend on 3 verified reporters when only 2 dealt with the account", async () => {
 			const { service, userModel, conversationModel } = setup({ verifiedReporters: 3 });
 			conversationModel.distinct.mockReturnValue(exec([new Types.ObjectId(reported), reporter._id]));

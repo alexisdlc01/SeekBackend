@@ -116,7 +116,9 @@ export class FlagsService {
 		const accountOf = await this.accountsOf(verified);
 		const account = (user: Types.ObjectId) => accountOf.get(user.toString()) ?? user;
 		const me = account(reporter._id);
-		const linked = await this.linkedTo(id, [...new Map(verified.map(user => [account(user).toString(), account(user)])).values()]);
+		// A member of the reported account's own team never counts against it.
+		if (me.equals(id)) return;
+		const linked = await this.linkedTo(id, [...new Map(verified.map(user => [account(user).toString(), account(user)])).values()].filter(user => !user.equals(id)));
 		if (linked.length >= REPORTERS_TO_SUSPEND) {
 			return this.suspend(id, `Reported by ${linked.length} verified users who dealt with this account in 30 days`);
 		}
