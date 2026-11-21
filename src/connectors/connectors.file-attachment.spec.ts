@@ -215,3 +215,27 @@ describe("InboxController.fileAttachment team access", () => {
 		await expect(controller.fileAttachment("m", 0, owner as any)).resolves.toMatchObject({ name: "a.pdf" });
 	});
 });
+
+describe("ConnectorsService.storeFile", () => {
+	it("takes an application/octet-stream PDF by its name, but only when the bytes are a PDF", async () => {
+		const uploads = { putPrivateObject: jest.fn().mockResolvedValue({ url: "https://files.example/x.pdf", key: "k" }) };
+		const service = new ConnectorsService(
+			{ get: () => "test" } as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, uploads as any, {} as any
+		);
+		const store = (name: string, mimeType: string, bytes: string) => (service as any).storeFile(
+			{ provider: EmailProvider.GMAIL },
+			{ _id: new Types.ObjectId() },
+			{ name, mimeType, size: bytes.length, load: async () => Buffer.from(bytes) }
+		);
+
+		await expect(store("Lease.PDF", "application/octet-stream", "%PDF-1.7")).resolves.toMatchObject({ key: "k" });
+		expect(uploads.putPrivateObject.mock.calls[0].slice(2)).toEqual(["application/pdf", "pdf"]);
+		await expect(store("photo.jpeg", "application/octet-stream", "jpegbytes")).resolves.toMatchObject({ key: "k" });
+		expect(uploads.putPrivateObject.mock.calls[1].slice(2)).toEqual(["image/jpeg", "jpg"]);
+
+		uploads.putPrivateObject.mockClear();
+		await expect(store("Lease.pdf", "application/octet-stream", "<html>")).resolves.toBeNull();
+		await expect(store("notes.txt", "application/octet-stream", "%PDF")).resolves.toBeNull();
+		expect(uploads.putPrivateObject).not.toHaveBeenCalled();
+	});
+});

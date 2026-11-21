@@ -314,6 +314,9 @@ export class LandlordPaymentRowDto {
 	@ApiProperty({ type: String, format: "date-time", nullable: true, description: "When the payment was refunded to the tenant (it stays PAID). Null if never refunded." })
 	refundedAt: Date | null;
 
+	@ApiProperty({ description: "Pence refunded to the tenant so far; below amount means a partial refund. 0 if never refunded." })
+	refundedAmount: number;
+
 	@ApiProperty({ description: "Seek's 1% fee on this payment, pence." })
 	fee: number;
 

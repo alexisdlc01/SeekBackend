@@ -197,3 +197,48 @@ describe("ConnectorsService store files a referee's reply", () => {
 		expect(addReference).not.toHaveBeenCalled();
 	});
 });
+
+describe("ConnectorsService store threads IMAP replies", () => {
+	// The landlord thread holds one stored message, <root@landlord> from landlord@x.co.
+	const run = async (from: string) => {
+		const imap = conn(EmailProvider.IMAP);
+		const { service, messageModel } = setup([imap]);
+		const stored = [{ connection: imap._id, providerThreadId: "imap-1", internetMessageId: "<root@landlord>", from: "landlord@x.co", to: ["maya@example.com"] }];
+		Object.assign(messageModel, {
+			distinct: jest.fn(async (_field: string, q: { internetMessageId: { $in: string[] } }) =>
+				stored.filter(m => q.internetMessageId.$in.includes(m.internetMessageId)).map(m => m.providerThreadId)
+			),
+			findOne: jest.fn((q: { providerThreadId: { $in: string[] }; $or: [{ from: string }, { to: string }] }) => {
+				const hit = stored.find(m => q.providerThreadId.$in.includes(m.providerThreadId) && (m.from === q.$or[0].from || m.to.includes(q.$or[1].to)));
+				return { select: () => lean(hit ?? null) };
+			}),
+			create: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(), toObject: () => ({ attachments: [] }) }),
+			updateOne: jest.fn().mockResolvedValue({})
+		});
+		(service as any).connectionModel.exists = jest.fn().mockResolvedValue({ _id: imap._id });
+		jest.spyOn(service as any, "tenancyFor").mockResolvedValue(null);
+		const mail = {
+			providerThreadId: "imap-9",
+			providerMessageId: "9",
+			internetMessageId: "<new@x>",
+			references: ["<root@landlord>"],
+			from,
+			to: ["maya@example.com"],
+			subject: "Re: rent",
+			snippet: "",
+			body: "",
+			receivedAt: new Date(),
+			attachments: []
+		};
+		await (service as any).store(imap, { _id: owner, role: "STUDENT" }, mail, { category: "OTHER", contact: null }, false);
+		return (messageModel as any).create.mock.calls[0][0].providerThreadId;
+	};
+
+	it("keeps a stranger citing the landlord thread in References out of it", async () => {
+		expect(await run("stranger@evil.co")).toBe("imap-9");
+	});
+
+	it("lets the landlord's own reply join the thread", async () => {
+		expect(await run("landlord@x.co")).toBe("imap-1");
+	});
+});

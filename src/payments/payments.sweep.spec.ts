@@ -243,3 +243,63 @@ describe("PaymentsService.accountFor", () => {
 		expect((await destination({ stripeAccountId: "acct_1", deletedAt: new Date() })).result).toBeNull();
 	});
 });
+
+describe("PaymentsService ends fixed terms on their end date", () => {
+	const tenancyId = new Types.ObjectId();
+	const tenant = new Types.ObjectId();
+	const landlord = new Types.ObjectId();
+
+	function setup(modifiedCount: number, endDate = new Date("2026-07-01T00:00:00Z")) {
+		const finished = { _id: tenancyId, tenants: [tenant], landlord, endDate, listing: { propertyTitle: "Flat 2" } };
+		const tenancyModel = {
+			find: jest.fn().mockReturnValueOnce({ populate: () => lean([finished]) }).mockReturnValue({ populate: () => lean([]) }),
+			updateOne: jest.fn().mockResolvedValue({ modifiedCount })
+		};
+		const notifications = { notify: jest.fn().mockResolvedValue(true), notifyMany: jest.fn().mockResolvedValue(undefined) };
+		const service = new PaymentsService(
+			{ find: jest.fn().mockReturnValue(lean([])), updateOne: jest.fn() } as any,
+			{ find: jest.fn().mockReturnValue(lean([])) } as any,
+			tenancyModel as any,
+			{ find: jest.fn().mockReturnValue(lean([])) } as any,
+			{} as any,
+			{} as any,
+			{} as any,
+			notifications as any,
+			{ get: () => undefined } as any,
+			{} as any
+		);
+		return { service, tenancyModel, notifications };
+	}
+
+	it("ends an ACTIVE fixed term whose end date is today in London and tells tenants and landlord once", async () => {
+		// 23:30 UTC on 30 June is already 1 July in London.
+		const now = new Date("2026-06-30T23:30:00Z");
+		const { service, tenancyModel, notifications } = setup(1);
+		await (service as any).endFinishedTenancies(now);
+		expect(tenancyModel.find.mock.calls[0][0]).toEqual({ status: "ACTIVE", periodic: false, endDate: { $ne: null, $lte: new Date("2026-07-01T00:00:00Z") } });
+		expect(tenancyModel.updateOne).toHaveBeenCalledWith({ _id: tenancyId, status: "ACTIVE" }, { $set: { status: "ENDED" } });
+		const sent = notifications.notifyMany.mock.calls[0][0];
+		expect(sent.map((n: any) => n.user)).toEqual([tenant, landlord]);
+		expect(sent.every((n: any) => n.kind === "TENANCY_ENDED" && n.dedupeKey === `tenancy-ended:${tenancyId.toString()}`)).toBe(true);
+	});
+
+	it("sends nothing when another run already ended it", async () => {
+		const { service, notifications } = setup(0);
+		await (service as any).endFinishedTenancies(new Date("2026-07-02T09:00:00Z"));
+		expect(notifications.notifyMany).not.toHaveBeenCalled();
+	});
+
+	it("ends a term that finished long ago without notifying anyone", async () => {
+		const { service, tenancyModel, notifications } = setup(1, new Date("2026-03-01T00:00:00Z"));
+		await (service as any).endFinishedTenancies(new Date("2026-07-02T09:00:00Z"));
+		expect(tenancyModel.updateOne).toHaveBeenCalledWith({ _id: tenancyId, status: "ACTIVE" }, { $set: { status: "ENDED" } });
+		expect(notifications.notifyMany).not.toHaveBeenCalled();
+	});
+
+	it("leaves an ended-by-date fixed term out of the deposit nags", async () => {
+		const { service, tenancyModel } = setup(1);
+		await (service as any).sweepCompliance(new Date("2026-07-02T09:00:00Z"));
+		const depositQuery = tenancyModel.find.mock.calls[0][0];
+		expect(depositQuery.$nor).toEqual([{ periodic: false, endDate: { $lte: new Date("2026-07-02T00:00:00Z") } }]);
+	});
+});

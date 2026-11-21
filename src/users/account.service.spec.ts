@@ -33,6 +33,7 @@ function setup() {
 	};
 	const applications = { releaseDeletedMember: jest.fn().mockResolvedValue(undefined) };
 	const mail = { sendTeamInviteEmail: jest.fn().mockResolvedValue(undefined) };
+	const notifications = { notifyMany: jest.fn().mockResolvedValue(undefined) };
 	const service = new AccountService(
 		userModel as any,
 		tenancyModel as any,
@@ -44,9 +45,10 @@ function setup() {
 		listingModel as any,
 		messageModel as any,
 		{ get: (token: { name: string }) => (token.name === "ApplicationService" ? applications : contracts) } as any,
-		mail as any
+		mail as any,
+		notifications as any
 	);
-	return { service, userModel, tenancyModel, paymentModel, shareModel, connectionModel, connectors, uploads, listingModel, messageModel, contracts, applications, mail };
+	return { service, userModel, tenancyModel, paymentModel, shareModel, connectionModel, connectors, uploads, listingModel, messageModel, contracts, applications, mail, notifications };
 }
 
 describe("AccountService team", () => {
@@ -385,6 +387,26 @@ describe("AccountService eraseStaleIdentityDocuments", () => {
 		expect(userModel.updateOne).toHaveBeenCalledTimes(1);
 	});
 
+	it("tells each student once that their identity documents were erased", async () => {
+		const id = new Types.ObjectId();
+		const key = (n: string) => `private/${id}/0c9a1e52-8f3b-4d2e-9a1b-7c6d5e4f3a${n}.pdf`;
+		const { service, user, notifications } = withUser([
+			{ type: "PASSPORT", key: key("01"), lastSharedAt: daysAgo(31) },
+			{ type: "VISA", key: key("02"), lastSharedAt: daysAgo(31) }
+		]);
+		user._id = id;
+
+		await expect(service.eraseStaleIdentityDocuments(now)).resolves.toBe(2);
+		const sent = notifications.notifyMany.mock.calls[0][0];
+		expect(sent).toHaveLength(1);
+		expect(sent[0]).toMatchObject({
+			user: id.toString(),
+			kind: "IDENTITY_DOCUMENTS_ERASED",
+			title: "We deleted your identity documents",
+			dedupeKey: "identity-erased:2026-11-20"
+		});
+	});
+
 	it("keeps the file a tenancy still references, but still drops the passport entry", async () => {
 		const id = new Types.ObjectId();
 		const key = `private/${id}/0c9a1e52-8f3b-4d2e-9a1b-7c6d5e4f3a2b.pdf`;
@@ -405,10 +427,11 @@ describe("AccountService eraseStaleIdentityDocuments", () => {
 
 	it("keeps the entry for the next run when the S3 delete fails", async () => {
 		const id = new Types.ObjectId();
-		const { service, user, uploads, userModel } = withUser([{ type: "PASSPORT", key: `private/${id}/0c9a1e52-8f3b-4d2e-9a1b-7c6d5e4f3a2b.pdf`, lastSharedAt: daysAgo(40) }]);
+		const { service, user, uploads, userModel, notifications } = withUser([{ type: "PASSPORT", key: `private/${id}/0c9a1e52-8f3b-4d2e-9a1b-7c6d5e4f3a2b.pdf`, lastSharedAt: daysAgo(40) }]);
 		user._id = id;
 		uploads.deletePrivateObject.mockRejectedValueOnce(new Error("S3 down"));
 		await expect(service.eraseStaleIdentityDocuments(now)).resolves.toBe(0);
 		expect(userModel.updateOne).not.toHaveBeenCalled();
+		expect(notifications.notifyMany).toHaveBeenCalledWith([]);
 	});
 });

@@ -60,7 +60,7 @@ import {
 } from "./dto/payments.dto";
 import { Tenancy } from "../tenancies/tenancy.schema";
 import { TenancyStatus } from "../tenancies/tenancy.enums";
-import { TenanciesService } from "../tenancies/tenancies.service";
+import { londonCalendarDay, TenanciesService } from "../tenancies/tenancies.service";
 import { listingCompliance, tenancyCompliance } from "../tenancies/compliance";
 import { Listing } from "../listings/listings.schema";
 import { User } from "../users/users.schema";
@@ -413,11 +413,9 @@ export class PaymentsService {
 
 	async landlordMonth(landlordId: string, month?: string): Promise<LandlordPaymentsDto> {
 		const range = monthRange(month);
-		const payments = await this.paymentModel
-			.find({
-				landlord: new Types.ObjectId(landlordId),
-				dueDate: { $gte: range.start, $lt: range.end }
-			})
+		const landlord = new Types.ObjectId(landlordId);
+		const load = (filter: Record<string, unknown>) => this.paymentModel
+			.find({ landlord, ...filter })
 			.populate({
 				path: "tenancy",
 				select: "listing",
@@ -433,6 +431,13 @@ export class PaymentsService {
 			.sort({ dueDate: 1 })
 			.lean()
 			.exec();
+		const payments = await load({ dueDate: { $gte: range.start, $lt: range.end } });
+		// This month also shows older arrears, as /landlord/overview counts them: late only, never expected or collected.
+		const arrears = range.label === monthRange(undefined, londonCalendarDay()).label
+			? await load({ kind: { $ne: PaymentKind.HOLDING_DEPOSIT }, status: PaymentStatus.LATE, dueDate: { $lt: range.start } })
+			: [];
+		const olderLate = new Set(arrears.map(payment => payment._id.toString()));
+		payments.push(...arrears);
 
 		const plans = await this.planModel
 			.find({ tenancy: { $in: payments.map(p => (p.tenancy as unknown as { _id: Types.ObjectId })?._id ?? p.tenancy) } })
@@ -450,7 +455,7 @@ export class PaymentsService {
 				totals.holdingDepositsExpected += payment.amount;
 				// A refunded deposit went back to the student: it stays PAID with refundedAt set.
 				if (paid && !payment.refundedAt) totals.holdingDepositsCollected += payment.amount;
-			} else if (payment.status !== PaymentStatus.CANCELLED) {
+			} else if (payment.status !== PaymentStatus.CANCELLED && !olderLate.has(payment._id.toString())) {
 				// Rent cancelled by an early tenancy end is no longer owed.
 				totals.expected += payment.amount;
 				if (paid) totals.collected += payment.amount;
@@ -489,8 +494,10 @@ export class PaymentsService {
 				autopay: holding ? false : (plan?.autopay ?? false),
 				remindDaysBefore: plan?.remindDaysBefore ?? 3,
 				remindersSent: payment.remindersSent ?? 0,
-				refundDue: payment.refundDue ?? false,
+				// The stored flag stays set so a late payment of a cancelled row still auto-refunds; only paid money is shown as owed back.
+				refundDue: payment.status === PaymentStatus.PAID && !payment.refundedAt && (payment.refundDue ?? false),
 				refundedAt: payment.refundedAt ?? null,
+				refundedAmount: payment.refundedAmount ?? 0,
 				// Rows still to collect show today's 1%, not the rate when they were scheduled.
 				fee: feeFor(payment).seekFee,
 				payout: feeFor(payment).payout,
@@ -869,6 +876,8 @@ export class PaymentsService {
 				const existing = await previous.retrieveCheckoutSession(payment.providerRef);
 				if (existing.status === "open" && existing.url) {
 					if (account && payment.stripeAccountId === account && existing.success_url === successUrl && existing.cancel_url === cancelUrl
+						// A row repriced since (early tenancy end) must not be paid at the old amount.
+						&& existing.amount_total === payment.amount
 						// A session opened before autopay was switched on (or off) would not save the card as asked.
 						&& (existing.customer_creation === "always") === saveCard) {
 						return { mode, sessionId: existing.id, url: existing.url, status: payment.status };
@@ -1207,6 +1216,7 @@ export class PaymentsService {
 	 * alerts. Every step is idempotent so overlapping runs are harmless.
 	 */
 	async sweep(now: Date = new Date()) {
+		await this.endFinishedTenancies(now);
 		const today = startOfUtcDay(now);
 		const mode = this.mode();
 
@@ -1530,6 +1540,42 @@ export class PaymentsService {
 		}
 	}
 
+	/** A fixed term ends on its own once its end date (exclusive, London day) arrives; a rolling tenancy runs until ended. */
+	private async endFinishedTenancies(now: Date) {
+		const today = londonCalendarDay(now);
+		const finished = await this.tenancyModel
+			.find({ status: TenancyStatus.ACTIVE, periodic: false, endDate: { $ne: null, $lte: today } })
+			.populate({ path: "listing", select: "propertyTitle streetAddress" })
+			.lean()
+			.exec();
+		for (const tenancy of finished) {
+			const ended = await this.tenancyModel.updateOne({ _id: tenancy._id, status: TenancyStatus.ACTIVE }, { $set: { status: TenancyStatus.ENDED } });
+			// A term that ended long before this sweep first ran (e.g. the first deploy) ends quietly: old news is noise.
+			if (ended.modifiedCount === 0 || new Date(tenancy.endDate!).getTime() < today.getTime() - 7 * DAY_MS) continue;
+			const listing = tenancy.listing as unknown as { propertyTitle?: string; streetAddress?: string } | null;
+			const title = listing?.propertyTitle ?? listing?.streetAddress ?? "your home";
+			const dedupeKey = `tenancy-ended:${tenancy._id.toString()}`;
+			await this.notifications.notifyMany([
+				...(tenancy.tenants ?? []).map(tenant => ({
+					user: tenant,
+					kind: NotificationKind.TENANCY_ENDED,
+					title: `Your tenancy at ${title} has ended`,
+					body: "Your fixed term is over. Any rent still owed stays on your payments page.",
+					...notificationTarget("student", NotificationTargetKind.TENANCY, tenancy._id),
+					dedupeKey
+				})),
+				{
+					user: tenancy.landlord,
+					kind: NotificationKind.TENANCY_ENDED,
+					title: `The tenancy at ${title} has ended`,
+					body: "The fixed term is over. Any rent still owed stays on your payments page.",
+					...notificationTarget("landlord", NotificationTargetKind.TENANCY, tenancy._id),
+					dedupeKey
+				}
+			]);
+		}
+	}
+
 	private async sweepCompliance(now: Date) {
 		const horizon = new Date(now.getTime() + 30 * DAY_MS);
 		const listings = await this.listingModel
@@ -1548,7 +1594,8 @@ export class PaymentsService {
 		);
 
 		const tenancies = await this.tenancyModel
-			.find({ status: TenancyStatus.ACTIVE, depositProtectedAt: null, depositAmount: { $gt: 0 } })
+			// A fixed term past its end date is over (endFinishedTenancies), even if this run could not mark it.
+			.find({ status: TenancyStatus.ACTIVE, depositProtectedAt: null, depositAmount: { $gt: 0 }, $nor: [{ periodic: false, endDate: { $lte: londonCalendarDay(now) } }] })
 			.populate({ path: "listing", select: "propertyTitle streetAddress nation" })
 			.lean()
 			.exec();

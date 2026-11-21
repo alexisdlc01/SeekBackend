@@ -21,6 +21,9 @@ import { ApplicationService } from "../application/application.service";
 import { MailService } from "../auth/mail.service";
 import { EmailMessage } from "../inbox/email-message.schema";
 import { DocumentType, IDENTITY_DOCUMENT_TYPES } from "./types/document-type";
+import { NotificationsService } from "../notifications/notifications.service";
+import { NotificationKind } from "../notifications/notification-kind.enum";
+import { notificationTarget, NotificationTargetKind } from "../notifications/links";
 
 const MAX_TEAM = 20;
 /** Privacy policy: identity documents are kept 30 days after their last share with a landlord. */
@@ -52,7 +55,8 @@ export class AccountService {
 		@InjectModel(EmailMessage.name) private readonly messageModel: Model<EmailMessage>,
 		// Looked up at call time: importing ContractsModule here would loop back through AuthModule to UsersModule.
 		private readonly moduleRef?: ModuleRef,
-		private readonly mail?: MailService
+		private readonly mail?: MailService,
+		private readonly notifications?: NotificationsService
 	) {}
 
 	async listTeam(ownerId: Types.ObjectId): Promise<TeamMemberDto[]> {
@@ -210,6 +214,7 @@ export class AccountService {
 			stale.map(({ doc }) => doc.key).filter((key): key is string => !!key?.startsWith("private/"))
 		);
 		let erased = 0;
+		const told = new Set<string>();
 		for (const { user, doc } of stale) {
 			try {
 				// Another document of the same account may still use the file (same key under a fresher entry).
@@ -223,28 +228,40 @@ export class AccountService {
 					{ $pull: { documents: { type: doc.type, lastSharedAt: { $lt: cutoff } } } }
 				);
 				erased += 1;
+				told.add(user._id.toString());
 			} catch (error) {
 				this.logger.warn(`Erasing identity document ${doc.type} for ${user._id.toString()} failed: ${(error as Error).message}`);
 			}
 		}
+		// A missing ID can drop the student's household out of the queue: tell them once, so they can upload again.
+		await this.notifications?.notifyMany([...told].map(user => ({
+			user,
+			kind: NotificationKind.IDENTITY_DOCUMENTS_ERASED,
+			title: "We deleted your identity documents",
+			body: "For your privacy we delete ID documents 30 days after you last shared them. Upload them again to stay in the queue.",
+			...notificationTarget("student", NotificationTargetKind.APPLICATION),
+			dedupeKey: `identity-erased:${now.toISOString().slice(0, 10)}`
+		})));
 		return erased;
 	}
 
 	async deleteAccount(userId: Types.ObjectId) {
 		const tenancies = await this.tenancyModel
-			.find({ status: TenancyStatus.ACTIVE, $or: [{ tenants: userId }, { landlord: userId }] })
+			// An ENDED tenancy can still owe arrears (fixed terms now end on their own date).
+			.find({ status: { $in: [TenancyStatus.ACTIVE, TenancyStatus.ENDED] }, $or: [{ tenants: userId }, { landlord: userId }] })
 			.select("_id")
 			.lean()
 			.exec();
 		if (tenancies.length) {
 			const unpaid = await this.paymentModel.exists({
 				tenancy: { $in: tenancies.map(tenancy => tenancy._id) },
-				status: { $ne: PaymentStatus.PAID },
+				// Rent cancelled by an early end is no longer owed.
+				status: { $nin: [PaymentStatus.PAID, PaymentStatus.CANCELLED] },
 				$or: [{ tenant: userId }, { landlord: userId }]
 			});
 			if (unpaid) {
 				throw new ConflictException(
-					"You still have rent to pay or collect on an active tenancy. End the tenancy or settle it before deleting your account."
+					"You still have rent to pay or collect on a tenancy. End the tenancy or settle it before deleting your account."
 				);
 			}
 		}

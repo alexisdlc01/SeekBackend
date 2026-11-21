@@ -32,6 +32,10 @@ export class DocumentShare {
 	@Prop({ type: Date, default: null })
 	revokedAt?: Date | null;
 
+	/** "system" (offer lapsed, member left) may be reopened by a new share; a student's own revocation never is. */
+	@Prop({ type: String, enum: ["system", "student"], default: null })
+	revokedBy?: "system" | "student" | null;
+
 	createdAt?: Date;
 }
 

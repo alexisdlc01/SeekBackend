@@ -20,6 +20,7 @@ import { ConnectorsModule } from "../connectors/connectors.module";
 import { DocumentReviewService } from "./document-review.service";
 import { Listing, ListingSchema } from "../listings/listings.schema";
 import { EmailMessage, EmailMessageSchema } from "../inbox/email-message.schema";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 @Module({
 	imports: [
@@ -41,7 +42,9 @@ import { EmailMessage, EmailMessageSchema } from "../inbox/email-message.schema"
 		RedisModule,
 		UploadModule,
 		// Account deletion disconnects the user's mailboxes.
-		ConnectorsModule
+		ConnectorsModule,
+		// Tells students when their identity documents are erased.
+		NotificationsModule
 	],
 	controllers: [UsersController],
 	providers: [

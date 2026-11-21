@@ -10027,6 +10027,7 @@
               "APPLICATION_REJECTED",
               "LISTING_NEEDS_CHANGES",
               "REPORT_ACTIONED",
+              "IDENTITY_DOCUMENTS_ERASED",
               "NEW_MESSAGE"
             ]
           },

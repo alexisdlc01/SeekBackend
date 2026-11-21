@@ -528,10 +528,12 @@ export class TenanciesService {
 			const unused = earlyEndRefundAmount(payment.amount, new Date(payment.dueDate), payment.coversMonths ?? 1, end, tenancy.startDate);
 			if (unused === 0) continue;
 			const amount = payment.amount - unused;
-			await this.paymentModel.updateOne(
+			const repriced = await this.paymentModel.updateOne(
 				{ _id: payment._id, status: { $nin: [PaymentStatus.PAID, PaymentStatus.PENDING] }, amount: payment.amount },
 				{ $set: { amount, ...computeFee(amount) } }
 			);
+			// The open session still charges the old amount: close it so the next checkout opens one at the new amount.
+			if (repriced.modifiedCount > 0) await closeStripeCharge(process.env.STRIPE_SECRET_KEY, payment);
 		}
 
 		const paidOrPending = await this.paymentModel
