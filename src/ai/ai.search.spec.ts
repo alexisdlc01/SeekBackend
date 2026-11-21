@@ -33,6 +33,20 @@ describe("AiService searchChat with a model answer", () => {
 		expect(result.filters).toEqual({ city: "St Andrews", maxRent: 800, minBedrooms: 2, billsIncluded: true });
 	});
 
+	it("does not restore a filter the model dropped after an earlier turn", async () => {
+		const { service } = setup('{"reply":"Homes in Bristol.","filters":{"city":"Bristol"}}');
+		const result = await service.searchChat(
+			[
+				{ role: "user", content: "2-bed in Bristol under £600" },
+				{ role: "assistant", content: "ok" },
+				{ role: "user", content: "actually budget and bedrooms don't matter" },
+			],
+			new Date("2026-11-07T12:00:00Z")
+		);
+		expect(result.filters.maxRent).toBeUndefined();
+		expect(result.filters.minBedrooms).toBeUndefined();
+	});
+
 	it("falls back to the rules parser when the answer is not JSON", async () => {
 		const { service } = setup("{not json");
 		const result = await service.searchChat(messages, new Date("2026-11-07T12:00:00Z"));
@@ -64,6 +78,16 @@ describe("AiService findListings candidate window", () => {
 		expect(listings).toHaveLength(12);
 		expect(listings[0].id).toBe("best");
 		expect(listings[0].match).toBeGreaterThan(listings[1].match);
+	});
+});
+
+describe("AiService findListings relaxed", () => {
+	it("reports no relaxed filters when nothing is found", async () => {
+		const none = {} as any;
+		const service = new AiService({} as any, { filters: jest.fn(async () => []) } as any, none, none, none, none, none, none, none, none, { get: () => undefined } as any);
+		const { listings, relaxed } = await (service as any).findListings({ city: "Bristol", minBedrooms: 3, billsIncluded: true });
+		expect(listings).toEqual([]);
+		expect(relaxed).toEqual([]);
 	});
 });
 

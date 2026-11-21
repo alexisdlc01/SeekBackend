@@ -41,6 +41,7 @@ import {
 	extractJsonObject,
 	findUniversity,
 	parseConversation,
+	parseSearchText,
 	sanitizeFilters
 } from "./search-parser";
 import { AdviceRequestDto, AdviceTopic } from "./dto/ai.dto";
@@ -322,7 +323,9 @@ export class AiService {
 			this.logger.warn(`AI search answer from ${answer.provider} moved the search to ${sanitized.city}; using the rules parser.`);
 			return null;
 		}
-		const filters = { ...rules, ...sanitized };
+		// Only the latest message may back-fill: a filter the model dropped after an earlier turn was removed on purpose.
+		const lastUser = [...messages].reverse().find((m) => m.role === "user");
+		const filters = { ...(lastUser ? parseSearchText(lastUser.content, now) : {}), ...sanitized };
 		return { filters, reply, provider: answer.provider };
 	}
 
@@ -338,7 +341,7 @@ export class AiService {
 			relaxed.push(key);
 			results = await this.queryListings(current, student);
 		}
-		return { listings: results.slice(0, MAX_RESULTS), relaxed };
+		return { listings: results.slice(0, MAX_RESULTS), relaxed: results.length ? relaxed : [] };
 	}
 
 	private async queryListings(filters: SearchFilters, student?: { documents?: PassportDocumentInput[] }) {
