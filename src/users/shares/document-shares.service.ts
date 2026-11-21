@@ -54,8 +54,9 @@ export class DocumentSharesService {
 
 	/**
 	 * Grants the landlord a fresh 14-day window on each applicant's files.
-	 * Re-sending refreshes the window but never resurrects a share the
-	 * student revoked.
+	 * Re-sending refreshes the window and reopens a share Seek closed (lapsed
+	 * offer, member left) but never resurrects a share the student revoked,
+	 * unless `reconsent` (the student just joined the household again).
 	 */
 	async shareForApplication(params: {
 		ownerIds: (Types.ObjectId | string)[];
@@ -63,6 +64,7 @@ export class DocumentSharesService {
 		listing?: Types.ObjectId | string;
 		application: Types.ObjectId | string;
 		now?: Date;
+		reconsent?: boolean;
 	}): Promise<void> {
 		const now = params.now ?? new Date();
 		const expiresAt = new Date(now.getTime() + SHARE_TTL_MS);
@@ -88,6 +90,15 @@ export class DocumentSharesService {
 				}
 			}))
 		);
+		await this.shareModel.updateMany(
+			{
+				owner: { $in: params.ownerIds.map(id => new Types.ObjectId(id.toString())) },
+				application: new Types.ObjectId(params.application.toString()),
+				revokedAt: { $ne: null },
+				...(params.reconsent ? {} : { revokedBy: "system" })
+			},
+			{ $set: { revokedAt: null, revokedBy: null } }
+		);
 		await this.markIdentityShared(params.ownerIds, now);
 	}
 
@@ -99,7 +110,7 @@ export class DocumentSharesService {
 				revokedAt: null,
 				...(ownerIds ? { owner: { $in: ownerIds.map(id => new Types.ObjectId(id.toString())) } } : {})
 			},
-			{ $set: { revokedAt: new Date() } }
+			{ $set: { revokedAt: new Date(), revokedBy: "system" } }
 		);
 	}
 
@@ -132,7 +143,7 @@ export class DocumentSharesService {
 				_id: new Types.ObjectId(shareId),
 				owner: new Types.ObjectId(ownerId)
 			},
-			{ $set: { revokedAt: new Date() } }
+			{ $set: { revokedAt: new Date(), revokedBy: "student" } }
 		);
 		if (result.matchedCount === 0) {
 			throw new NotFoundException("Share not found");

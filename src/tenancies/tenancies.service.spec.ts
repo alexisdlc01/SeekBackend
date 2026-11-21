@@ -530,6 +530,36 @@ describe("TenanciesService create / accept", () => {
 			);
 		});
 
+		it("closes the open Checkout session of an unpaid period it reprices, so the old amount can't be paid", async () => {
+			const payment = { ...paid(62000, "2027-01-01"), status: "SCHEDULED", provider: "stripe", providerRef: "cs_old", stripeAccountId: "acct_1" };
+			const ctx = setup();
+			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE
+			} as any);
+			ctx.paymentModel.find.mockImplementation((filter: any) => lean(filter.status?.$nin && !filter.providerRef ? [payment] : []));
+			const urls: string[] = [];
+			const realFetch = global.fetch;
+			const realKey = process.env.STRIPE_SECRET_KEY;
+			process.env.STRIPE_SECRET_KEY = "sk_test_x";
+			global.fetch = jest.fn(async (url: string) => {
+				urls.push(url);
+				return { ok: true, status: 200, json: async () => ({ id: "cs_old" }) } as Response;
+			}) as never;
+			try {
+				await ctx.service.endTenancy(tenancyId.toString(), new Date("2027-01-16"), landlord);
+				expect(urls.map(url => url.split("/v1")[1])).toEqual(["/checkout/sessions/cs_old/expire"]);
+				// Nothing repriced (another request already did it): the session is left alone.
+				urls.length = 0;
+				ctx.paymentModel.updateOne.mockResolvedValue({ modifiedCount: 0 });
+				ctx.tenancyModel.updateOne.mockResolvedValue({ modifiedCount: 1 });
+				await ctx.service.endTenancy(tenancyId.toString(), new Date("2027-01-16"), landlord);
+				expect(urls).toEqual([]);
+			} finally {
+				global.fetch = realFetch;
+				process.env.STRIPE_SECRET_KEY = realKey;
+			}
+		});
+
 		it("uses the tenancy anchor for a short-month due date", () => {
 			expect(earlyEndRefundAmount(
 				31000,

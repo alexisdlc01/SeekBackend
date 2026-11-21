@@ -183,7 +183,7 @@ describe("PaymentsService.checkout (Stripe)", () => {
 				const headers = (init?.headers as Record<string, string> | undefined) ?? {};
 				calls.push({ url, body: new URLSearchParams(String(init?.body ?? "")), account: headers["Stripe-Account"] });
 				const body = url.includes("/accounts/") ? READY
-					: url.includes("/checkout/sessions/cs_old") ? { id: "cs_old", url: "https://checkout.stripe.com/c/pay/cs_old", status: "open", success_url: successUrl, cancel_url: cancelUrl }
+					: url.includes("/checkout/sessions/cs_old") ? { id: "cs_old", url: "https://checkout.stripe.com/c/pay/cs_old", status: "open", success_url: successUrl, cancel_url: cancelUrl, amount_total: 69500 }
 					: { id: "cs_new", url: "https://checkout.stripe.com/c/pay/cs_new", status: "open" };
 				return { ok: true, status: 200, json: async () => body } as Response;
 			}) as never;
@@ -198,6 +198,11 @@ describe("PaymentsService.checkout (Stripe)", () => {
 		expect(calls.find(call => call.url.endsWith("/cs_old/expire"))!.account).toBeUndefined();
 		expect(calls.find(call => call.url.endsWith("/checkout/sessions"))!.account).toBe("acct_123");
 		expect(lastPaymentModel.updateOne).toHaveBeenCalledWith(expect.anything(), { $set: { stripeAccountId: "acct_123", payoutStatus: null, providerRef: null } });
+	
+		// The row was repriced after the session opened (early tenancy end): the old amount is never offered.
+		await expect(respond({ ...payment, amount: 30000, providerRef: "cs_old", stripeAccountId: "acct_123" })).resolves.toMatchObject({ sessionId: "cs_new" });
+		expect(calls.find(call => call.url.endsWith("/cs_old/expire"))!.account).toBe("acct_123");
+		expect(calls.find(call => call.url.endsWith("/checkout/sessions"))!.body.get("line_items[0][price_data][unit_amount]")).toBe("30000");
 	});
 
 	it("releases held payments to a ready account, minus Seek's 1% fee, tied to the original charge", async () => {
@@ -883,6 +888,63 @@ describe("PaymentsService.landlordMonth", () => {
 
 		expect(month.expected).toBe(62000);
 		expect(month.collected).toBe(62000);
+	});
+
+	it("shows refund due only on paid money, and how much a partial refund returned", async () => {
+		const query = (value: unknown) => {
+			const chain: Record<string, unknown> = { exec: () => Promise.resolve(value) };
+			for (const method of ["populate", "sort", "lean", "select", "limit"]) chain[method] = () => chain;
+			return chain;
+		};
+		const rent = (extra: Record<string, unknown>) => ({
+			_id: new Types.ObjectId(), kind: PaymentKind.RENT, tenancy: { _id: new Types.ObjectId() },
+			tenant: { _id: new Types.ObjectId(), name: "Maya" }, amount: 62000, seekFee: 620, payout: 61380, dueDate: new Date(), ...extra
+		});
+		// An early end flags a cancelled row so a late payment still auto-refunds: nothing was paid, nothing is owed back.
+		const cancelled = rent({ status: PaymentStatus.CANCELLED, refundDue: true, autoRefund: true });
+		const owed = rent({ status: PaymentStatus.PAID, refundDue: true });
+		const partial = rent({ status: PaymentStatus.PAID, refundDue: false, refundedAt: new Date(), refundedAmount: 20000 });
+		const paymentModel = { find: jest.fn().mockReturnValueOnce(query([cancelled, owed, partial])).mockReturnValue(query([])) };
+		const service = new PaymentsService(
+			paymentModel as any, { find: jest.fn().mockReturnValue(lean([])) } as any,
+			{} as any, {} as any, {} as any, {} as any, {} as any, {} as any, { get: () => undefined } as any, {} as any
+		);
+
+		const { rows } = await service.landlordMonth(new Types.ObjectId().toString());
+
+		expect(rows.map(row => [row.refundDue, row.refundedAmount])).toEqual([[false, 0], [true, 0], [false, 20000]]);
+	});
+
+	it("this month also lists older late rent, counted as late only, like the overview", async () => {
+		const query = (value: unknown) => {
+			const chain: Record<string, unknown> = { exec: () => Promise.resolve(value) };
+			for (const method of ["populate", "sort", "lean", "select", "limit"]) chain[method] = () => chain;
+			return chain;
+		};
+		const rent = (status: PaymentStatus, dueDate: Date) => ({
+			_id: new Types.ObjectId(), kind: PaymentKind.RENT, tenancy: { _id: new Types.ObjectId() },
+			tenant: { _id: new Types.ObjectId(), name: "Maya" }, amount: 62000, seekFee: 620, payout: 61380, status, dueDate
+		});
+		const landlord = new Types.ObjectId();
+		const make = () => {
+			const paymentModel = { find: jest.fn().mockReturnValueOnce(query([rent(PaymentStatus.SCHEDULED, new Date())])).mockReturnValueOnce(query([rent(PaymentStatus.LATE, new Date("2020-01-01"))])).mockReturnValue(query([])) };
+			const service = new PaymentsService(
+				paymentModel as any, { find: jest.fn().mockReturnValue(lean([])) } as any,
+				{} as any, {} as any, {} as any, {} as any, {} as any, {} as any, { get: () => undefined } as any, {} as any
+			);
+			return { service, paymentModel };
+		};
+
+		const current = make();
+		const month = await current.service.landlordMonth(landlord.toString());
+		expect(current.paymentModel.find.mock.calls[1][0]).toMatchObject({ landlord, status: PaymentStatus.LATE, kind: { $ne: PaymentKind.HOLDING_DEPOSIT } });
+		expect(month.rows).toHaveLength(2);
+		expect(month).toMatchObject({ expected: 62000, collected: 0, late: 1, lateAmount: 62000 });
+
+		const past = make();
+		const earlier = await past.service.landlordMonth(landlord.toString(), "2020-02");
+		expect(earlier.rows).toHaveLength(1);
+		expect(earlier.late).toBe(0);
 	});
 });
 

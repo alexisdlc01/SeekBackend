@@ -61,6 +61,8 @@ export function decodeHeader(value: string) {
 	});
 }
 
+const firstMessageId = (value?: string) => /<[^<>\s]+>/.exec(value ?? "")?.[0];
+
 function parseHeaders(raw: string): Record<string, string> {
 	const headers: Record<string, string> = {};
 	for (const line of raw.replace(/\r\n[ \t]+/g, " ").split("\r\n")) {
@@ -95,7 +97,8 @@ export function parseFetchHeaders(text: string): MailFull[] {
 		const receivedAt = new Date(headers.date ?? internalDate ?? Date.now());
 		mails.push({
 			providerMessageId: uid,
-			providerThreadId: headers["message-id"] ?? `imap-${uid}`,
+			// A reply joins its thread: the root is the first References id, else the message it answers.
+			providerThreadId: firstMessageId(headers.references) ?? firstMessageId(headers["in-reply-to"]) ?? headers["message-id"] ?? `imap-${uid}`,
 			internetMessageId: headers["message-id"] ?? null,
 			from: from.email,
 			fromName: from.name,
@@ -228,7 +231,7 @@ export async function listRecentImap(
 		let batch: string[] = [];
 		const flush = async () => {
 			const fetched = await session.command(
-				`UID FETCH ${batch.join(",")} (UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE MESSAGE-ID)])`
+				`UID FETCH ${batch.join(",")} (UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES)])`
 			);
 			batch = [];
 			mails.push(...parseFetchHeaders(fetched).filter(mail => !before || mail.receivedAt <= before));

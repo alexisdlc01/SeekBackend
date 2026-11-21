@@ -729,7 +729,18 @@ export class ApplicationService {
 				dedupeKey: `offer-expired:${application._id.toString()}:${key}`
 			}))
 		);
-		await this.notifyNextQualified(application, queue.qualified, `Offer expired for ${title}`, `offer-next:${application._id.toString()}:${key}`);
+		const pointedAtNext = await this.notifyNextQualified(application, queue.qualified, `Offer expired for ${title}`, `offer-next:${application._id.toString()}:${key}`);
+		// Nobody else waiting and no refund message sent: the landlord would otherwise never hear the offer lapsed.
+		if (!pointedAtNext && refunds.acceptedCount === 0 && application.stage !== ApplicationStage.REJECTED) {
+			await this.notificationsService.notify({
+				user: application.landlord,
+				kind: NotificationKind.OFFER_EXPIRED,
+				title: `Your offer for ${title} expired`,
+				body: "The household didn't accept it in time, so it lapsed. You can renew the offer.",
+				...notificationTarget("landlord", NotificationTargetKind.APPLICATION, application._id, { listing: application.listing }),
+				dedupeKey: `offer-expired-landlord:${application._id.toString()}:${key}`
+			});
+		}
 	}
 
 	/** The offer is gone (lapsed or withdrawn): point the landlord at the first qualified household still waiting. */
@@ -738,13 +749,13 @@ export class ApplicationService {
 		qualified: Awaited<ReturnType<ApplicationService["queueFor"]>>["qualified"],
 		heading: string,
 		dedupeKey: string
-	) {
+	): Promise<boolean> {
 		const next = qualified.find(entry =>
 			entry.id !== application._id.toString()
 			&& !entry.application.offerExpiredAt
 			&& entry.application.stage !== ApplicationStage.OFFERED
 		);
-		if (!next) return;
+		if (!next) return false;
 		await this.notificationsService.notify(
 			{
 				user: application.landlord,
@@ -756,6 +767,8 @@ export class ApplicationService {
 			},
 			"newQualifiedHousehold"
 		);
+		// True once a next household exists, even if muted or already sent on a rerun: that is the landlord's message for this lapse.
+		return true;
 	}
 
 	/** A household member accepts an open offer, which creates the tenancy. */
@@ -1132,6 +1145,8 @@ export class ApplicationService {
 				viewer: application.landlord,
 				listing: application.listing,
 				application: application._id,
+				// Joining again is a fresh consent, even after the student stopped sharing.
+				reconsent: !alreadyMember,
 			});
 			// The newcomer may complete the household: tell the landlord (deduped per application).
 			await this.notifyIfQualified(application as HydratedDocument<Application>);

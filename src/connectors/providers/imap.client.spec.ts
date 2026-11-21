@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { connect } from "node:tls";
-import { isPrivateAddress, listRecentImap, verifyImapLogin } from "./imap.client";
+import { isPrivateAddress, listRecentImap, parseFetchHeaders, verifyImapLogin } from "./imap.client";
 import { ProviderError } from "./mail-provider";
 
 jest.mock("node:tls", () => ({ connect: jest.fn() }));
@@ -92,5 +92,16 @@ describe("listRecentImap", () => {
 		expect(mails).toHaveLength(200);
 		expect(mails[0].providerMessageId).toBe("249");
 		expect(fetches).toHaveLength(2); // 100 UIDs per FETCH, not slice(-100)
+	});
+});
+
+describe("imap.client threading", () => {
+	const fetched = (headers: string) => `* 1 FETCH (UID 7 INTERNALDATE "01-Nov-2026 10:00:00 +0000" BODY[HEADER.FIELDS (FROM TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES)] {${headers.length}}\r\n${headers})\r\n`;
+
+	it("threads a reply on the first References id, else In-Reply-To, else its own Message-ID", () => {
+		const own = "Message-ID: <c@x>\r\nSubject: Re: rent\r\n";
+		expect(parseFetchHeaders(fetched(`${own}In-Reply-To: <b@x>\r\nReferences: <a@x>\r\n <b@x>\r\n\r\n`))[0].providerThreadId).toBe("<a@x>");
+		expect(parseFetchHeaders(fetched(`${own}In-Reply-To: <b@x>\r\n\r\n`))[0].providerThreadId).toBe("<b@x>");
+		expect(parseFetchHeaders(fetched(`${own}\r\n`))[0]).toMatchObject({ providerThreadId: "<c@x>", internetMessageId: "<c@x>" });
 	});
 });

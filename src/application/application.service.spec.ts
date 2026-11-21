@@ -455,7 +455,7 @@ describe("ApplicationService", () => {
 			);
 			// The landlord already has the group's documents; the newcomer's follow.
 			expect(sharesService.shareForApplication).toHaveBeenCalledWith(
-				expect.objectContaining({ ownerIds: [joinedUserId.toString()], application: applicationId }),
+				expect.objectContaining({ ownerIds: [joinedUserId.toString()], application: applicationId, reconsent: true }),
 			);
 		});
 
@@ -1154,6 +1154,15 @@ describe("ApplicationService pipeline", () => {
 		expect(applicationModel.updateOne).toHaveBeenCalledWith({ _id: applicationId, lapseCleanupPending: true }, { $set: { lapseCleanupPending: false } });
 		expect(paymentModel.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ kind: "HOLDING_DEPOSIT", status: { $ne: "PAID" } }));
 		expect(notifications.notifyMany.mock.calls[0][0][0].kind).toBe("OFFER_EXPIRED");
+		// Nobody else is waiting: the landlord still hears the offer lapsed, once.
+		expect(notifications.notify).toHaveBeenCalledTimes(1);
+		expect(notifications.notify.mock.calls[0][0]).toMatchObject({
+			user: landlordId,
+			kind: "OFFER_EXPIRED",
+			title: expect.stringMatching(/^Your offer for .+ expired$/),
+			// The mocked claim returns the row unchanged, so the lapse key itself is not checked here.
+			dedupeKey: expect.stringMatching(new RegExp(`^offer-expired-landlord:${applicationId.toString()}:`))
+		});
 	});
 
 	it("flags a paid holding deposit for refund and tells the landlord when an offer lapses", async () => {
@@ -1182,6 +1191,8 @@ describe("ApplicationService pipeline", () => {
 		const [refund] = notifications.notify.mock.calls[0];
 		expect(refund.user).toBe(landlordId);
 		expect(refund.body).toContain("automatic refund");
+		// The refund message already told the landlord: no second "offer expired".
+		expect(notifications.notify).toHaveBeenCalledTimes(1);
 	});
 
 	it("claims a lapsed offer first, and a later sweep finishes the clean-up and flags the refund when closing a Checkout session timed out", async () => {

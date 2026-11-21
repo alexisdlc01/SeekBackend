@@ -111,6 +111,8 @@ const FILE_TYPES: Record<string, string> = {
 	"image/jpeg": "jpg",
 	"image/jpg": "jpg"
 };
+/** Mime for a file whose declared type is missing or generic (Gmail and Outlook send PDFs as application/octet-stream). */
+const EXTENSION_TYPES: Record<string, string> = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg" };
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const FIRST_SYNC_DAYS = 60;
 // shortcut: one sync fetches headers for at most this many not-yet-stored messages. Past it, a per-connection cursor (backfillBefore/backfillSince) resumes the older part on later syncs. Non-housing mail is never stored, so the already-read part of a window is re-listed (ids only, no header calls) and a backfill range re-reads its non-housing mail once per sync that touches it; a second cap hit while a backfill is pending merges both ranges into one, re-reading some mail. Upgrade to a stored seen-id set if mailboxes with 10k+ mails per window show up.
@@ -1195,12 +1197,17 @@ export class ConnectorsService {
 		if (connection.provider === EmailProvider.DEMO) {
 			return { url: `${DEMO_FILE_BASE}/${encodeURIComponent(attachment.name)}`, key: null as string | null };
 		}
-		const extension = FILE_TYPES[attachment.mimeType.toLowerCase()];
+		const declared = (attachment.mimeType ?? "").toLowerCase();
+		const derived = FILE_TYPES[declared] ? undefined : EXTENSION_TYPES[/\.([a-z]+)$/i.exec(attachment.name ?? "")?.[1].toLowerCase() ?? ""];
+		const mimeType = derived ?? declared;
+		const extension = FILE_TYPES[mimeType];
 		if (!extension || attachment.size > MAX_ATTACHMENT_BYTES) return null;
 		try {
 			const bytes = await attachment.load();
 			if (!bytes || bytes.length > MAX_ATTACHMENT_BYTES) return null;
-			const stored = await this.uploads.putPrivateObject(user._id.toString(), bytes, attachment.mimeType, extension);
+			// A type guessed from the name must really be a PDF.
+			if (derived === "application/pdf" && bytes.subarray(0, 4).toString("latin1") !== "%PDF") return null;
+			const stored = await this.uploads.putPrivateObject(user._id.toString(), bytes, mimeType, extension);
 			return { url: stored.url, key: stored.key as string | null };
 		} catch (error) {
 			this.logger.warn(`Could not store attachment: ${(error as Error).name}`);
