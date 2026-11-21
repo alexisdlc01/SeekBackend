@@ -59,7 +59,7 @@ export class LandlordOverviewService {
 			this.paymentModel
 				// Holding deposits are not rent.
 				.find({ landlord, kind: { $ne: PaymentKind.HOLDING_DEPOSIT }, dueDate: { $gte: month.start, $lt: month.end } })
-				.select("amount seekFee status tenancy remindersSent refundedAt refundedAmount")
+				.select("amount seekFee status tenancy remindersSent refundedAt refundedAmount dueDate")
 				.lean()
 				.exec(),
 			this.applicationModel

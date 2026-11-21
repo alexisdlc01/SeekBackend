@@ -259,7 +259,7 @@ describe("ContractsService signed email", () => {
 	const maya = new Types.ObjectId();
 	const tom = new Types.ObjectId();
 	const landlord = new Types.ObjectId();
-	const tenancy = { _id: new Types.ObjectId(), landlord, tenants: [maya, tom] };
+	const tenancy = { _id: new Types.ObjectId(), landlord, tenants: [maya, tom], status: TenancyStatus.ACTIVE };
 
 	function setup(signedBefore: Types.ObjectId[], mailError?: Error) {
 		const contract = {
@@ -314,7 +314,7 @@ describe("ContractsService after a tenant deletes their account", () => {
 
 	it("completes signing and deductions that only waited for them, without emailing them", async () => {
 		const [maya, tom, landlord] = [new Types.ObjectId(), new Types.ObjectId(), new Types.ObjectId()];
-		const tenancy = { _id: new Types.ObjectId(), landlord, tenants: [maya, tom] };
+		const tenancy = { _id: new Types.ObjectId(), landlord, tenants: [maya, tom], status: TenancyStatus.ACTIVE };
 		const sent = { _id: new Types.ObjectId(), tenancy: tenancy._id, status: ContractStatus.SENT, title: "Agreement", signatures: [{ user: maya, signedAt: new Date() }] };
 		const deductions = { items: [], total: 12000, status: DeductionStatus.PROPOSED, proposedAt: new Date(), responses: [{ user: maya, accepted: true, at: new Date() }] };
 		const signed = { _id: new Types.ObjectId(), tenancy: tenancy._id, status: ContractStatus.SIGNED, title: "Old agreement", signatures: [], deductions };
@@ -354,10 +354,10 @@ describe("ContractsService reminders", () => {
 	const maya = new Types.ObjectId();
 	const tom = new Types.ObjectId();
 	const landlord = new Types.ObjectId();
-	const tenancy = { _id: new Types.ObjectId(), landlord, tenants: [maya, tom] };
+	const tenancy = { _id: new Types.ObjectId(), landlord, tenants: [maya, tom], status: TenancyStatus.ACTIVE };
 	const now = new Date("2026-11-12T09:00:00Z");
 
-	function setup(contract: Record<string, unknown>) {
+	function setup(contract: Record<string, unknown>, tenancyStatus = TenancyStatus.ACTIVE) {
 		let stored: any = {
 			_id: new Types.ObjectId(),
 			tenancy: tenancy._id,
@@ -385,10 +385,11 @@ describe("ContractsService reminders", () => {
 		};
 		const userModel = { find: jest.fn((query: any) => lean(query._id.$in.map((id: Types.ObjectId) => ({ _id: id, email: `${id}@example.com`, name: "T" })))) };
 		const mail = { sendContractSentEmail: jest.fn().mockResolvedValue(undefined) };
-		const tenancyModel = { findById: () => lean(tenancy) };
+		const current = { ...tenancy, status: tenancyStatus };
+		const tenancyModel = { findById: () => lean(current) };
 		const service = new ContractsService(
 			contractModel as any, {} as any, {} as any, tenancyModel as any, {} as any,
-			{ findForLandlord: jest.fn().mockResolvedValue(tenancy) } as any,
+			{ findForLandlord: jest.fn().mockResolvedValue(current), findForTenant: jest.fn().mockResolvedValue(current) } as any,
 			{} as any, { get: () => "secret" } as any, userModel as any, mail as any
 		);
 		return { service, id: stored._id.toString(), mail, userModel };
@@ -416,6 +417,14 @@ describe("ContractsService reminders", () => {
 
 		const fresh = setup({ sentAt: new Date(now.getTime() - 86_400_000) });
 		expect(await fresh.service.remindStale(now)).toBe(0);
+	});
+
+	it("stops reminders and signing once the tenancy has ended", async () => {
+		const { service, id, mail } = setup({}, TenancyStatus.ENDED);
+		expect(await service.remindStale(now)).toBe(0);
+		await expect(service.remind(id, { _id: landlord } as any)).rejects.toMatchObject({ status: 409 });
+		await expect(service.sign(id, { _id: tom } as any)).rejects.toMatchObject({ status: 409 });
+		expect(mail.sendContractSentEmail).not.toHaveBeenCalled();
 	});
 
 	it("the daily sweep stops after 3 automatic reminders", async () => {
