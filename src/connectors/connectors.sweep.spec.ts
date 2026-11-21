@@ -164,7 +164,7 @@ describe("ConnectorsService store files a referee's reply", () => {
 		senderAuthenticated,
 		attachments: [{ name: "maya.pdf", mimeType: "application/pdf", size: 10, load: async () => null }]
 	});
-	const run = async (from: string, authenticated: boolean) => {
+	const run = async (from: string, authenticated: boolean, added = true) => {
 		const gmail = conn(EmailProvider.GMAIL);
 		const { service, messageModel } = setup([gmail]);
 		Object.assign(messageModel, {
@@ -174,10 +174,38 @@ describe("ConnectorsService store files a referee's reply", () => {
 		(service as any).connectionModel.exists = jest.fn().mockResolvedValue({ _id: gmail._id });
 		jest.spyOn(service as any, "tenancyFor").mockResolvedValue(null);
 		jest.spyOn(service as any, "storeFile").mockResolvedValue({ url: "https://files/x.pdf", key: "x.pdf" });
-		const addReference = jest.spyOn(service as any, "addReference").mockResolvedValue(undefined);
+		const addReference = jest.spyOn(service as any, "addReference").mockResolvedValue(added);
 		const filed = await (service as any).store(gmail, student, reply(from, authenticated), { category: "OTHER", contact: null }, false);
-		return { filed, addReference };
+		return { filed, addReference, messageModel };
 	};
+
+	it("does not count or label the reply as filed when the student already has a live reference of that type", async () => {
+		const { filed, addReference, messageModel } = await run("jo@oldlets.co.uk", true, false);
+		expect(addReference).toHaveBeenCalled();
+		expect(filed).toBe(0);
+		const saved = (messageModel as any).updateOne.mock.calls.at(-1)[1].$set.attachments[0];
+		expect(saved.filedAs).toBeUndefined();
+	});
+
+	it("replaces only an expired or rejected reference, atomically, and says whether it added one", async () => {
+		const userModel = { updateOne: jest.fn().mockResolvedValueOnce({}).mockResolvedValueOnce({ modifiedCount: 0 }) };
+		const service = new ConnectorsService({ get: () => undefined } as any, {} as any, {} as any, {} as any, {} as any, userModel as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+		const add = () => (service as any).addReference(student, "LANDLORD_REFERENCE", "maya.pdf", { url: "https://files/x.pdf", key: null });
+
+		expect(await add()).toBe(false);
+		const [[pullFilter, pull], [pushFilter, push]] = userModel.updateOne.mock.calls;
+		expect(pull).toEqual({ $pull: { documents: { type: "LANDLORD_REFERENCE" } } });
+		expect(push.$push.documents).toMatchObject({ type: "LANDLORD_REFERENCE", status: "PENDING" });
+		// Both steps share one "no live document of this type" guard, so a valid reference is never removed or doubled.
+		expect(pushFilter).toBe(pullFilter);
+		const live = pullFilter.$nor[0].documents.$elemMatch;
+		expect(live).toMatchObject({ type: "LANDLORD_REFERENCE", status: { $nin: ["REJECTED", "EXPIRED"] } });
+		const cutoff = live.$or[1].expiresAt.$gt.getTime();
+		expect(Math.abs(cutoff - (Date.now() - 24 * 3_600_000))).toBeLessThan(5_000);
+
+		userModel.updateOne.mockResolvedValueOnce({}).mockResolvedValueOnce({ modifiedCount: 1 });
+		expect(await add()).toBe(true);
+	});
 
 	it("files the PDF under the requested type when the asked referee's authenticated address sent it", async () => {
 		const { filed, addReference } = await run("Jo@OldLets.co.uk", true);

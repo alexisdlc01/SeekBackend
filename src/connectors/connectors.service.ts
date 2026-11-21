@@ -1093,9 +1093,10 @@ export class ConnectorsService {
 			if (!file) continue;
 			attachments[index] = { ...attachments[index], url: file.url, key: file.key };
 			if (reference) {
-				await this.addReference(user, reference, attachment.name, file);
-				attachments[index].filedAs = "Seek Passport › References";
-				filed += 1;
+				if (await this.addReference(user, reference, attachment.name, file)) {
+					attachments[index].filedAs = "Seek Passport › References";
+					filed += 1;
+				}
 			} else if (type && target) {
 				const confirmedByLandlord = type !== TenancyDocumentType.TENANCY_AGREEMENT || connection.user.toString() === target.tenancy.landlord.toString();
 				await this.fileDocument(
@@ -1336,10 +1337,24 @@ export class ConnectorsService {
 		return user.referenceRequests?.find(request => request.email === from)?.type ?? null;
 	}
 
-	/** Adds a reference to the student's documents, waiting for Seek to verify it; never replaces one they already have. */
-	private async addReference(user: UserLean, type: DocumentType, fileName: string, file: { url: string; key: string | null }) {
-		await this.userModel.updateOne(
-			{ _id: user._id, "documents.type": { $ne: type } },
+	/** Adds a reference to the student's documents, waiting for Seek to verify it; replaces only an expired or rejected one of that type. */
+	private async addReference(user: UserLean, type: DocumentType, fileName: string, file: { url: string; key: string | null }): Promise<boolean> {
+		// "Live" as in effectiveStatus (users/passport.ts): not rejected or expired, and not past the day after its expiry date.
+		const noLiveOne = {
+			_id: user._id,
+			$nor: [{
+				documents: {
+					$elemMatch: {
+						type,
+						status: { $nin: [DocumentStatus.REJECTED, DocumentStatus.EXPIRED] },
+						$or: [{ expiresAt: null }, { expiresAt: { $gt: new Date(Date.now() - 24 * 60 * 60 * 1000) } }]
+					}
+				}
+			}]
+		};
+		await this.userModel.updateOne(noLiveOne, { $pull: { documents: { type } } });
+		const result = await this.userModel.updateOne(
+			noLiveOne,
 			{
 				$push: {
 					documents: {
@@ -1353,6 +1368,7 @@ export class ConnectorsService {
 				}
 			}
 		);
+		return result.modifiedCount > 0;
 	}
 
 	private async fileBill(

@@ -739,7 +739,7 @@ describe("ApplicationService pipeline", () => {
 	const otherSlot = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000);
 
 	let applicationModel: Record<string, jest.Mock>;
-	let listingService: { findListingById: jest.Mock };
+	let listingService: { findListingById: jest.Mock; findPublishedListingById: jest.Mock };
 	let notifications: { notifyMany: jest.Mock; notify: jest.Mock };
 	let paymentModel: Record<string, jest.Mock>;
 	let sharesService: { revokeForApplication: jest.Mock; shareForApplication: jest.Mock };
@@ -772,6 +772,7 @@ describe("ApplicationService pipeline", () => {
 				holdingDeposit: 150,
 				viewingSlots: [future],
 			}),
+			findPublishedListingById: jest.fn((id: string) => listingService.findListingById(id)),
 		};
 		notifications = { notifyMany: jest.fn().mockResolvedValue(undefined), notify: jest.fn() };
 		sharesService = { revokeForApplication: jest.fn().mockResolvedValue(undefined), shareForApplication: jest.fn().mockResolvedValue(undefined) };
@@ -1503,6 +1504,20 @@ describe("ApplicationService pipeline", () => {
 			service.scheduleViewing(applicationId.toString(), future.toISOString(), student),
 		).rejects.toThrow("no longer available");
 		expect(notifications.notifyMany).not.toHaveBeenCalled();
+	});
+
+	it("refuses a student's viewing on a hidden or unpublished listing, but lets the landlord move one", async () => {
+		const student = { _id: studentId, name: "Student" } as User;
+		const landlord = { _id: landlordId, name: "Landlord" } as User;
+		listingService.findPublishedListingById.mockRejectedValue(new NotFoundException("Listing not found"));
+		applicationModel.findById.mockImplementation(() => exec(stored(ApplicationStage.SENT)));
+		await expect(
+			service.scheduleViewing(applicationId.toString(), future.toISOString(), student),
+		).rejects.toThrow("no longer available");
+		expect(notifications.notifyMany).not.toHaveBeenCalled();
+		await expect(
+			service.scheduleViewing(applicationId.toString(), future.toISOString(), landlord),
+		).resolves.toBeDefined();
 	});
 
 	it("lets a student propose any time once every offered slot has passed", async () => {
