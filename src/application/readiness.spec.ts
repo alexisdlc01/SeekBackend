@@ -1,6 +1,6 @@
 import { DocumentStatus, DocumentType } from "../users/types/document-type";
 import { GuarantorCriterion } from "../listings/enums/guarantor-criterion.enum";
-import { compareForLandlord, householdReadiness } from "./readiness";
+import { compareForLandlord, householdCap, householdReadiness } from "./readiness";
 
 const ready = {
 	documents: [DocumentType.PASSPORT, DocumentType.RIGHT_TO_RENT, DocumentType.STUDENT_STATUS, DocumentType.PROOF_OF_FUNDS]
@@ -89,5 +89,14 @@ describe("household readiness", () => {
 			expect(result.criteria.map(c => c.key)).not.toContain("MAX_HOUSEHOLD");
 			expect(result.qualified).toBe(true);
 		});
+	});
+});
+
+describe("householdCap", () => {
+	it("never goes below the property size, so a listing stays fillable", () => {
+		expect(householdCap(4, { maxHousehold: 2 } as any)).toBe(4);
+		expect(householdCap(4, { maxHousehold: 6 } as any)).toBe(6);
+		expect(householdCap(4, null)).toBe(4);
+		expect(householdCap(undefined, null)).toBeUndefined();
 	});
 });

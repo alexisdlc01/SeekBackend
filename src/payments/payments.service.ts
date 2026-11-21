@@ -71,7 +71,7 @@ import { NotificationKind } from "../notifications/notification-kind.enum";
 import { notificationTarget, NotificationTargetKind } from "../notifications/links";
 import { MailService } from "../auth/mail.service";
 import { ConversationService } from "../conversation/conversation.service";
-import { proportionalRefund, refundPayment, refundStripeCharge } from "./refund";
+import { notifyHoldingRefund, proportionalRefund, refundPayment, refundStripeCharge } from "./refund";
 
 type Viewer = Pick<User, "_id" | "role">;
 type PaymentLean = Payment & { _id: Types.ObjectId };
@@ -1361,12 +1361,13 @@ export class PaymentsService {
 			.lean()
 			.exec();
 		for (const payment of due) {
-			await refundPayment(
+			const accepted = await refundPayment(
 				this.paymentModel,
 				payment as PaymentLean,
 				this.config.get<string>("STRIPE_SECRET_KEY"),
 				payment.refundAmount || payment.amount
 			);
+			await notifyHoldingRefund(this.notifications, this.paymentModel, payment as PaymentLean, accepted);
 		}
 	}
 
@@ -1512,10 +1513,10 @@ export class PaymentsService {
 					);
 					if (intent.status === "succeeded") await this.markPaid(payment, PaymentProvider.STRIPE, intent.id);
 				} catch (error) {
-					if (!(error instanceof StripeApiError)) {
-						// No answer from Stripe (timeout, network): back to SCHEDULED so the next sweep retries;
-						// the seek-autopay idempotency key returns the same intent if this one was created.
-						this.logger.error(`Autopay for payment ${payment._id.toString()} got no answer from Stripe, retrying next sweep: ${(error as Error).message}`);
+					if (!(error instanceof StripeApiError) || error.status === 429 || error.status >= 500) {
+						// No answer from Stripe (timeout, network, rate limit, outage): back to SCHEDULED so the next sweep
+						// retries until the overdue step turns it LATE; the seek-autopay idempotency key returns the same intent if one was created.
+						this.logger.error(`Autopay for payment ${payment._id.toString()} got no answer from Stripe, retrying next sweep: ${error instanceof StripeApiError ? error.status : (error as Error).message}`);
 						await this.paymentModel.updateOne(
 							{ _id: payment._id, status: PaymentStatus.PENDING },
 							{ $set: { status: PaymentStatus.SCHEDULED } }

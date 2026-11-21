@@ -103,7 +103,7 @@ describe("withinAiQuota", () => {
 	it("reports blocked when the shared Seek AI quota is used up", async () => {
 		const storage = { increment: jest.fn().mockResolvedValue({ isBlocked: true }) };
 		await expect(withinAiQuota(storage as never, "u1")).resolves.toBe(false);
-		expect(storage.increment).toHaveBeenCalledWith("ai-min:u1", 60_000, 10, 60_000, "ai-min");
+		expect(storage.increment).toHaveBeenCalledWith("ai-min:u1", 60_000, 10, 60_000, "ai-min:u1");
 	});
 });
 

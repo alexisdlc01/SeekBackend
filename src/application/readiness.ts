@@ -48,7 +48,8 @@ function countLine(count: number, total: number, what: string) {
 
 /** The landlord's "up to N people", else the property's own size (what students are shown); none for an old listing without a size. */
 export function householdCap(numOfPeople: number | undefined, criteria?: ReadinessCriteria | null): number | undefined {
-	return criteria?.maxHousehold || numOfPeople || undefined;
+	// Never below the property's size: a smaller cap would make the listing impossible to qualify for.
+	return Math.max(criteria?.maxHousehold ?? 0, numOfPeople ?? 0) || undefined;
 }
 
 /**

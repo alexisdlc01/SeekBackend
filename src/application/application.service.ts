@@ -30,7 +30,7 @@ import { missingDocuments } from "./required-documents";
 import { Payment } from "../payments/payment.schema";
 import { PaymentKind, PaymentStatus } from "../payments/payment.enums";
 import { StripeApiError, StripeClient } from "../payments/stripe";
-import { refundPayment } from "../payments/refund";
+import { notifyHoldingRefund, refundPayment } from "../payments/refund";
 import { holdingDepositPerPersonCapPence } from "../tenancies/compliance";
 
 /** How long a shared invite link stays usable. */
@@ -884,7 +884,9 @@ export class ApplicationService {
 			.exec();
 		let acceptedCount = 0;
 		for (const payment of due) {
-			if (await refundPayment(this.paymentModel, payment, process.env.STRIPE_SECRET_KEY)) acceptedCount += 1;
+			const accepted = await refundPayment(this.paymentModel, payment, process.env.STRIPE_SECRET_KEY);
+			if (accepted) acceptedCount += 1;
+			await notifyHoldingRefund(this.notificationsService, this.paymentModel, payment, accepted);
 		}
 		return { ...result, acceptedCount };
 	}

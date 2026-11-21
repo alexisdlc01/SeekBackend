@@ -28,7 +28,7 @@ export class AiController {
 	private async capPerUser(user: User) {
 		for (const { name, ttl, limit, message } of AI_USER_LIMITS) {
 			// Block for one window once over the limit: with blockDuration 0 the count resets instead.
-			const hit = await this.storage.increment(`${name}:${user._id}`, ttl, limit, ttl, name);
+			const hit = await this.storage.increment(`${name}:${user._id}`, ttl, limit, ttl, `${name}:${user._id}`);
 			if (hit.isBlocked) throw new HttpException(message, HttpStatus.TOO_MANY_REQUESTS);
 		}
 	}

@@ -1,8 +1,11 @@
 import { Logger } from "@nestjs/common";
 import { Model, Types } from "mongoose";
 import { Payment } from "./payment.schema";
-import { PaymentProvider, PaymentStatus, PayoutStatus } from "./payment.enums";
+import { PaymentKind, PaymentProvider, PaymentStatus, PayoutStatus } from "./payment.enums";
 import { StripeApiError, StripeClient } from "./stripe";
+import { NotificationsService } from "../notifications/notifications.service";
+import { NotificationKind } from "../notifications/notification-kind.enum";
+import { notificationTarget, NotificationTargetKind } from "../notifications/links";
 
 const logger = new Logger("PaymentRefund");
 
@@ -148,6 +151,41 @@ export async function refundPayment(
 		}
 	);
 	return true;
+}
+
+/**
+ * Tells the tenant who paid a holding deposit that its refund started, or that it stopped for good
+ * (the landlord is asked to refund by hand then). Each once per payment; a refund still due says nothing yet.
+ */
+export async function notifyHoldingRefund(
+	notifications: NotificationsService,
+	paymentModel: Model<Payment>,
+	payment: Pick<Payment, "kind" | "tenant" | "landlord" | "amount"> & { _id: Types.ObjectId },
+	accepted: boolean
+) {
+	if (payment.kind !== PaymentKind.HOLDING_DEPOSIT) return;
+	const failed = !accepted && (await paymentModel.exists({ _id: payment._id, refundFailed: true })) !== null;
+	if (!accepted && !failed) return;
+	const amount = `£${(payment.amount / 100).toFixed(2)}`;
+	const key = `holding-refund-${failed ? "failed" : "started"}:${payment._id.toString()}`;
+	await notifications.notify({
+		user: payment.tenant,
+		kind: NotificationKind.HOLDING_DEPOSIT_REFUND,
+		title: failed ? `Your ${amount} holding deposit couldn't be refunded automatically` : `Your ${amount} holding deposit is being refunded`,
+		body: failed
+			? "Stripe couldn't complete the refund. Your landlord has been asked to refund you directly."
+			: "Seek has started the refund to the card you paid with.",
+		...notificationTarget("student", NotificationTargetKind.PAYMENTS),
+		dedupeKey: key
+	});
+	if (failed) await notifications.notify({
+		user: payment.landlord,
+		kind: NotificationKind.HOLDING_DEPOSIT_REFUND,
+		title: `Refund a ${amount} holding deposit yourself`,
+		body: "Seek's automatic refund failed. Refund it from your Stripe dashboard or another way.",
+		...notificationTarget("landlord", NotificationTargetKind.PAYMENTS),
+		dedupeKey: key
+	});
 }
 
 /**
