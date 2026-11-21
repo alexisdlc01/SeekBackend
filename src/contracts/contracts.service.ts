@@ -43,6 +43,7 @@ type Viewer = Pick<User, "_id" | "role">;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** The daily sweep stops after this many reminders; the landlord can still remind by hand. */
 const MAX_AUTO_REMINDERS = 3;
+const TENANCY_NOT_ACTIVE = "This tenancy has ended: its contract can no longer be signed or reminded.";
 // $not also matches contracts saved before the counter existed.
 const UNDER_AUTO_LIMIT = { autoReminderCount: { $not: { $gte: MAX_AUTO_REMINDERS } } };
 
@@ -437,6 +438,7 @@ export class ContractsService {
 		if (contract.status !== ContractStatus.SENT) {
 			throw new BadRequestException("Only a contract waiting for signatures can be reminded.");
 		}
+		if (tenancy.status !== TenancyStatus.ACTIVE) throw new ConflictException(TENANCY_NOT_ACTIVE);
 		const claimed = await this.claimReminder(contract._id, new Date(Date.now() - DAY_MS));
 		if (!claimed) throw new HttpException("A reminder was already sent in the last 24 hours.", HttpStatus.TOO_MANY_REQUESTS);
 		await this.emailContractSent(unsignedTenants(tenancy.tenants, claimed.signatures), contract.title);
@@ -457,8 +459,9 @@ export class ContractsService {
 		for (const { _id } of stale) {
 			const claimed = await this.claimReminder(_id, cutoff, now, true);
 			if (!claimed) continue;
-			const tenancy = await this.tenancyModel.findById(claimed.tenancy, { tenants: 1 }).lean().exec();
-			if (!tenancy) continue;
+			const tenancy = await this.tenancyModel.findById(claimed.tenancy, { tenants: 1, status: 1 }).lean().exec();
+			// An ended tenancy's agreement is moot: stop nudging its tenants.
+			if (!tenancy || tenancy.status !== TenancyStatus.ACTIVE) continue;
 			await this.emailContractSent(unsignedTenants(tenancy.tenants, claimed.signatures), claimed.title);
 			reminded += 1;
 		}
@@ -510,6 +513,7 @@ export class ContractsService {
 		if (!isTenant(tenancy, tenant._id.toString())) {
 			throw new ForbiddenException("Only a tenant of this tenancy can sign.");
 		}
+		if (tenancy.status !== TenancyStatus.ACTIVE) throw new ConflictException(TENANCY_NOT_ACTIVE);
 
 		const now = new Date();
 		const withSignature = await this.contractModel
@@ -534,7 +538,7 @@ export class ContractsService {
 		tenancy: TenancyLean,
 		now = new Date()
 	) {
-		if (contract.status === ContractStatus.SENT && allTenantsSigned({ ...tenancy, tenants: await this.liveTenants(tenancy.tenants) }, contract.signatures)) {
+		if (contract.status === ContractStatus.SENT && tenancy.status === TenancyStatus.ACTIVE && allTenantsSigned({ ...tenancy, tenants: await this.liveTenants(tenancy.tenants) }, contract.signatures)) {
 			const signed = await this.contractModel
 				.findOneAndUpdate(
 					{ _id: contract._id, status: ContractStatus.SENT },

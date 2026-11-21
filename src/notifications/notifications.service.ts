@@ -5,6 +5,36 @@ import { Notification } from "./notification.schema";
 import { NotificationKind } from "./notification-kind.enum";
 import { NotificationTarget } from "./links";
 import { NotificationPrefs, User } from "../users/users.schema";
+import { TeamScope } from "../users/types/team-scope";
+
+/** What a team member sees of the owner's notifications. Rent, payment, deposit and payout kinds are never listed. */
+const TEAM_SCOPE_KINDS: Record<TeamScope, NotificationKind[]> = {
+	[TeamScope.VIEWINGS_INBOX]: [NotificationKind.NEW_MESSAGE, NotificationKind.VIEWING_SCHEDULED],
+	[TeamScope.APPLICATIONS]: [
+		NotificationKind.NEW_MESSAGE,
+		NotificationKind.VIEWING_SCHEDULED,
+		NotificationKind.NEW_QUALIFIED_HOUSEHOLD,
+		NotificationKind.OFFER_MADE,
+		NotificationKind.OFFER_ACCEPTED,
+		NotificationKind.OFFER_EXPIRED,
+		NotificationKind.OFFER_WITHDRAWN,
+		NotificationKind.APPLICATION_REJECTED
+	],
+	[TeamScope.LISTINGS]: [NotificationKind.LISTING_NEEDS_CHANGES],
+	[TeamScope.REPAIRS]: [NotificationKind.REPAIR_REPORTED, NotificationKind.REPAIR_UPDATED],
+	[TeamScope.TENANCIES]: [
+		NotificationKind.TENANCY_CREATED,
+		NotificationKind.TENANCY_INVITE,
+		NotificationKind.TENANCY_ENDED,
+		NotificationKind.CONTRACT_SENT,
+		NotificationKind.CONTRACT_SIGNED,
+		NotificationKind.INVENTORY_RECORDED
+	]
+};
+
+export function teamNotificationKinds(scopes: TeamScope[]): NotificationKind[] {
+	return [...new Set(scopes.flatMap(scope => TEAM_SCOPE_KINDS[scope] ?? []))];
+}
 
 export interface NotificationInput {
 	user: Types.ObjectId | string;
@@ -176,19 +206,20 @@ export class NotificationsService {
 		}
 	}
 
-	async listForUser(userId: string, limit = 50) {
+	/** `kinds` limits a team member to the owner's notifications their scopes cover. */
+	async listForUser(userId: string, limit = 50, kinds?: NotificationKind[]) {
 		return this.notificationModel
-			.find({ user: new Types.ObjectId(userId) }, { dedupeKey: 0, __v: 0 })
+			.find({ user: new Types.ObjectId(userId), ...(kinds ? { kind: { $in: kinds } } : {}) }, { dedupeKey: 0, __v: 0 })
 			.sort({ createdAt: -1 })
 			.limit(limit)
 			.lean()
 			.exec();
 	}
 
-	async markRead(userId: string, notificationId: string) {
+	async markRead(userId: string, notificationId: string, kinds?: NotificationKind[]) {
 		const notification = await this.notificationModel
 			.findOneAndUpdate(
-				{ _id: notificationId, user: new Types.ObjectId(userId) },
+				{ _id: notificationId, user: new Types.ObjectId(userId), ...(kinds ? { kind: { $in: kinds } } : {}) },
 				[{ $set: { readAt: { $ifNull: ["$readAt", "$$NOW"] } } }],
 				{ new: true, projection: { dedupeKey: 0, __v: 0 } }
 			)

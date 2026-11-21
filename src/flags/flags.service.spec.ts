@@ -90,6 +90,8 @@ describe("FlagsService", () => {
 			const userModel = {
 				exists: jest.fn().mockReturnValue(exec({ _id: reported })),
 				distinct: jest.fn().mockReturnValue(exec(opts.verifiedReporters === 0 ? [] : verified)),
+				// Owners whose team holds a reporter; none by default.
+				find: jest.fn().mockReturnValue({ lean: () => exec([]) }),
 				updateOne: jest.fn().mockReturnValue(exec({ modifiedCount: 1 }))
 			};
 			const listingModel = { updateMany: jest.fn().mockReturnValue(exec({ matchedCount: 1 })), find: jest.fn().mockReturnValue(exec([])) };
@@ -218,6 +220,26 @@ describe("FlagsService", () => {
 			listingModel.updateMany.mockReturnValue(exec({ matchedCount: 0 }));
 			await service.suspend(reported, "first");
 			expect(notifications.notify).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "LISTING_NEEDS_CHANGES" }));
+		});
+
+		it("counts a team member's report as their owner's, and the owner and member as one reporter", async () => {
+			// The caller (reporter) is on owner's team; chats and tenancies hold the owner's id, never the member's.
+			const owner = new Types.ObjectId();
+			const team = [{ _id: owner, team: [{ user: reporter._id }] }];
+
+			const a = setup({ verifiedReporters: 3 });
+			a.userModel.find.mockReturnValue({ lean: () => exec(team) });
+			a.conversationModel.distinct.mockReturnValue(exec([new Types.ObjectId(reported), owner, ...a.verified.slice(1)]));
+			await a.service.create(report("Rude messages"), reporter as never);
+			expect(a.userModel.updateOne).toHaveBeenCalledWith(expect.objectContaining({ suspendedAt: null }), expect.anything());
+
+			const b = setup({ verifiedReporters: 3 });
+			const other = b.verified[1];
+			b.userModel.distinct.mockReturnValue(exec([reporter._id, owner, other]));
+			b.userModel.find.mockReturnValue({ lean: () => exec(team) });
+			b.conversationModel.distinct.mockReturnValue(exec([new Types.ObjectId(reported), owner, other]));
+			await b.service.create(report("Rude messages"), reporter as never);
+			expect(b.userModel.updateOne).not.toHaveBeenCalled();
 		});
 
 		it("does not suspend on 3 verified reporters when only 2 dealt with the account", async () => {

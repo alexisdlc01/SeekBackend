@@ -4,7 +4,8 @@ import { StudentOrLandlordOrSuperuser } from "../auth/decorators/role-auth.decor
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { User } from "../users/users.schema";
 import { ParseObjectIdPipe } from "../shared/parse-object-id.pipe";
-import { NotificationsService } from "./notifications.service";
+import { NotificationsService, teamNotificationKinds } from "./notifications.service";
+import type { AuthenticatedUser } from "../auth/auth.service";
 import { Notification } from "./notification.schema";
 import { PushTokenDto } from "./dto/push-token.dto";
 import { ErrorDto } from "../dto/errorDto.dto";
@@ -13,13 +14,22 @@ import { ErrorDto } from "../dto/errorDto.dto";
 export class NotificationsController {
 	constructor(private readonly notificationsService: NotificationsService) {}
 
+	/** A team member reads the owner's notifications, limited to their scopes. */
+	private reader(user: AuthenticatedUser) {
+		const team = user.teamOf;
+		return team
+			? { userId: team.ownerId, kinds: teamNotificationKinds(team.scopes) }
+			: { userId: user._id.toString(), kinds: undefined };
+	}
+
 	@Get()
 	@StudentOrLandlordOrSuperuser()
 	@ApiOperation({ summary: "The signed-in user's latest notifications, newest first." })
 	@ApiResponse({ status: 200, type: [Notification] })
 	@ApiResponse({ status: 401, type: ErrorDto })
-	async list(@CurrentUser() user: User) {
-		return this.notificationsService.listForUser(user._id.toString());
+	async list(@CurrentUser() user: AuthenticatedUser) {
+		const { userId, kinds } = this.reader(user);
+		return this.notificationsService.listForUser(userId, 50, kinds);
 	}
 
 	@Patch(":id/read")
@@ -29,9 +39,10 @@ export class NotificationsController {
 	@ApiResponse({ status: 404, type: ErrorDto })
 	async markRead(
 		@Param("id", ParseObjectIdPipe) id: string,
-		@CurrentUser() user: User
+		@CurrentUser() user: AuthenticatedUser
 	) {
-		return this.notificationsService.markRead(user._id.toString(), id);
+		const { userId, kinds } = this.reader(user);
+		return this.notificationsService.markRead(userId, id, kinds);
 	}
 
 	@Post("push-token")

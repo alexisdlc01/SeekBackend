@@ -112,12 +112,16 @@ export class FlagsService {
 			.distinct("createdBy", { reportedUser: id, status: FlagStatus.UNDER_REVIEW, createdAt: { $gte: since } })
 			.exec();
 		const verified: Types.ObjectId[] = await this.userModel.distinct("_id", { _id: { $in: reporters }, isVerified: true }).exec();
-		const linked = await this.linkedTo(id, verified);
+		// A team member reports for the account they help run: they and its owner count as one reporter.
+		const accountOf = await this.accountsOf(verified);
+		const account = (user: Types.ObjectId) => accountOf.get(user.toString()) ?? user;
+		const me = account(reporter._id);
+		const linked = await this.linkedTo(id, [...new Map(verified.map(user => [account(user).toString(), account(user)])).values()]);
 		if (linked.length >= REPORTERS_TO_SUSPEND) {
 			return this.suspend(id, `Reported by ${linked.length} verified users who dealt with this account in 30 days`);
 		}
 		const severe = triage?.severity === "high" && SEVERE_CATEGORIES.includes(triage.category);
-		if (!severe || !linked.some(user => user.equals(reporter._id))) return;
+		if (!severe || !linked.some(user => user.equals(me))) return;
 		// Keywords cannot read intent: a second linked reporter must confirm before any listing goes offline.
 		const severeReporters = await this.flagModel
 			.distinct("createdBy", {
@@ -128,12 +132,31 @@ export class FlagsService {
 				"triage.category": { $in: SEVERE_CATEGORIES }
 			})
 			.exec();
-		if (linked.filter(user => severeReporters.some(other => user.equals(other))).length < SEVERE_REPORTERS_TO_HIDE) return;
+		if (linked.filter(user => severeReporters.some(other => user.equals(account(other)))).length < SEVERE_REPORTERS_TO_HIDE) return;
 		// Once per reporter per 30 days: one account cannot keep a landlord's listings offline by reporting again and again.
+		const sameAccount = [me, ...verified.filter(user => account(user).equals(me) && !user.equals(me))];
 		const severeFromReporter = await this.flagModel
-			.countDocuments({ reportedUser: id, createdBy: reporter._id, "triage.severity": "high", createdAt: { $gte: since } })
+			.countDocuments({ reportedUser: id, createdBy: { $in: sameAccount }, "triage.severity": "high", createdAt: { $gte: since } })
 			.exec();
 		if (severeFromReporter <= 1) await this.hideListings(id, HIDDEN_AFTER_REPORT);
+	}
+
+	/** Team member id -> owner id, resolved like JwtStrategy (findTeamOwner); other reporters are absent. */
+	private async accountsOf(users: Types.ObjectId[]): Promise<Map<string, Types.ObjectId>> {
+		const accounts = new Map<string, Types.ObjectId>();
+		if (!users.length) return accounts;
+		const owners = await this.userModel
+			.find({ "team.user": { $in: users }, deletedAt: null, suspendedAt: null, role: Role.LANDLORD_AGENCY }, { team: 1 })
+			.lean()
+			.exec();
+		const wanted = new Set(users.map(String));
+		for (const owner of owners) {
+			for (const entry of owner.team ?? []) {
+				const member = entry.user?.toString();
+				if (member && wanted.has(member) && !accounts.has(member)) accounts.set(member, owner._id as Types.ObjectId);
+			}
+		}
+		return accounts;
 	}
 
 	/**

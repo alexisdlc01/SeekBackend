@@ -57,6 +57,22 @@ describe("LandlordOverviewService todo", () => {
 		expect(overview.rentCollectedThisMonth).toBe(62000);
 	});
 
+	it("shows rent due later this month as not due yet (the month query selects dueDate)", async () => {
+		// Like Mongo, .select() keeps only the listed fields.
+		const projected = (rows: Record<string, unknown>[]) => ({
+			select: (fields: string) => query(rows.map(row => Object.fromEntries(fields.split(" ").filter(f => f in row).map(f => [f, row[f]]))))
+		});
+		const tenancy = { _id: new Types.ObjectId(), listing, tenants: [{}, {}] };
+		const later = { amount: 62000, seekFee: 620, status: "SCHEDULED", kind: "RENT", tenancy: tenancy._id, dueDate: new Date("2026-11-28T00:00:00Z") };
+		const paymentModel = { find: jest.fn().mockReturnValueOnce(projected([later])).mockReturnValue(query([])), countDocuments: async () => 0, distinct: () => query([]) };
+		const service = new LandlordOverviewService(
+			model([tenancy]) as never, model([listing]) as never, paymentModel as never, model() as never,
+			model() as never, model() as never, model() as never
+		);
+		const overview = await service.overview(new Types.ObjectId().toString(), now);
+		expect(overview.properties[0].rentStatus).toBe("NOT_DUE");
+	});
+
 	it("counts only the Seek fee kept on a refunded rent", async () => {
 		const payments = [{ amount: 62000, seekFee: 620, status: "PAID", kind: "RENT", refundedAt: now, refundedAmount: 31000 }];
 		const paymentModel = { find: jest.fn().mockReturnValueOnce(query(payments)).mockReturnValue(query([])), countDocuments: async () => 0, distinct: () => query([]) };
