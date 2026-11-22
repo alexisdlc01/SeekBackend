@@ -778,7 +778,9 @@ export class TenanciesService {
 					title: `${title}: the deposit is above the ${depositCapName(listing.nation)}`,
 					body: listing.nation === Nation.SCOTLAND
 						? "Rent (Scotland) Act: reduce the deposit to at most two months' rent per tenant."
-						: "Tenant Fees Act: reduce the deposit to at most five weeks' rent per tenant.",
+						: listing.nation === Nation.NORTHERN_IRELAND
+							? "Private Tenancies Act (NI): reduce the deposit to at most one month's rent per tenant."
+							: "Tenant Fees Act: reduce the deposit to at most five weeks' rent per tenant.",
 					...notificationTarget("landlord", NotificationTargetKind.COMPLIANCE),
 					dedupeKey: `deposit-over-cap:${tenancy._id.toString()}`
 				},

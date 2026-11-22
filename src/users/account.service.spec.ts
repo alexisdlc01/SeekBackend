@@ -22,7 +22,7 @@ function setup() {
 	};
 	const paymentModel = { exists: jest.fn().mockResolvedValue(null) };
 	const shareModel = { updateMany: jest.fn().mockResolvedValue({}) };
-	const connectionModel = { find: jest.fn((): unknown => selectLean([])) };
+	const connectionModel = { find: jest.fn((): unknown => selectLean([])), deleteMany: jest.fn().mockResolvedValue({}) };
 	const connectors = { disconnect: jest.fn().mockResolvedValue({}) };
 	const uploads = { deletePrivateObject: jest.fn().mockResolvedValue(undefined), deletePublicObject: jest.fn().mockResolvedValue(undefined) };
 	const listingModel = { updateMany: jest.fn().mockResolvedValue({}) };
@@ -217,6 +217,8 @@ describe("AccountService deleteAccount", () => {
 		expect(connectionModel.find).toHaveBeenCalledWith({ user: id, status: { $ne: "DISCONNECTED" } });
 		expect(connectors.disconnect).toHaveBeenCalledWith({ _id: id }, gmail.toString());
 		expect(connectors.disconnect).toHaveBeenCalledWith({ _id: id }, imap.toString());
+		expect(connectionModel.deleteMany).toHaveBeenCalledWith({ user: id });
+		expect(connectionModel.deleteMany.mock.invocationCallOrder[0]).toBeGreaterThan(connectors.disconnect.mock.invocationCallOrder[1]);
 		expect(shareModel.updateMany).toHaveBeenCalledWith(
 			{ owner: id, revokedAt: null },
 			{ $set: { revokedAt: expect.any(Date) } }
