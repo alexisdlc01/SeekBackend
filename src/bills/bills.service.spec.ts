@@ -106,6 +106,18 @@ describe("BillsService.create", () => {
 		expect(billModel.create).toHaveBeenCalledWith(expect.objectContaining({ source: "MANUAL", paidBy: maya }));
 		expect(view.paidBy).toBe(maya.toString());
 	});
+
+	it("refuses a former tenant's bill on an ended tenancy (409), but the landlord can still add a final one", async () => {
+		const landlord = new Types.ObjectId();
+		const ended = { ...tenancy, landlord, status: "ENDED" };
+		const billModel = { create: jest.fn((doc: any) => Promise.resolve({ ...doc, toObject: () => ({ ...doc }) })) };
+		const service = new BillsService(billModel as any, { findForMember: jest.fn().mockResolvedValue(ended) } as any);
+		const dto = { tenancy: tenancy._id.toString(), provider: "Octopus", category: "ENERGY" as any, amount: 6000 };
+		await expect(service.create(dto, { _id: maya } as any)).rejects.toThrow("This tenancy has ended.");
+		expect(billModel.create).not.toHaveBeenCalled();
+		await service.create(dto, { _id: landlord } as any);
+		expect(billModel.create).toHaveBeenCalledTimes(1);
+	});
 });
 
 describe("BillsService energy allowance", () => {

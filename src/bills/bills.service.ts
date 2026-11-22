@@ -1,10 +1,11 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { Role } from "../auth/role.enum";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { Bill, BillCategory, BillSource, BillStatus } from "./bill.schema";
 import { CreateBillDto } from "./dto/create-bill.dto";
 import { TenanciesService } from "../tenancies/tenancies.service";
+import { TenancyStatus } from "../tenancies/tenancy.enums";
 import { User } from "../users/users.schema";
 import { splitPence } from "./shares";
 
@@ -61,6 +62,8 @@ export class BillsService {
 	async create(dto: CreateBillDto, viewer: Viewer) {
 		const tenancy = await this.tenancies.findForMember(dto.tenancy, viewer);
 		const tenantIds = tenancy.tenants.map(tenant => tenant.toString());
+		// The landlord may still add a final bill; a former tenant may not.
+		if (tenancy.status === TenancyStatus.ENDED && tenantIds.includes(viewer._id.toString())) throw new ConflictException("This tenancy has ended.");
 		const split = dto.splitBetween?.length ? [...new Set(dto.splitBetween)] : tenantIds;
 		if (split.some(id => !tenantIds.includes(id))) {
 			throw new BadRequestException("A bill can only be split between tenants of this tenancy.");

@@ -51,6 +51,14 @@ describe("RepairsService create", () => {
 		expect(notifications.notify.mock.calls[0][0].user).toBe(landlordId);
 	});
 
+	it("refuses a former tenant's repair on an ended tenancy (409) and tells nobody", async () => {
+		const { service, tenancies, notifications, repairModel } = setup();
+		tenancies.findForTenant.mockResolvedValue({ ...tenancy, status: "ENDED" });
+		await expect(service.create({ tenancy: tenancy._id.toString(), title: "Leak" }, { _id: tenantId, role: Role.STUDENT } as any)).rejects.toThrow("This tenancy has ended.");
+		expect(repairModel.create).not.toHaveBeenCalled();
+		expect(notifications.notify).not.toHaveBeenCalled();
+	});
+
 	it("stores photos only when the key was issued to the reporter, max 5", async () => {
 		const { service, repairModel } = setup();
 		const reporter = { _id: tenantId, role: Role.STUDENT } as any;
