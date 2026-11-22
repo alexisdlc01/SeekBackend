@@ -65,7 +65,7 @@ import {
 } from "./dto/payments.dto";
 import { Tenancy } from "../tenancies/tenancy.schema";
 import { TenancyStatus } from "../tenancies/tenancy.enums";
-import { hasFixedTerms, londonCalendarDay, TenanciesService } from "../tenancies/tenancies.service";
+import { earliestNoticeEnd, hasFixedTerms, londonCalendarDay, TenanciesService } from "../tenancies/tenancies.service";
 import { Nation } from "../listings/enums/nation.enum";
 import { listingCompliance, tenancyCompliance } from "../tenancies/compliance";
 import { Listing } from "../listings/listings.schema";
@@ -1259,6 +1259,7 @@ export class PaymentsService {
 	 */
 	async sweep(now: Date = new Date()) {
 		await this.endFinishedTenancies(now);
+		await this.clearLapsedNotices(now);
 		const today = startOfUtcDay(now);
 		const mode = this.mode();
 
@@ -1583,10 +1584,28 @@ export class PaymentsService {
 		}
 	}
 
+	/** A housemate's notice date that no longer leaves the full notice period has lapsed: clear it so the tenants can give notice again. */
+	private async clearLapsedNotices(now: Date) {
+		const today = londonCalendarDay(now);
+		const pending = await this.tenancyModel
+			.find({ status: TenancyStatus.ACTIVE, noticeGivenAt: null, noticeEndDate: { $ne: null } }, { startDate: 1, noticeEndDate: 1, listing: 1 })
+			.populate({ path: "listing", select: "nation" })
+			.lean()
+			.exec();
+		for (const tenancy of pending) {
+			const nation = (tenancy.listing as unknown as { nation?: Nation } | null)?.nation ?? Nation.ENGLAND;
+			if (new Date(tenancy.noticeEndDate!) >= earliestNoticeEnd(nation, tenancy.startDate, today)) continue;
+			await this.tenancyModel.updateOne(
+				{ _id: tenancy._id, noticeGivenAt: null, noticeEndDate: tenancy.noticeEndDate },
+				{ $set: { noticeEndDate: null, noticeFrom: [], noticeGivenBy: null } }
+			);
+		}
+	}
+
 	/**
 	 * A fixed term ends on its own once its end date (exclusive, London day) arrives; a rolling tenancy runs until ended.
 	 * Only Northern Ireland has fixed terms: elsewhere the law keeps the tenancy going, so an older one with an end date rolls on.
-	 * A tenancy the tenants gave notice on (any nation) ends on its notice date.
+	 * A tenancy with notice given (by its tenants, or a future end date set by the landlord) ends on that date.
 	 */
 	private async endFinishedTenancies(now: Date) {
 		const today = londonCalendarDay(now);
@@ -1619,7 +1638,7 @@ export class PaymentsService {
 					user: tenancy.landlord,
 					kind: NotificationKind.TENANCY_ENDED,
 					title: `The tenancy at ${title} has ended`,
-					body: `${tenancy.noticeGivenAt ? "The tenants' notice period" : "The fixed term"} is over. Any rent still owed stays on your payments page.`,
+					body: `${tenancy.noticeGivenAt ? "The notice period" : "The fixed term"} is over. Any rent still owed stays on your payments page.`,
 					...notificationTarget("landlord", NotificationTargetKind.TENANCY, tenancy._id),
 					dedupeKey
 				}

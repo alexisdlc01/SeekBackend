@@ -20,7 +20,7 @@ describe("FlagsService", () => {
 	it("stores the flag and emails the admin, and a failed email does not fail the report", async () => {
 		const stored = { _id: "flag-2", text: "spam" };
 		const flagModel = { create: jest.fn().mockResolvedValue({ ...stored, toObject: () => stored }) };
-		const userModel = { exists: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ _id: "u" }) }) };
+		const userModel = { findById: jest.fn().mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue({ _id: "u" }) }) }) };
 		const mail = { sendReportEmail: jest.fn().mockRejectedValue(new Error("mailgun down")) };
 		const service = new FlagsService(flagModel as never, userModel as never, undefined, undefined, undefined, undefined, undefined, mail as never);
 		jest.spyOn((service as any).logger, "error").mockImplementation(() => undefined);
@@ -88,7 +88,7 @@ describe("FlagsService", () => {
 				findByIdAndUpdate: jest.fn().mockReturnValue(exec({ reportedUser: new Types.ObjectId(reported) }))
 			};
 			const userModel = {
-				exists: jest.fn().mockReturnValue(exec({ _id: reported })),
+				findById: jest.fn().mockReturnValue({ lean: () => exec<{ _id: Types.ObjectId; suspendedAt?: Date }>({ _id: new Types.ObjectId(reported) }) }),
 				distinct: jest.fn().mockReturnValue(exec(opts.verifiedReporters === 0 ? [] : verified)),
 				// Owners whose team holds a reporter; none by default.
 				find: jest.fn().mockReturnValue({ lean: () => exec([]) }),
@@ -203,6 +203,19 @@ describe("FlagsService", () => {
 			);
 			expect(listingModel.updateMany).toHaveBeenCalled();
 			expect(notifications.notifyMany).toHaveBeenCalled();
+		});
+
+		it("closes a report about an already-suspended account as suspended and tells the reporter, without suspending again", async () => {
+			const { service, flagModel, userModel, notifications } = setup({ verifiedReporters: 3 });
+			const suspendedAt = new Date("2026-11-01T10:00:00Z");
+			userModel.findById.mockReturnValue({ lean: () => exec({ _id: new Types.ObjectId(reported), suspendedAt }) });
+			await service.create(report("Rude messages"), reporter as never);
+			expect(userModel.updateOne).not.toHaveBeenCalled();
+			expect(notifications.notifyMany.mock.calls[0][0][0]).toMatchObject({ kind: "REPORT_ACTIONED", dedupeKey: expect.stringMatching(new RegExp(`:${suspendedAt.getTime()}$`)) });
+			expect(flagModel.updateMany).toHaveBeenCalledWith(
+				{ reportedUser: new Types.ObjectId(reported), status: FlagStatus.UNDER_REVIEW },
+				{ $set: expect.objectContaining({ status: FlagStatus.ACCOUNT_SUSPENDED, supportResponse: "Thanks for your report. We have suspended this account." }) }
+			);
 		});
 
 		it("tells the landlord his listings went offline, and a new suspension after a lifted one notifies reporters again", async () => {

@@ -113,6 +113,19 @@ describe("TenanciesService create / accept", () => {
 			expect(tenancyModel.findOneAndUpdate).not.toHaveBeenCalled();
 		});
 
+		it("lets the first housemate restart once their date has lapsed: the new date replaces it", async () => {
+			const end = inDays(40);
+			const { service, tenancyModel } = noticeSetup({ noticeEndDate: inDays(10), noticeFrom: [alice], noticeGivenBy: alice });
+			tenancyModel.findOneAndUpdate.mockReturnValueOnce(lean({ noticeEndDate: end, noticeFrom: [alice], tenants: [alice, bob] }));
+			await service.giveNotice(tenancyId.toString(), end, student(alice));
+			expect(tenancyModel.findOneAndUpdate.mock.calls[0][1]).toEqual({ $set: { noticeEndDate: end, noticeFrom: [alice], noticeGivenBy: alice } });
+		});
+
+		it("still refuses (409) the first housemate a second notice while their date is live", async () => {
+			const { service } = noticeSetup({ noticeEndDate: inDays(40), noticeFrom: [alice], noticeGivenBy: alice });
+			await expect(service.giveNotice(tenancyId.toString(), inDays(40), student(alice))).rejects.toThrow("You have already given notice");
+		});
+
 		it("is for tenants only: the route is student-only and the landlord gets a 403", async () => {
 			expect(Reflect.getMetadata(ROLE_KEY, TenanciesController.prototype.notice)).toEqual([Role.STUDENT]);
 			const { service } = noticeSetup();
@@ -451,18 +464,30 @@ describe("TenanciesService create / accept", () => {
 			return ctx;
 		}
 
-		it("refunds the unused days when the tenancy ends mid-month", async () => {
+		it("refunds the unused days when the tenancy ends mid-month, and keeps a future end ACTIVE for the hourly sweep to end", async () => {
 			const payment = paid(62000, "2027-01-01");
 			const { tenancyModel, paymentModel } = await ending(payment, "2027-01-16");
 			expect(earlyEndRefundAmount(payment.amount, payment.dueDate, 1, new Date("2027-01-16"))).toBe(32000);
 			expect(tenancyModel.updateOne).toHaveBeenCalledWith(
 				{ _id: tenancyId, status: TenancyStatus.ACTIVE },
-				{ $set: { endDate: new Date("2027-01-16T00:00:00.000Z"), status: TenancyStatus.ENDED } }
+				{ $set: { endDate: new Date("2027-01-16T00:00:00.000Z"), noticeGivenAt: expect.any(Date) } }
 			);
 			expect(paymentModel.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ dueDate: { $gte: new Date("2027-01-16T00:00:00.000Z") } }));
 			expect(paymentModel.updateOne).toHaveBeenLastCalledWith(
 				{ _id: payment._id, refundedAt: null },
 				expect.objectContaining({ $set: expect.objectContaining({ refundedAmount: 32000, refundDue: false }) })
+			);
+		});
+
+		it("ends the tenancy at once when the landlord ends it today", async () => {
+			const ctx = setup();
+			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2026-01-01"), status: TenancyStatus.ACTIVE
+			} as any);
+			await ctx.service.endTenancy(tenancyId.toString(), londonCalendarDay(), landlord);
+			expect(ctx.tenancyModel.updateOne).toHaveBeenCalledWith(
+				{ _id: tenancyId, status: TenancyStatus.ACTIVE },
+				{ $set: { endDate: londonCalendarDay(), status: TenancyStatus.ENDED } }
 			);
 		});
 

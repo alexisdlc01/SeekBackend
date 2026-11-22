@@ -509,9 +509,10 @@ export class TenanciesService {
 			throw new BadRequestException("The end date cannot be after the tenancy's current end date.");
 		}
 
+		// A future date keeps the tenants in their home until then: noticeGivenAt lets the hourly sweep end it on the date.
 		const ended = await this.tenancyModel.updateOne(
 			{ _id: tenancy._id, status: TenancyStatus.ACTIVE },
-			{ $set: { endDate: end, status: TenancyStatus.ENDED } }
+			{ $set: end <= londonCalendarDay() ? { endDate: end, status: TenancyStatus.ENDED } : { endDate: end, noticeGivenAt: new Date() } }
 		);
 		if (ended.modifiedCount === 0) {
 			throw new ConflictException("This tenancy has already been ended.");
@@ -620,15 +621,17 @@ export class TenanciesService {
 			throw new ConflictException("Notice can only be given on an active rolling tenancy.");
 		}
 		if (tenancy.noticeGivenAt) throw new ConflictException("Notice has already been given on this tenancy.");
-		if ((tenancy.noticeFrom ?? []).some(from => from.equals(me))) throw new ConflictException("You have already given notice. It takes effect once every housemate has given it too.");
 		const day = (date: Date) => date.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 		const earliest = earliestNoticeEnd(nation, tenancy.startDate, londonCalendarDay());
+		// A housemate's date that no longer leaves the full notice period has lapsed: this notice replaces it.
+		const proposed = tenancy.noticeEndDate && new Date(tenancy.noticeEndDate) >= earliest ? new Date(tenancy.noticeEndDate) : null;
+		if (proposed && (tenancy.noticeFrom ?? []).some(from => from.equals(me))) {
+			throw new ConflictException("You have already given notice. It takes effect once every housemate has given it too.");
+		}
 		if (end < earliest) throw new BadRequestException(`That is too soon: the earliest end date you can give notice for is ${day(earliest)}.`);
 		if (nation === Nation.ENGLAND && nextRentDay(tenancy.startDate, end).getTime() !== end.getTime()) {
 			throw new BadRequestException(`In England notice must end with a rent period: pick a rent day, such as ${day(earliest)}.`);
 		}
-		// A housemate's date that no longer leaves the full notice period has lapsed: this notice replaces it.
-		const proposed = tenancy.noticeEndDate && new Date(tenancy.noticeEndDate) >= earliest ? new Date(tenancy.noticeEndDate) : null;
 		if (proposed && proposed.getTime() !== end.getTime()) {
 			throw new ConflictException(`A housemate has given notice to end on ${day(proposed)}. Joint tenants must all give notice for the same date.`);
 		}

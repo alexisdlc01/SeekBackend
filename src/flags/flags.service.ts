@@ -61,11 +61,7 @@ export class FlagsService {
 		}
 
 		// Check if the reported user exists
-		const reported = await this.userModel
-			.exists({
-				_id: createFlagDto.reportedUser
-			})
-			.exec();
+		const reported = await this.userModel.findById(createFlagDto.reportedUser, { suspendedAt: 1 }).lean().exec();
 		if (!reported) {
 			throw new NotFoundException("User not found");
 		}
@@ -86,7 +82,11 @@ export class FlagsService {
 		const triage = this.triage(createFlagDto);
 		if (triage) await this.flagModel.updateOne({ _id: flag._id }, { $set: { triage } }).exec();
 		// The flag is stored: a failed check must not 500 (a retry would duplicate the report).
-		await this.enforce(createFlagDto.reportedUser, user, triage).catch((error: Error) =>
+		// Already suspended: suspend() would skip it, so the reporter is told now instead of a "no action" in 30 days.
+		const outcome = reported.suspendedAt
+			? this.closeAsSuspended(reported._id as Types.ObjectId, new Date(reported.suspendedAt))
+			: this.enforce(createFlagDto.reportedUser, user, triage);
+		await outcome.catch((error: Error) =>
 			this.logger.error(`Flag enforcement failed for ${flag._id.toString()}: ${error?.message}`)
 		);
 
@@ -210,6 +210,11 @@ export class FlagsService {
 		if (result.modifiedCount === 0) return;
 		this.logger.warn(`Account ${id.toString()} suspended: ${reason}`);
 		await this.hideListings(id, "This account is suspended.");
+		await this.closeAsSuspended(id, now, resolvedFlag);
+	}
+
+	/** Tells the reporters of open reports about `id` (and of resolvedFlag) that it is suspended, and closes those reports. */
+	private async closeAsSuspended(id: Types.ObjectId, suspendedAt: Date, resolvedFlag?: Types.ObjectId): Promise<void> {
 		// Reporters see the outcome in GET /flags/mine (supportResponse) and in their in-app notifications.
 		// resolvedFlag: resolve() already moved that flag out of UNDER_REVIEW, its reporter must be told too.
 		const open = { status: FlagStatus.UNDER_REVIEW };
@@ -223,7 +228,7 @@ export class FlagsService {
 				title: "We acted on your report",
 				body: SUSPENDED_RESPONSE,
 				// suspendedAt in the key: a new suspension after a lifted one notifies the reporter again.
-				dedupeKey: `report-actioned:${id.toString()}:${reporter.toString()}:${now.getTime()}`
+				dedupeKey: `report-actioned:${id.toString()}:${reporter.toString()}:${suspendedAt.getTime()}`
 			}))
 		);
 		await this.flagModel

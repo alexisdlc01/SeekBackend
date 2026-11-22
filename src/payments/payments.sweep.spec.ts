@@ -313,6 +313,21 @@ describe("PaymentsService ends fixed terms on their end date", () => {
 		expect(notifications.notifyMany.mock.calls[0][0][0].body).toContain("notice period is over");
 	});
 
+	it("clears a housemate's pending notice once its date no longer leaves the full notice period, and keeps a live one", async () => {
+		const { service, tenancyModel } = setup(1);
+		const now = new Date("2026-07-02T09:00:00Z");
+		const lapsed = { _id: new Types.ObjectId(), startDate: new Date("2026-01-10T00:00:00Z"), noticeEndDate: new Date("2026-07-20T00:00:00Z"), listing: { nation: "SCOTLAND" } };
+		const live = { ...lapsed, _id: new Types.ObjectId(), noticeEndDate: new Date("2026-08-15T00:00:00Z") };
+		tenancyModel.find.mockReset().mockReturnValue({ populate: () => lean([lapsed, live]) });
+		await (service as any).clearLapsedNotices(now);
+		expect(tenancyModel.find.mock.calls[0][0]).toEqual({ status: "ACTIVE", noticeGivenAt: null, noticeEndDate: { $ne: null } });
+		expect(tenancyModel.updateOne).toHaveBeenCalledTimes(1);
+		expect(tenancyModel.updateOne).toHaveBeenCalledWith(
+			{ _id: lapsed._id, noticeGivenAt: null, noticeEndDate: lapsed.noticeEndDate },
+			{ $set: { noticeEndDate: null, noticeFrom: [], noticeGivenBy: null } }
+		);
+	});
+
 	it("leaves an ended-by-date fixed term out of the deposit nags", async () => {
 		const { service, tenancyModel } = setup(1);
 		await (service as any).sweepCompliance(new Date("2026-07-02T09:00:00Z"));

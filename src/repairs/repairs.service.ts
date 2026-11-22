@@ -1,9 +1,10 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { Repair, RepairStatus } from "./repair.schema";
 import { CreateRepairDto, MAX_REPAIR_PHOTOS, UpdateRepairDto } from "./dto/repair.dto";
 import { isTenancyMember, TenanciesService } from "../tenancies/tenancies.service";
+import { TenancyStatus } from "../tenancies/tenancy.enums";
 import { NotificationsService } from "../notifications/notifications.service";
 import { NotificationKind } from "../notifications/notification-kind.enum";
 import { notificationTarget, NotificationTargetKind } from "../notifications/links";
@@ -76,6 +77,7 @@ export class RepairsService {
 		const tenancy = byLandlord
 			? await this.tenancies.findForLandlord(dto.tenancy, reporter)
 			: await this.tenancies.findForTenant(dto.tenancy, reporter);
+		if (!byLandlord && tenancy.status === TenancyStatus.ENDED) throw new ConflictException("This tenancy has ended.");
 		const photoKeys = dto.photoKeys ?? [];
 		if (photoKeys.length > MAX_REPAIR_PHOTOS) {
 			throw new BadRequestException(`Attach at most ${MAX_REPAIR_PHOTOS} photos.`);
