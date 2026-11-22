@@ -3,7 +3,7 @@ import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 import { Reflector } from "@nestjs/core";
 import { Types } from "mongoose";
-import { applicationTenancyPeriod, depositReceivedDate, earlyEndRefundAmount, TenanciesService } from "./tenancies.service";
+import { applicationTenancyPeriod, depositReceivedDate, earliestNoticeEnd, earlyEndRefundAmount, londonCalendarDay, TenanciesService } from "./tenancies.service";
 import { InventoryStage, TenancyDocumentType, TenancyStatus } from "./tenancy.enums";
 import { ApplicationStage } from "../application/enums/application-stage.enum";
 import { Role } from "../auth/role.enum";
@@ -66,6 +66,66 @@ describe("TenanciesService create / accept", () => {
 	}
 
 	const base = { listing: listingId.toString(), startDate: "2026-12-01", monthlyRent: 69500 };
+
+	describe("tenant notice", () => {
+		const alice = new Types.ObjectId();
+		const bob = new Types.ObjectId();
+		const tenancyId = new Types.ObjectId();
+		const student = (id: Types.ObjectId) => ({ _id: id, role: Role.STUDENT }) as any;
+		const inDays = (days: number) => new Date(londonCalendarDay().getTime() + days * 86_400_000);
+		function noticeSetup(extra: Record<string, unknown> = {}) {
+			const ctx = setup();
+			const tenancy = { _id: tenancyId, landlord: landlordId, listing: listingId, tenants: [alice, bob], status: TenancyStatus.ACTIVE, periodic: true, startDate: new Date("2026-01-10T00:00:00Z"), endDate: null, noticeFrom: [], noticeEndDate: null, noticeGivenAt: null, ...extra };
+			ctx.tenancyModel.findById.mockReturnValue(lean(tenancy));
+			ctx.listingModel.findById.mockReturnValue(lean({ ...listing, nation: "SCOTLAND" }));
+			return { ...ctx, tenancy };
+		}
+
+		it("refuses notice shorter than Scotland's 28 days (400), writing nothing", async () => {
+			const { service, tenancyModel } = noticeSetup();
+			await expect(service.giveNotice(tenancyId.toString(), inDays(27), student(alice))).rejects.toThrow(BadRequestException);
+			expect(tenancyModel.findOneAndUpdate).not.toHaveBeenCalled();
+		});
+
+		it("takes effect only once both joint tenants gave notice for the same date, then stops rent and tells the landlord", async () => {
+			const end = inDays(30);
+			const first = noticeSetup();
+			first.tenancyModel.findOneAndUpdate.mockReturnValueOnce(lean({ ...first.tenancy, noticeEndDate: end, noticeFrom: [alice] }));
+			await first.service.giveNotice(tenancyId.toString(), end, student(alice));
+			expect(first.tenancyModel.findOneAndUpdate.mock.calls[0][1]).toEqual({ $set: { noticeEndDate: end, noticeFrom: [alice], noticeGivenBy: alice } });
+			expect(first.tenancyModel.findOneAndUpdate).toHaveBeenCalledTimes(1);
+			expect(first.notifications.notify).not.toHaveBeenCalled();
+
+			const second = noticeSetup({ noticeEndDate: end, noticeFrom: [alice], noticeGivenBy: alice });
+			second.tenancyModel.findOneAndUpdate
+				.mockReturnValueOnce(lean({ ...second.tenancy, noticeFrom: [alice, bob] }))
+				.mockReturnValueOnce(lean({ ...second.tenancy, noticeFrom: [alice, bob], endDate: end, noticeGivenAt: new Date() }));
+			await second.service.giveNotice(tenancyId.toString(), end, student(bob));
+			expect(second.tenancyModel.findOneAndUpdate.mock.calls[0][1]).toEqual({ $addToSet: { noticeFrom: bob } });
+			expect(second.tenancyModel.findOneAndUpdate.mock.calls[1][1].$set.endDate).toEqual(end);
+			expect(second.paymentModel.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ tenancy: tenancyId, dueDate: { $gte: end } }));
+			expect(second.notifications.notify).toHaveBeenCalledWith(expect.objectContaining({ user: landlordId, dedupeKey: `tenancy-notice:${tenancyId.toString()}` }));
+		});
+
+		it("refuses (409) a housemate's notice for a different date", async () => {
+			const { service, tenancyModel } = noticeSetup({ noticeEndDate: inDays(40), noticeFrom: [alice], noticeGivenBy: alice });
+			await expect(service.giveNotice(tenancyId.toString(), inDays(50), student(bob))).rejects.toThrow(ConflictException);
+			expect(tenancyModel.findOneAndUpdate).not.toHaveBeenCalled();
+		});
+
+		it("is for tenants only: the route is student-only and the landlord gets a 403", async () => {
+			expect(Reflect.getMetadata(ROLE_KEY, TenanciesController.prototype.notice)).toEqual([Role.STUDENT]);
+			const { service } = noticeSetup();
+			await expect(service.giveNotice(tenancyId.toString(), inDays(30), landlord)).rejects.toThrow(ForbiddenException);
+		});
+
+		it("in England needs two months and a rent day", () => {
+			const start = new Date("2026-01-10T00:00:00Z");
+			expect(earliestNoticeEnd("ENGLAND" as any, start, new Date("2026-03-01T00:00:00Z")).toISOString()).toBe("2026-05-10T00:00:00.000Z");
+			expect(earliestNoticeEnd("ENGLAND" as any, start, new Date("2026-03-15T00:00:00Z")).toISOString()).toBe("2026-06-10T00:00:00.000Z");
+			expect(earliestNoticeEnd("WALES" as any, start, new Date("2026-03-01T00:00:00Z")).toISOString()).toBe("2026-03-29T00:00:00.000Z");
+		});
+	});
 
 	it("refuses an application on someone else's listing (403)", async () => {
 		const { service, applicationModel, listingModel } = setup();
@@ -188,6 +248,23 @@ describe("TenanciesService create / accept", () => {
 		});
 
 		expect(created[0].startDate).toEqual(availableFrom);
+	});
+
+	it("makes a Scottish listing's tenancy rolling: availableUntil is never its end date", async () => {
+		const { service, tenancyModel, listingModel, created } = setup();
+		(tenancyModel as any).findOne = jest.fn().mockReturnValue(lean(null));
+		listingModel.findById.mockReturnValue(lean({ ...listing, nation: "SCOTLAND", monthlyRent: 1200, availableUntil: new Date(Date.now() + 200 * 86_400_000) }));
+		await service.createFromApplication({ _id: new Types.ObjectId(), listing: listingId, landlord: landlordId, applicants: [new Types.ObjectId()] });
+		expect(created[0]).toMatchObject({ periodic: true, endDate: null });
+	});
+
+	it("keeps a Northern Ireland listing's availableUntil as a fixed-term end date", async () => {
+		const { service, tenancyModel, listingModel, created } = setup();
+		(tenancyModel as any).findOne = jest.fn().mockReturnValue(lean(null));
+		const availableUntil = new Date(Date.now() + 200 * 86_400_000);
+		listingModel.findById.mockReturnValue(lean({ ...listing, nation: "NORTHERN_IRELAND", monthlyRent: 1200, availableUntil }));
+		await service.createFromApplication({ _id: new Types.ObjectId(), listing: listingId, landlord: landlordId, applicants: [new Types.ObjectId()] });
+		expect(created[0]).toMatchObject({ periodic: false, endDate: availableUntil });
 	});
 
 	it("refuses (409) an application tenancy once the listing's availability has ended, writing nothing", async () => {

@@ -249,8 +249,8 @@ describe("PaymentsService ends fixed terms on their end date", () => {
 	const tenant = new Types.ObjectId();
 	const landlord = new Types.ObjectId();
 
-	function setup(modifiedCount: number, endDate = new Date("2026-07-01T00:00:00Z")) {
-		const finished = { _id: tenancyId, tenants: [tenant], landlord, endDate, listing: { propertyTitle: "Flat 2" } };
+	function setup(modifiedCount: number, endDate = new Date("2026-07-01T00:00:00Z"), nation = "NORTHERN_IRELAND", noticeGivenAt: Date | null = null) {
+		const finished = { _id: tenancyId, tenants: [tenant], landlord, endDate, noticeGivenAt, listing: { propertyTitle: "Flat 2", nation } };
 		const tenancyModel = {
 			find: jest.fn().mockReturnValueOnce({ populate: () => lean([finished]) }).mockReturnValue({ populate: () => lean([]) }),
 			updateOne: jest.fn().mockResolvedValue({ modifiedCount })
@@ -276,7 +276,7 @@ describe("PaymentsService ends fixed terms on their end date", () => {
 		const now = new Date("2026-06-30T23:30:00Z");
 		const { service, tenancyModel, notifications } = setup(1);
 		await (service as any).endFinishedTenancies(now);
-		expect(tenancyModel.find.mock.calls[0][0]).toEqual({ status: "ACTIVE", periodic: false, endDate: { $ne: null, $lte: new Date("2026-07-01T00:00:00Z") } });
+		expect(tenancyModel.find.mock.calls[0][0]).toEqual({ status: "ACTIVE", endDate: { $ne: null, $lte: new Date("2026-07-01T00:00:00Z") }, $or: [{ periodic: false }, { noticeGivenAt: { $ne: null } }] });
 		expect(tenancyModel.updateOne).toHaveBeenCalledWith({ _id: tenancyId, status: "ACTIVE" }, { $set: { status: "ENDED" } });
 		const sent = notifications.notifyMany.mock.calls[0][0];
 		expect(sent.map((n: any) => n.user)).toEqual([tenant, landlord]);
@@ -294,6 +294,23 @@ describe("PaymentsService ends fixed terms on their end date", () => {
 		await (service as any).endFinishedTenancies(new Date("2026-07-02T09:00:00Z"));
 		expect(tenancyModel.updateOne).toHaveBeenCalledWith({ _id: tenancyId, status: "ACTIVE" }, { $set: { status: "ENDED" } });
 		expect(notifications.notifyMany).not.toHaveBeenCalled();
+	});
+
+	it("never ends a Scottish, English or Welsh tenancy on its end date: it rolls on as periodic", async () => {
+		for (const nation of ["SCOTLAND", "ENGLAND", "WALES"]) {
+			const { service, tenancyModel, notifications } = setup(1, undefined, nation);
+			await (service as any).endFinishedTenancies(new Date("2026-07-02T09:00:00Z"));
+			expect(tenancyModel.updateOne).toHaveBeenCalledTimes(1);
+			expect(tenancyModel.updateOne).toHaveBeenCalledWith({ _id: tenancyId, status: "ACTIVE" }, { $set: { periodic: true, endDate: null } });
+			expect(notifications.notifyMany).not.toHaveBeenCalled();
+		}
+	});
+
+	it("ends a Scottish rolling tenancy on the date its tenants gave notice for", async () => {
+		const { service, tenancyModel, notifications } = setup(1, undefined, "SCOTLAND", new Date("2026-06-01T10:00:00Z"));
+		await (service as any).endFinishedTenancies(new Date("2026-07-02T09:00:00Z"));
+		expect(tenancyModel.updateOne).toHaveBeenCalledWith({ _id: tenancyId, status: "ACTIVE" }, { $set: { status: "ENDED" } });
+		expect(notifications.notifyMany.mock.calls[0][0][0].body).toContain("notice period is over");
 	});
 
 	it("leaves an ended-by-date fixed term out of the deposit nags", async () => {

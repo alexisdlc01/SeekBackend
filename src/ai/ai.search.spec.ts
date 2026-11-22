@@ -191,6 +191,17 @@ describe("AiService contract advice", () => {
 		);
 		expect(confirmed.advice).toContain("The signed agreement is in your documents");
 	});
+
+	it("gives Scottish notice rules and the date to give notice by when the landlord hopes to get the home back", () => {
+		const scotland = { propertyTitle: "4 South St", nation: "SCOTLAND", availableUntil: new Date("2099-06-30T00:00:00Z") };
+		const student = (service as any).contractAdvice(user, tenancy, scotland);
+		expect(student.advice).toContain("28 days' notice in writing");
+		expect(student.advice).toMatch(/by .*2 June 2099 at the latest/);
+		expect(student.actions[1].link).toBe("https://www.gov.scot/policies/private-renting/");
+		const landlord = (service as any).contractAdvice({ ...user, role: "LANDLORD_AGENCY" }, tenancy, scotland);
+		expect(landlord.advice).toContain("First-tier Tribunal");
+		expect(landlord.advice).toContain("that date doesn't end the tenancy");
+	});
 });
 
 describe("AiService advice for a home in Scotland", () => {

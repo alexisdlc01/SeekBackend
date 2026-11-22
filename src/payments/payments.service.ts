@@ -65,7 +65,8 @@ import {
 } from "./dto/payments.dto";
 import { Tenancy } from "../tenancies/tenancy.schema";
 import { TenancyStatus } from "../tenancies/tenancy.enums";
-import { londonCalendarDay, TenanciesService } from "../tenancies/tenancies.service";
+import { hasFixedTerms, londonCalendarDay, TenanciesService } from "../tenancies/tenancies.service";
+import { Nation } from "../listings/enums/nation.enum";
 import { listingCompliance, tenancyCompliance } from "../tenancies/compliance";
 import { Listing } from "../listings/listings.schema";
 import { User } from "../users/users.schema";
@@ -1573,15 +1574,23 @@ export class PaymentsService {
 		}
 	}
 
-	/** A fixed term ends on its own once its end date (exclusive, London day) arrives; a rolling tenancy runs until ended. */
+	/**
+	 * A fixed term ends on its own once its end date (exclusive, London day) arrives; a rolling tenancy runs until ended.
+	 * Only Northern Ireland has fixed terms: elsewhere the law keeps the tenancy going, so an older one with an end date rolls on.
+	 * A tenancy the tenants gave notice on (any nation) ends on its notice date.
+	 */
 	private async endFinishedTenancies(now: Date) {
 		const today = londonCalendarDay(now);
 		const finished = await this.tenancyModel
-			.find({ status: TenancyStatus.ACTIVE, periodic: false, endDate: { $ne: null, $lte: today } })
-			.populate({ path: "listing", select: "propertyTitle streetAddress" })
+			.find({ status: TenancyStatus.ACTIVE, endDate: { $ne: null, $lte: today }, $or: [{ periodic: false }, { noticeGivenAt: { $ne: null } }] })
+			.populate({ path: "listing", select: "propertyTitle streetAddress nation" })
 			.lean()
 			.exec();
 		for (const tenancy of finished) {
+			if (!tenancy.noticeGivenAt && !hasFixedTerms((tenancy.listing as unknown as { nation?: Nation } | null)?.nation)) {
+				await this.tenancyModel.updateOne({ _id: tenancy._id, status: TenancyStatus.ACTIVE }, { $set: { periodic: true, endDate: null } });
+				continue;
+			}
 			const ended = await this.tenancyModel.updateOne({ _id: tenancy._id, status: TenancyStatus.ACTIVE }, { $set: { status: TenancyStatus.ENDED } });
 			// A term that ended long before this sweep first ran (e.g. the first deploy) ends quietly: old news is noise.
 			if (ended.modifiedCount === 0 || new Date(tenancy.endDate!).getTime() < today.getTime() - 7 * DAY_MS) continue;
@@ -1593,7 +1602,7 @@ export class PaymentsService {
 					user: tenant,
 					kind: NotificationKind.TENANCY_ENDED,
 					title: `Your tenancy at ${title} has ended`,
-					body: "Your fixed term is over. Any rent still owed stays on your payments page.",
+					body: `${tenancy.noticeGivenAt ? "Your notice period" : "Your fixed term"} is over. Any rent still owed stays on your payments page.`,
 					...notificationTarget("student", NotificationTargetKind.TENANCY, tenancy._id),
 					dedupeKey
 				})),
@@ -1601,7 +1610,7 @@ export class PaymentsService {
 					user: tenancy.landlord,
 					kind: NotificationKind.TENANCY_ENDED,
 					title: `The tenancy at ${title} has ended`,
-					body: "The fixed term is over. Any rent still owed stays on your payments page.",
+					body: `${tenancy.noticeGivenAt ? "The tenants' notice period" : "The fixed term"} is over. Any rent still owed stays on your payments page.`,
 					...notificationTarget("landlord", NotificationTargetKind.TENANCY, tenancy._id),
 					dedupeKey
 				}

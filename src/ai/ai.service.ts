@@ -17,7 +17,7 @@ import { allowanceFor } from "../bills/bills.service";
 import { splitPence } from "../bills/shares";
 import { Payment } from "../payments/payment.schema";
 import { PaymentStatus } from "../payments/payment.enums";
-import { computeFee } from "../payments/schedule";
+import { addMonths, computeFee } from "../payments/schedule";
 import { formatPence } from "../payments/payments.service";
 import { Application } from "../application/application.schema";
 import { ApplicationStage } from "../application/enums/application-stage.enum";
@@ -73,6 +73,27 @@ export interface AdviceDraft {
 const NEAR_UNIVERSITY_KM = 5;
 const MAX_RESULTS = 12;
 const DAY_MS = 86_400_000;
+
+/** Notice rules per nation for rolling tenancies. Northern Ireland, which still has fixed terms, is left to official guidance. */
+const TENANCY_LAW: Partial<Record<Nation, { tenant: string; landlord: string; noticeBefore: (date: Date) => Date; link?: AdviceAction }>> = {
+	[Nation.ENGLAND]: {
+		landlord: "Under the Renters' Rights Act, tenancies in England are periodic: they roll on month to month with no fixed end date. Tenants can leave with two months' written notice. You can only end a tenancy using a legal ground (no-fault Section 21 notices have ended), and most grounds, such as selling or moving in, need four months' notice. Rent in advance is capped at one month.",
+		tenant: "Under the Renters' Rights Act, tenancies in England are periodic: they roll on month to month with no fixed end date. You can leave by giving two months' notice in writing. Your landlord can only end the tenancy using a legal ground (no-fault Section 21 evictions have ended), and most grounds, such as selling, need four months' notice. Rent in advance is capped at one month.",
+		noticeBefore: date => addMonths(date, -2)
+	},
+	[Nation.SCOTLAND]: {
+		landlord: "In Scotland this is a private residential tenancy: it has no end date and rolls on until it is ended. Tenants can leave by giving at least 28 days' notice in writing. You can only end it by serving a notice to leave on one of the legal grounds, and if the tenants stay, only the First-tier Tribunal can order an eviction.",
+		tenant: "In Scotland your tenancy is a private residential tenancy: it has no end date and rolls on until it is ended. You can leave by giving at least 28 days' notice in writing (less only if your landlord agrees in writing). Your landlord can only end it with a notice to leave on one of the legal grounds, and if you stay, only the First-tier Tribunal can order you to leave.",
+		noticeBefore: date => new Date(date.getTime() - 28 * DAY_MS),
+		link: { label: "Private renting (gov.scot)", link: "https://www.gov.scot/policies/private-renting/" }
+	},
+	[Nation.WALES]: {
+		landlord: "In Wales this is a standard periodic occupation contract: it rolls on with no end date. Contract-holders can leave by giving at least four weeks' notice in writing. A no-fault notice must give at least six months and can't be given in the first six months; any other ending needs a legal ground.",
+		tenant: "In Wales your tenancy is a standard periodic occupation contract: it rolls on with no end date. You can leave by giving at least four weeks' notice in writing. Your landlord must give at least six months' notice to end it without a reason, and can't give it in your first six months; any other ending needs a legal ground.",
+		noticeBefore: date => new Date(date.getTime() - 28 * DAY_MS),
+		link: { label: "Renting homes (GOV.WALES)", link: "https://www.gov.wales/renting-homes" }
+	}
+};
 
 const SCHEME_SITES: Record<DepositScheme, { name: string; url: string }> = {
 	[DepositScheme.DPS]: { name: "DPS", url: "https://www.depositprotection.com" },
@@ -634,15 +655,24 @@ export class AiService {
 
 	private contractAdvice(user: Viewer, tenancy: TenancyLean | null, listing: ListingLean | null): AdviceDraft {
 		const landlord = this.isLandlord(user);
-		const england = !listing?.nation || listing.nation === Nation.ENGLAND;
-		const rules = landlord
-			? "Under the Renters' Rights Act, tenancies in England are periodic: they roll on month to month with no fixed end date. Tenants can leave with two months' written notice. You can only end a tenancy using a legal ground (no-fault Section 21 notices have ended), and most grounds, such as selling or moving in, need four months' notice. Rent in advance is capped at one month."
-			: "Under the Renters' Rights Act, tenancies in England are periodic: they roll on month to month with no fixed end date. You can leave by giving two months' notice in writing. Your landlord can only end the tenancy using a legal ground (no-fault Section 21 evictions have ended), and most grounds, such as selling, need four months' notice. Rent in advance is capped at one month.";
+		const nation = listing?.nation ?? Nation.ENGLAND;
+		const law = TENANCY_LAW[nation];
+		const rules = law && (landlord ? law.landlord : law.tenant);
 		const actions: AdviceAction[] = [
 			{ label: "Open your contract", link: "/contracts" },
-			{ label: "Renting privately (GOV.UK)", link: "https://www.gov.uk/private-renting" }
+			law?.link ?? { label: "Renting privately (GOV.UK)", link: "https://www.gov.uk/private-renting" }
 		];
-		if (!tenancy) return { title: "Your tenancy rights", advice: england ? rules : "Notice rules differ in Wales, Scotland and Northern Ireland; check your agreement and official guidance for your nation.", actions };
+		const until = listing?.availableUntil ? new Date(listing.availableUntil) : null;
+		const deadline = until && law ? law.noticeBefore(until) : null;
+		// availableUntil is only the landlord's hope: the tenancy runs on until someone gives notice.
+		const hoped = !until || !deadline
+			? null
+			: landlord
+				? `You hope to get the home back around ${formatDate(until)}, but that date doesn't end the tenancy: only the tenants' notice or one of the legal routes above can.`
+				: `Your landlord hopes to get the home back around ${formatDate(until)}. If you plan to leave then, give your written notice ${deadline.getTime() > Date.now() ? `by ${formatDate(deadline)} at the latest` : "as soon as you can"}; that date alone doesn't end the tenancy.`;
+		if (!tenancy) {
+			return { title: "Your tenancy rights", advice: rules ?? "Notice rules differ in Northern Ireland; check your agreement and official guidance.", actions };
+		}
 
 		const lines: string[] = [];
 		const home = this.homeName(listing);
@@ -651,13 +681,15 @@ export class AiService {
 				tenancy.endDate && !tenancy.periodic ? ` and the agreement names ${formatDate(tenancy.endDate)} as its end date` : " and is periodic"
 			}.`
 		);
-		if (england) {
+		if (rules) {
 			lines.push(rules);
 			if (tenancy.endDate && !tenancy.periodic) {
-				lines.push("A fixed end date no longer ends a tenancy in England on its own: someone still has to give notice.");
+				lines.push("That end date doesn't end the tenancy on its own: someone still has to give notice.");
 			}
+			if (hoped) lines.push(hoped);
+			if (!landlord) lines.push("To give notice in Seek, open your tenancy and give notice with your end date; every tenant on the agreement must give notice for the same date before it counts.");
 		} else {
-			lines.push("This home is outside England, where notice rules differ; check your agreement and official guidance for your nation.");
+			lines.push("This home is in Northern Ireland, where notice rules differ; check your agreement and official guidance.");
 		}
 		lines.push(
 			this.hasDocument(tenancy, TenancyDocumentType.TENANCY_AGREEMENT)
