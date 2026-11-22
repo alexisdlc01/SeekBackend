@@ -24,7 +24,10 @@ export interface ContractDocumentData {
 	depositReceivedAt?: Date | null;
 	depositProtectedAt?: Date | null;
 	billsIncluded?: boolean;
+	/** Listing's council HMO / selective licence. */
 	licenceNumber?: string | null;
+	/** Landlord's Rent Smart Wales number, from their registrations. */
+	rentSmartWales?: string | null;
 	/** Recorded tenant signatures, in signing order. */
 	signatures?: { name?: string; email?: string; signedAt: Date }[];
 }
@@ -98,7 +101,8 @@ ${rows([
 	["Landlord", landlord],
 	...(data.landlord.email ? ([["Landlord's address for notices", data.landlord.email]] as [string, string][]) : []),
 	[wales ? "Contract-holders" : "Tenants", tenants.join(", ") || "To be added"],
-	...(wales && data.licenceNumber ? ([["Rent Smart Wales licence", data.licenceNumber]] as [string, string][]) : [])
+	...(wales && data.rentSmartWales ? ([["Rent Smart Wales registration / licence", data.rentSmartWales]] as [string, string][]) : []),
+	...(wales && data.licenceNumber ? ([["HMO / selective licence", data.licenceNumber]] as [string, string][]) : [])
 ])}
 <p>${escapeHtml(law)}</p>
 <h2>2. The home</h2>

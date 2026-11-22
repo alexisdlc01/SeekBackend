@@ -21,6 +21,7 @@ import { DocumentReviewService } from "./document-review.service";
 import { Listing, ListingSchema } from "../listings/listings.schema";
 import { EmailMessage, EmailMessageSchema } from "../inbox/email-message.schema";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { Application, ApplicationSchema } from "../application/application.schema";
 
 @Module({
 	imports: [
@@ -36,7 +37,8 @@ import { NotificationsModule } from "../notifications/notifications.module";
 			{ name: Tenancy.name, schema: TenancySchema },
 			{ name: Payment.name, schema: PaymentSchema },
 			{ name: Listing.name, schema: ListingSchema },
-			{ name: EmailMessage.name, schema: EmailMessageSchema }
+			{ name: EmailMessage.name, schema: EmailMessageSchema },
+			{ name: Application.name, schema: ApplicationSchema }
 		]),
 		SharedModule,
 		RedisModule,

@@ -33,6 +33,14 @@ describe("Seek agreement documents", () => {
 		expect(html).toContain("Contract-holders");
 	});
 
+	it("prints the Rent Smart Wales number and the HMO licence under their own labels in Wales only", () => {
+		const html = renderAgreement({ ...data, kind: ContractTemplateKind.WALES_STANDARD_OCCUPATION, rentSmartWales: "RSW-12345", licenceNumber: "HMO-678" });
+		expect(html).toContain("<td>Rent Smart Wales registration / licence</td><td>RSW-12345</td>");
+		expect(html).toContain("<td>HMO / selective licence</td><td>HMO-678</td>");
+		const england = renderAgreement({ ...data, rentSmartWales: "RSW-12345", licenceNumber: "HMO-678" });
+		expect(england).not.toContain("RSW-12345");
+	});
+
 	it("lists each recorded tenant signature and does not claim the landlord signs", () => {
 		const unsigned = renderAgreement(data);
 		expect(unsigned).toContain("Each tenant signs this agreement electronically in Seek.");

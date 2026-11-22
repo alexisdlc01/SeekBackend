@@ -127,6 +127,13 @@ function assertRentOpen(status: TenancyStatus | string) {
 	}
 }
 
+/** A rolling tenancy only gets an end date from notice; regenerating then would bill the last partial month in full. */
+function assertPlanCanChange(tenancy: { endDate?: Date | null; periodic?: boolean; noticeGivenAt?: Date | null }, from: PlanFrequency | undefined, to: PlanFrequency) {
+	if (tenancy.endDate && (tenancy.periodic || tenancy.noticeGivenAt) && (from ?? PlanFrequency.MONTHLY) !== to) {
+		throw new BadRequestException("Your tenancy is ending: the rent plan can no longer change.");
+	}
+}
+
 /** Students never see Seek's fee or the landlord's payout. */
 function forTenant<T extends { seekFee?: number; payout?: number }>({ seekFee, payout, ...rest }: T) {
 	return rest;
@@ -238,6 +245,7 @@ export class PaymentsService {
 		const tenancy = await this.tenancies.findForTenant(tenancyId, tenant);
 		assertRentOpen(tenancy.status);
 		const before = await this.planModel.findOne({ tenancy: tenancy._id, tenant: tenant._id }).lean().exec();
+		assertPlanCanChange(tenancy, before?.frequency, frequency);
 		if (before?.frequency !== frequency) {
 			const listing = await this.listingModel.findById(tenancy.listing, { nation: 1, paymentPlans: 1 }).lean().exec();
 			assertPlanAllowed(listing?.nation, frequency, listing?.paymentPlans ?? null);
@@ -261,6 +269,7 @@ export class PaymentsService {
 			.findOne({ tenancy: tenancy._id, tenant: tenant._id })
 			.lean()
 			.exec();
+		assertPlanCanChange(tenancy, before?.frequency, dto.frequency);
 		// A frequency the listing later stopped offering must not block the tenant's other settings.
 		if (before?.frequency !== dto.frequency) {
 			const listing = await this.listingModel.findById(tenancy.listing, { nation: 1, paymentPlans: 1 }).lean().exec();
@@ -1622,6 +1631,7 @@ export class PaymentsService {
 		const horizon = new Date(now.getTime() + 30 * DAY_MS);
 		const listings = await this.listingModel
 			.find({
+				isDraft: { $ne: true },
 				$or: [
 					{ gasSafetyExpiry: { $lte: horizon } },
 					{ eicrExpiry: { $lte: horizon } },
