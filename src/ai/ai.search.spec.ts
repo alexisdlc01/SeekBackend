@@ -226,3 +226,33 @@ describe("AiService advice for a home in Scotland", () => {
 		expect(JSON.stringify(draft)).not.toContain("gov.uk");
 	});
 });
+
+describe("AiService advice for a home in Northern Ireland", () => {
+	const none = {} as any;
+	const billModel = { find: () => ({ sort() { return this; }, lean() { return this; }, exec: async () => [] }) };
+	const service = new AiService({ isConfigured: () => false } as any, none, none, none, none, billModel as any, none, none, none, none, { get: () => undefined } as any);
+	const student = { _id: "64b000000000000000000011", role: "STUDENT" };
+	const landlord = { _id: "64b000000000000000000012", role: "LANDLORD_AGENCY" };
+	const listing = { propertyTitle: "9 University St", nation: "NORTHERN_IRELAND" };
+	const tenancy = { _id: "t1", tenants: [student._id], documents: [], startDate: new Date("2026-09-01T00:00:00Z"), periodic: true };
+
+	it("talks about domestic rates with a nidirect link, never council tax exemptions or GOV.UK", async () => {
+		for (const draft of [
+			await (service as any).billsAdvice(student, null, listing),
+			await (service as any).billsAdvice(student, tenancy, listing),
+			await (service as any).billsAdvice(landlord, tenancy, listing)
+		]) {
+			expect(draft.advice).toContain("domestic rates");
+			expect(draft.advice).toContain("Land & Property Services");
+			expect(draft.advice).not.toMatch(/exempt|certificate/);
+			expect(draft.actions.map((action: { link: string }) => action.link)).toContain("https://www.nidirect.gov.uk/articles/rates-rental-properties");
+			expect(JSON.stringify(draft)).not.toContain("www.gov.uk");
+		}
+	});
+
+	it("links contract advice to nidirect private renting, not the England-only GOV.UK page", () => {
+		const draft = (service as any).contractAdvice(student, tenancy, listing);
+		expect(draft.actions[1].link).toBe("https://www.nidirect.gov.uk/articles/private-rent-and-tenancies");
+		expect((service as any).contractAdvice(student, tenancy, { ...listing, nation: "ENGLAND" }).actions[1].link).toBe("https://www.gov.uk/private-renting");
+	});
+});

@@ -290,6 +290,8 @@ export class AccountService {
 			.lean()
 			.exec();
 		for (const connection of connections) await this.connectors.disconnect({ _id: userId }, connection._id.toString());
+		// Disconnect only clears tokens and emails; the mailbox address and IMAP login must go too, including already-disconnected ones.
+		await this.connectionModel.deleteMany({ user: userId });
 		await this.shareModel.updateMany({ owner: userId, revokedAt: null }, { $set: { revokedAt: deletedAt } });
 		// A tenancy still waiting on invites can never activate without this account (nor should it schedule rent to it): call it off.
 		await this.tenancyModel.updateMany(

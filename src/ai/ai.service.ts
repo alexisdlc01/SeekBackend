@@ -596,15 +596,19 @@ export class AiService {
 
 	private async billsAdvice(user: Viewer, tenancy: TenancyLean | null, listing: ListingLean | null): Promise<AdviceDraft> {
 		const landlord = this.isLandlord(user);
+		// Northern Ireland has no council tax but domestic rates (Land & Property Services); who pays depends on the home, so no exemption is promised.
+		const ni = listing?.nation === Nation.NORTHERN_IRELAND;
 		// GOV.UK's page covers England and Wales; Scottish council tax is on mygov.scot.
-		const councilTaxLink =
-			listing?.nation === Nation.SCOTLAND
+		const councilTaxLink = ni
+			? { label: "Rates on rental properties (nidirect)", link: "https://www.nidirect.gov.uk/articles/rates-rental-properties" }
+			: listing?.nation === Nation.SCOTLAND
 				? { label: "Council tax for students (mygov.scot)", link: "https://www.mygov.scot/council-tax/discounts-exemptions-and-reductions" }
 				: { label: "Council tax for students (GOV.UK)", link: "https://www.gov.uk/council-tax/discounts-for-full-time-students" };
-		const councilTaxRule =
-			"Full-time students don't pay council tax, and a home where everyone is a full-time student is exempt. Each student gets an exemption certificate from their university.";
+		const councilTaxRule = ni
+			? "Northern Ireland has no council tax: homes pay domestic rates instead. Rates are often included in the rent or paid by the landlord; check your tenancy agreement, and ask Land & Property Services if you're unsure who pays."
+			: "Full-time students don't pay council tax, and a home where everyone is a full-time student is exempt. Each student gets an exemption certificate from their university.";
 		if (!tenancy) {
-			return { title: "Bills and council tax", advice: councilTaxRule, actions: [councilTaxLink] };
+			return { title: ni ? "Bills and rates" : "Bills and council tax", advice: councilTaxRule, actions: [councilTaxLink] };
 		}
 		const home = this.homeName(listing);
 		const bills = await this.billModel.find({ tenancy: tenancy._id }).sort({ createdAt: -1 }).lean().exec();
@@ -653,7 +657,13 @@ export class AiService {
 		}
 
 		const certificates = (tenancy.documents ?? []).filter(doc => doc.type === TenancyDocumentType.COUNCIL_TAX_EXEMPTION).length;
-		if (landlord) {
+		if (ni) {
+			lines.push(
+				landlord
+					? "Northern Ireland has no council tax: homes pay domestic rates instead. Check the tenancy agreement for who pays them, and Land & Property Services for who is liable for this home."
+					: councilTaxRule
+			);
+		} else if (landlord) {
 			lines.push(
 				`If every tenant is a full-time student the property is exempt from council tax. ${certificates ? `${certificates} exemption certificate${certificates === 1 ? " is" : "s are"} on file.` : "No exemption certificates are on file yet."}`
 			);
@@ -678,7 +688,10 @@ export class AiService {
 		const rules = law && (landlord ? law.landlord : law.tenant);
 		const actions: AdviceAction[] = [
 			{ label: "Open your contract", link: "/contracts" },
-			law?.link ?? { label: "Renting privately (GOV.UK)", link: "https://www.gov.uk/private-renting" }
+			law?.link ??
+				(nation === Nation.NORTHERN_IRELAND
+					? { label: "Private rent and tenancies (nidirect)", link: "https://www.nidirect.gov.uk/articles/private-rent-and-tenancies" }
+					: { label: "Renting privately (GOV.UK)", link: "https://www.gov.uk/private-renting" })
 		];
 		const until = listing?.availableUntil ? new Date(listing.availableUntil) : null;
 		const deadline = until && law ? law.noticeBefore(until) : null;
