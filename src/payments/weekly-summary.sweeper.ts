@@ -93,10 +93,11 @@ export class WeeklySummarySweeper implements OnApplicationBootstrap, OnModuleDes
 		const horizon = new Date(now.getTime() + 30 * DAY_MS);
 		const [applications, paid, listings, tenancies] = await Promise.all([
 			this.applicationModel.countDocuments({ landlord: landlord._id, sentAt: { $gte: since } }),
-			this.paymentModel.find({ landlord: landlord._id, status: PaymentStatus.PAID, paidAt: { $gte: since } }, { payout: 1, payoutStatus: 1 }).lean().exec(),
+			this.paymentModel.find({ landlord: landlord._id, status: PaymentStatus.PAID, refundedAt: null, paidAt: { $gte: since } }, { payout: 1, payoutStatus: 1 }).lean().exec(),
 			this.listingModel
 				.find({
 					landlord: landlord._id,
+					isDraft: { $ne: true },
 					$or: [
 						{ gasSafetyExpiry: { $lte: horizon } },
 						{ eicrExpiry: { $lte: horizon } },

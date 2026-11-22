@@ -1230,6 +1230,37 @@ describe("PaymentsService.updatePlan", () => {
 		await expect(service.updatePlan("t", { frequency: "SIX_MONTHS" } as any, tenant)).resolves.toBeDefined();
 		await expect(service.updatePlan("t", { frequency: "YEARLY" } as any, tenant)).rejects.toBeInstanceOf(BadRequestException);
 	});
+
+	it("refuses a frequency change once the tenancy has an end date, but keeps other settings editable", async () => {
+		const tenancy: any = { _id: new Types.ObjectId(), status: "ACTIVE", listing: new Types.ObjectId(), endDate: new Date("2027-01-15"), periodic: true, noticeGivenAt: new Date("2026-11-15") };
+		const listingModel = { findById: jest.fn().mockReturnValue(lean({ nation: "SCOTLAND", paymentPlans: ["MONTHLY", "SIX_MONTHS"] })) };
+		const planModel = { findOne: jest.fn().mockReturnValue(lean({ frequency: "MONTHLY" })), updateOne: jest.fn(), exists: jest.fn() };
+		const rentSchedule = { regenerate: jest.fn() };
+		const service = new PaymentsService(
+			{ exists: jest.fn().mockResolvedValue(true) } as any,
+			planModel as any,
+			{} as any,
+			listingModel as any,
+			{} as any,
+			{ findForTenant: jest.fn().mockResolvedValue(tenancy) } as any,
+			rentSchedule as any,
+			{} as any,
+			{ get: () => undefined } as any,
+			{} as any
+		);
+		jest.spyOn(service, "getPlan").mockResolvedValue({} as any);
+		const tenant = { _id: new Types.ObjectId() } as any;
+		await expect(service.updatePlan("t", { frequency: "SIX_MONTHS" } as any, tenant)).rejects.toThrow("Your tenancy is ending: the rent plan can no longer change.");
+		expect(planModel.updateOne).not.toHaveBeenCalled();
+		await expect(service.previewPlan("t", "SIX_MONTHS" as any, tenant)).rejects.toThrow("Your tenancy is ending");
+		await expect(service.updatePlan("t", { frequency: "MONTHLY", autopay: true } as any, tenant)).resolves.toBeDefined();
+		expect(rentSchedule.regenerate).not.toHaveBeenCalled();
+
+		// A fixed term (e.g. Northern Ireland) has an end date from day one: the guard leaves its plan changeable.
+		Object.assign(tenancy, { periodic: false, noticeGivenAt: null });
+		await expect(service.updatePlan("t", { frequency: "SIX_MONTHS" } as any, tenant)).resolves.toBeDefined();
+		expect(rentSchedule.regenerate).toHaveBeenCalledTimes(1);
+	});
 });
 
 describe("PaymentsService.mode", () => {

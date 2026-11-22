@@ -151,6 +151,15 @@ export const ApiRevokeShareDocs = () =>
 		ApiResponse({ status: 404, type: ErrorDto })
 	);
 
+export const ApiReopenShareDocs = () =>
+	applyDecorators(
+		ApiOperation({ summary: "Share the student's documents again with a landlord they stopped, for a fresh window." }),
+		ApiResponse({ status: 200, type: DocumentShareDto }),
+		ApiResponse({ status: 401, type: ErrorDto }),
+		ApiResponse({ status: 404, type: ErrorDto }),
+		ApiResponse({ status: 409, type: ErrorDto })
+	);
+
 export const ApiListPendingDocumentsDocs = () =>
 	applyDecorators(
 		ApiOperation({ summary: "Seek Passport uploads not yet marked as provided, oldest first (Seek staff, monitoring only)." }),

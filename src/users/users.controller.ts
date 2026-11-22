@@ -31,6 +31,7 @@ import {
 	ApiGetPassportDocs,
 	ApiListSharesDocs,
 	ApiRevokeShareDocs,
+	ApiReopenShareDocs,
 	ApiCreateUserDocs,
 	ApiGetAllUsersDocs,
 	ApiGetDocumentTypes,
@@ -236,6 +237,17 @@ export class UsersController {
 		@CurrentUser() user: User
 	) {
 		await this.sharesService.revoke(user._id.toString(), id);
+	}
+
+	@Post("me/shares/:id/reopen")
+	@Student()
+	@HttpCode(200)
+	@ApiReopenShareDocs()
+	async reopenShare(
+		@Param("id", ParseObjectIdPipe) id: string,
+		@CurrentUser() user: User
+	) {
+		return await this.sharesService.reopen(user._id.toString(), id);
 	}
 
 	// Declared before every ":id" route so "documents" is never read as an id.

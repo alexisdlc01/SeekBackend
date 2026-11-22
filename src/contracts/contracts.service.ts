@@ -19,6 +19,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { NotificationKind } from "../notifications/notification-kind.enum";
 import { notificationTarget, NotificationTargetKind } from "../notifications/links";
 import { User } from "../users/users.schema";
+import { RegistrationKind } from "../users/types/landlord-registration";
 import { MailService } from "../auth/mail.service";
 import { isKeyOwnedBy } from "../upload/object-key";
 import { allTenantsSigned, unsignedTenants } from "./signing";
@@ -106,7 +107,7 @@ export class ContractsService {
 		const tenancy = await this.tenancyModel
 			.findById(contract.tenancy)
 			.populate({ path: "listing", select: "streetAddress cityTown postcodeZIP billsIncluded licenceNumber" })
-			.populate({ path: "landlord", select: "name email companyName" })
+			.populate({ path: "landlord", select: "name email companyName registrations" })
 			.populate({ path: "tenants", select: "name email" })
 			.lean()
 			.exec();
@@ -137,6 +138,8 @@ export class ContractsService {
 			depositProtectedAt: tenancy.depositProtectedAt,
 			billsIncluded: listing?.billsIncluded,
 			licenceNumber: listing?.licenceNumber,
+			rentSmartWales: (tenancy.landlord as unknown as { registrations?: { kind: string; number: string }[] } | null)?.registrations
+				?.find(r => r.kind === RegistrationKind.RENT_SMART_WALES)?.number,
 			signatures: signatures.map(s => {
 				const signer = signers.find(u => u._id.equals(s.user));
 				return { name: signer?.name, email: signer?.email, signedAt: s.signedAt };

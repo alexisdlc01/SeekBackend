@@ -1,9 +1,11 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { DocumentShare, SHARE_TTL_MS } from "./document-share.schema";
 import { User } from "../users.schema";
 import { IDENTITY_DOCUMENT_TYPES } from "../types/document-type";
+import { Application } from "../../application/application.schema";
+import { ApplicationStage } from "../../application/enums/application-stage.enum";
 
 export interface ShareView {
 	_id: string;
@@ -12,6 +14,7 @@ export interface ShareView {
 	application: string | null;
 	expiresAt: Date;
 	revokedAt: Date | null;
+	revokedBy: "system" | "student" | null;
 	active: boolean;
 	createdAt?: Date;
 }
@@ -29,7 +32,9 @@ export class DocumentSharesService {
 		@InjectModel(DocumentShare.name)
 		private readonly shareModel: Model<DocumentShare>,
 		@InjectModel(User.name)
-		private readonly userModel: Model<User>
+		private readonly userModel: Model<User>,
+		@InjectModel(Application.name)
+		private readonly applicationModel: Model<Application>
 	) {}
 
 	/** Starts (or restarts) the 30-day erasure clock of these students' identity documents: a landlord can now open them. */
@@ -129,9 +134,34 @@ export class DocumentSharesService {
 			application: share.application?.toString() ?? null,
 			expiresAt: share.expiresAt,
 			revokedAt: share.revokedAt ?? null,
+			revokedBy: share.revokedBy ?? null,
 			active: isShareActive(share, now),
 			createdAt: share.createdAt
 		}));
+	}
+
+	/** The student undoes their own "Stop sharing". A share Seek closed (application over) never reopens here. */
+	async reopen(ownerId: string, shareId: string, now: Date = new Date()): Promise<ShareView> {
+		const filter = { _id: new Types.ObjectId(shareId), owner: new Types.ObjectId(ownerId), revokedBy: "student" as const };
+		const share = await this.shareModel.findOne(filter).lean().exec();
+		if (!share) throw new NotFoundException("Share not found");
+		// Closed: rejected, withdrawn, deleted, or the student has left the household.
+		if (share.application) {
+			const open = await this.applicationModel.exists({
+				_id: share.application,
+				applicants: filter.owner,
+				stage: { $nin: [ApplicationStage.REJECTED, ApplicationStage.WITHDRAWN] }
+			});
+			if (!open) throw new ConflictException("This application is closed.");
+		}
+		const result = await this.shareModel.updateOne(filter, {
+			$set: { revokedAt: null, revokedBy: null, expiresAt: new Date(now.getTime() + SHARE_TTL_MS) }
+		});
+		if (result.matchedCount === 0) throw new NotFoundException("Share not found");
+		await this.markIdentityShared([ownerId], now);
+		const view = (await this.listForOwner(ownerId, now)).find(item => item._id === shareId);
+		if (!view) throw new NotFoundException("Share not found");
+		return view;
 	}
 
 	async revoke(ownerId: string, shareId: string): Promise<void> {

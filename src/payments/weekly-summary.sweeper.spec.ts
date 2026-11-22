@@ -27,8 +27,9 @@ describe("WeeklySummarySweeper", () => {
 		await sweeper.sendAll(new Date("2026-11-16T10:00:00Z"));
 		expect(userModel.find.mock.calls[0][0]).toMatchObject({ "notificationPrefs.weeklySummary": true });
 		expect(applicationModel.countDocuments.mock.calls[0][0]).toMatchObject({ landlord: "l1" });
-		expect(paymentModel.find.mock.calls[0][0]).toMatchObject({ landlord: "l1" });
-		expect(listingModel.find.mock.calls[0][0]).toMatchObject({ landlord: "l1" });
+		// Refunded payments and draft listings stay out of the digest.
+		expect(paymentModel.find.mock.calls[0][0]).toMatchObject({ landlord: "l1", refundedAt: null });
+		expect(listingModel.find.mock.calls[0][0]).toMatchObject({ landlord: "l1", isDraft: { $ne: true } });
 		expect(tenancyModel.find.mock.calls[0][0]).toMatchObject({ landlord: "l1" });
 		expect(userModel.findOneAndUpdate.mock.calls[0][0]).toMatchObject({ _id: "l1" });
 		expect((userModel.findOneAndUpdate.mock.calls[0][0] as { $or: { weeklySummarySentAt: { $lt: Date } }[] }).$or[2].weeklySummarySentAt.$lt).toEqual(new Date("2026-11-16T00:00:00Z"));
