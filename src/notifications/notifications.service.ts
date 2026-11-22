@@ -18,7 +18,8 @@ const TEAM_SCOPE_KINDS: Record<TeamScope, NotificationKind[]> = {
 		NotificationKind.OFFER_ACCEPTED,
 		NotificationKind.OFFER_EXPIRED,
 		NotificationKind.OFFER_WITHDRAWN,
-		NotificationKind.APPLICATION_REJECTED
+		NotificationKind.APPLICATION_REJECTED,
+		NotificationKind.REPORT_ACTIONED
 	],
 	[TeamScope.LISTINGS]: [NotificationKind.LISTING_NEEDS_CHANGES],
 	[TeamScope.REPAIRS]: [NotificationKind.REPAIR_REPORTED, NotificationKind.REPAIR_UPDATED],

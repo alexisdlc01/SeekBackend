@@ -1,6 +1,6 @@
 import { ForbiddenException } from "@nestjs/common";
 import { Types } from "mongoose";
-import { BillsService } from "./bills.service";
+import { BillsService, allowanceFor } from "./bills.service";
 import { BillStatus } from "./bill.schema";
 
 const lean = <T>(value: T) => ({
@@ -140,5 +140,10 @@ describe("BillsService energy allowance", () => {
 			overagePerMember: tenants.map((user, index) => ({ user: user.toString(), amount: index === 0 ? 351 : 350 }))
 		});
 		expect(waterView.allowance).toBeNull();
+	});
+
+	it("ignores a housemate's manual Energy expense", () => {
+		const expense = { category: "ENERGY", amount: 5000, includedInRent: false } as any;
+		expect(allowanceFor(expense, { energyAllowance: 20000, tenants: [] })).toBeNull();
 	});
 });

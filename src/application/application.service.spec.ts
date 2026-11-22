@@ -640,6 +640,27 @@ describe("ApplicationService", () => {
 			expect((applicationModel as any).updateOne).not.toHaveBeenCalled();
 		});
 
+		it("declines a deleted landlord's open applications, closes their chats and keeps going after a failure", async () => {
+			const failing = new Types.ObjectId();
+			const find = jest.fn().mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue([
+				{ _id: failing, conversation: new Types.ObjectId() },
+				{ _id: applicationId, conversation: conversationId }
+			]) }) });
+			Object.assign(applicationModel, { find });
+			conversationModel.updateOne.mockReturnValue({ exec: jest.fn().mockResolvedValue({}) });
+			const reject = jest.spyOn(service, "reject").mockImplementation(async id => {
+				if (id === failing.toString()) throw new BadRequestException("Only open applications can be declined.");
+			});
+
+			await service.releaseDeletedLandlord(userId);
+
+			expect(find.mock.calls[0][0]).toEqual({ landlord: userId, stage: { $in: ["SENT", "VIEWED", "OFFERED"] } });
+			expect(reject).toHaveBeenCalledWith(applicationId.toString(), "The landlord has left Seek");
+			expect(conversationModel.updateOne).toHaveBeenCalledTimes(1);
+			expect(conversationModel.updateOne).toHaveBeenCalledWith({ _id: conversationId }, { $set: { closedAt: expect.any(Date) } });
+			reject.mockRestore();
+		});
+
 		it("does not let the creator leave their own application", async () => {
 			mockApplication();
 

@@ -31,7 +31,7 @@ function setup() {
 		referencedDocumentKeys: jest.fn().mockResolvedValue([]),
 		settleForDeletedTenant: jest.fn().mockResolvedValue(undefined)
 	};
-	const applications = { releaseDeletedMember: jest.fn().mockResolvedValue(undefined) };
+	const applications = { releaseDeletedMember: jest.fn().mockResolvedValue(undefined), releaseDeletedLandlord: jest.fn().mockResolvedValue(undefined) };
 	const mail = { sendTeamInviteEmail: jest.fn().mockResolvedValue(undefined) };
 	const notifications = { notifyMany: jest.fn().mockResolvedValue(undefined) };
 	const service = new AccountService(
@@ -198,6 +198,13 @@ describe("AccountService deleteAccount", () => {
 		await service.deleteAccount(id);
 		expect(applications.releaseDeletedMember).toHaveBeenCalledWith(id);
 		expect(applications.releaseDeletedMember.mock.invocationCallOrder[0]).toBeGreaterThan(userModel.updateOne.mock.invocationCallOrder[0]);
+	});
+
+	it("declines the deleted landlord's open applications", async () => {
+		const { service, applications } = setup();
+		const id = new Types.ObjectId();
+		await service.deleteAccount(id);
+		expect(applications.releaseDeletedLandlord).toHaveBeenCalledWith(id);
 	});
 
 	it("disconnects every mailbox and revokes landlord shares before closing the account", async () => {

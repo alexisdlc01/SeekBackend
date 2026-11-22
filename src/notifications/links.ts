@@ -83,7 +83,7 @@ export const NOTIFICATION_ROUTES: Record<NotificationTargetKind, Record<Audience
 	},
 	[NotificationTargetKind.REPAIRS]: {
 		student: { screen: NotificationScreen.REPAIRS, web: "/student/home", mobile: "/(app)/repairs" },
-		landlord: { screen: NotificationScreen.DASHBOARD, web: "/dashboard" }
+		landlord: { screen: NotificationScreen.DASHBOARD, web: "/repairs" }
 	},
 	[NotificationTargetKind.APPLICATION]: {
 		student: { screen: NotificationScreen.APPLICATIONS, web: "/student/home", mobile: "/(app)/(tabs)/applied" },

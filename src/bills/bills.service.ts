@@ -16,7 +16,8 @@ type Allowanced = { energyAllowance?: number | null; tenants?: { toString(): str
  * bill covers, against what the bill used. Anything over is split between the tenants.
  */
 export function allowanceFor(bill: Bill, tenancy: Allowanced) {
-	if (bill.category !== BillCategory.ENERGY || tenancy?.energyAllowance == null) return null;
+	// Only the landlord's bills-included energy bill counts; a housemate's "Energy" expense is not the utility.
+	if (bill.category !== BillCategory.ENERGY || !bill.includedInRent || tenancy?.energyAllowance == null) return null;
 	const days =
 		bill.periodStart && bill.periodEnd
 			? (new Date(bill.periodEnd).getTime() - new Date(bill.periodStart).getTime()) / 86_400_000

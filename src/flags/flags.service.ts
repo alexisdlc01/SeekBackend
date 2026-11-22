@@ -214,9 +214,11 @@ export class FlagsService {
 		// resolvedFlag: resolve() already moved that flag out of UNDER_REVIEW, its reporter must be told too.
 		const open = { status: FlagStatus.UNDER_REVIEW };
 		const reporters = await this.flagModel.distinct("createdBy", { reportedUser: id, ...(resolvedFlag ? { $or: [open, { _id: resolvedFlag }] } : open) }).exec();
+		// A team member reads the owner's notifications, so their report's outcome goes to the account they work for.
+		const accountOf = await this.accountsOf(reporters);
 		await this.notifications?.notifyMany(
 			reporters.map(reporter => ({
-				user: reporter,
+				user: accountOf.get(reporter.toString()) ?? reporter,
 				kind: NotificationKind.REPORT_ACTIONED,
 				title: "We acted on your report",
 				body: SUSPENDED_RESPONSE,

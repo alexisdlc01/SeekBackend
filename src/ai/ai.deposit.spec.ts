@@ -59,6 +59,7 @@ describe("bills advice and the energy fair-use allowance", () => {
 		category: "ENERGY",
 		provider: "Octopus",
 		amount,
+		includedInRent: true,
 		status: "PAID",
 		periodStart: new Date("2026-10-01T00:00:00Z"),
 		periodEnd: new Date("2026-10-31T00:00:00Z")
