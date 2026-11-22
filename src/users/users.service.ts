@@ -32,7 +32,7 @@ const REFERENCE_ASK = "Could you write a short reference about them as a tenant 
 const REFERENCE_EMAILS: Record<RequestReferenceDto["type"], (student: string) => { subject: string; ask: string }> = {
 	[DocumentType.GUARANTOR_AGREEMENT]: student => ({
 		subject: `${student} asked you to be their UK guarantor`,
-		ask: `Would you be ${student}'s UK guarantor? A guarantor agrees to pay the rent if the tenant can't. If you agree, reply to say so and the landlord will send you the guarantor agreement to sign.`
+		ask: `Would you be ${student}'s UK guarantor? A guarantor agrees to pay the rent if the tenant can't. If you agree, please reply with a signed guarantor letter or agreement attached as a PDF.`
 	}),
 	[DocumentType.LANDLORD_REFERENCE]: student => ({ subject: `Landlord reference for ${student}`, ask: REFERENCE_ASK }),
 	[DocumentType.AGENT_REFERENCE]: student => ({ subject: `Letting agent reference for ${student}`, ask: REFERENCE_ASK }),

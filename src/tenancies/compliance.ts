@@ -33,20 +33,27 @@ export const DEPOSIT_PROTECTION_DAYS = 30;
 /**
  * Tenant Fees Act cap: five weeks' rent when annual rent is under £50,000.
  * Scotland: Rent (Scotland) Act 1984 s.90, two months' rent.
+ * Northern Ireland: Private Tenancies Act (NI) 2022, one month's rent.
  */
 export function depositCapPence(monthlyRentPence: number, nation?: unknown): number {
 	if (nation === Nation.SCOTLAND) return monthlyRentPence * 2;
+	if (nation === Nation.NORTHERN_IRELAND) return monthlyRentPence;
 	return Math.floor(((monthlyRentPence * 12) / 52) * 5);
 }
 
-/** "five-week cap" or, in Scotland, "two-month cap". */
+/** "five-week cap", "two-month cap" (Scotland) or "one-month cap" (Northern Ireland). */
 export function depositCapName(nation?: unknown): string {
-	return nation === Nation.SCOTLAND ? "two-month cap" : "five-week cap";
+	return nation === Nation.SCOTLAND ? "two-month cap" : nation === Nation.NORTHERN_IRELAND ? "one-month cap" : "five-week cap";
 }
 
 /** How long the landlord has to protect the deposit, for messages. */
 export function depositProtectionWindow(nation?: unknown): string {
-	return nation === Nation.SCOTLAND ? "30 working days of the tenancy starting" : "30 days";
+	return nation === Nation.SCOTLAND ? "30 working days of the tenancy starting" : `${protectionDays(nation)} days`;
+}
+
+/** Days from receipt: 28 in Northern Ireland (nidirect), 30 in England and Wales. */
+function protectionDays(nation?: unknown): number {
+	return nation === Nation.NORTHERN_IRELAND ? 28 : DEPOSIT_PROTECTION_DAYS;
 }
 
 /** Tenant Fees Act: a holding deposit may not exceed one week's rent. */
@@ -72,7 +79,7 @@ export function depositProtectionDeadline(
 	// Scotland: 30 working days from the start of the tenancy (Tenancy Deposit Schemes (Scotland) Regulations 2011).
 	if (nation === Nation.SCOTLAND) return tenancy.startDate ? addWorkingDays(new Date(tenancy.startDate), 30) : null;
 	if (!tenancy.depositReceivedAt) return null;
-	return new Date(new Date(tenancy.depositReceivedAt).getTime() + DEPOSIT_PROTECTION_DAYS * DAY_MS);
+	return new Date(new Date(tenancy.depositReceivedAt).getTime() + protectionDays(nation) * DAY_MS);
 }
 
 // shortcut: skips weekends but not bank holidays, so the deadline can land a day or two early; add a holiday calendar if landlords need the exact date.
@@ -217,7 +224,7 @@ export function tenancyCompliance(
 			kind: "DEPOSIT_NOT_YET_RECEIVED",
 			dueDate: new Date(tenancy.startDate),
 			severity: "low",
-			message: "Record when you received the deposit: it must be protected within 30 days of that date."
+			message: `Record when you received the deposit: it must be protected within ${depositProtectionWindow(nation)} of that date.`
 		});
 	}
 	if (tenancy.depositAmount > 0 && !tenancy.depositProtectedAt && deadline) {
@@ -229,7 +236,7 @@ export function tenancyCompliance(
 			dueDate,
 			severity: severityFor(dueDate, now),
 			message: overdue
-				? `Deposit is not protected and the ${nation === Nation.SCOTLAND ? "30-working-day" : "30-day"} deadline has passed.`
+				? `Deposit is not protected and the ${nation === Nation.SCOTLAND ? "30-working-day" : `${protectionDays(nation)}-day`} deadline has passed.`
 				: `Protect the deposit in a government-approved scheme within ${depositProtectionWindow(nation)}.`
 		});
 	}

@@ -313,7 +313,7 @@ export class InboxService {
 					.lean()
 					.exec(),
 				this.emailModel.find({ user: uid, conversation: conversationId }).sort({ receivedAt: 1 }).lean().exec(),
-				this.conversationModel.findById(conversationId).select("name").lean().exec()
+				this.conversationModel.findById(conversationId).select("name closedAt").lean().exec()
 			]);
 			if (!conversation) throw new NotFoundException("Conversation not found.");
 			await Promise.all([
@@ -351,7 +351,8 @@ export class InboxService {
 				sub: summary?.sub ?? "Seek conversation",
 				category,
 				tenancyId,
-				canReplyBySeek: true,
+				// A closed chat refuses new Seek messages (ConversationService.sendMessage): hide the composer.
+				canReplyBySeek: !conversation.closedAt,
 				canReplyByEmail: Boolean(replyFrom),
 				replyFrom,
 				suggestedReply: await this.suggestedReply(user, items, category),

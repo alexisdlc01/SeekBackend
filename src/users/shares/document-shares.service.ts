@@ -26,6 +26,11 @@ export function isShareActive(
 	return !share.revokedAt && new Date(share.expiresAt).getTime() > now.getTime();
 }
 
+/** Still open for this student: not rejected or withdrawn, and they are still an applicant. */
+function openApplicationFilter(owner: Types.ObjectId) {
+	return { applicants: owner, stage: { $nin: [ApplicationStage.REJECTED, ApplicationStage.WITHDRAWN] } };
+}
+
 @Injectable()
 export class DocumentSharesService {
 	constructor(
@@ -127,7 +132,12 @@ export class DocumentSharesService {
 			.sort({ expiresAt: -1 })
 			.lean()
 			.exec();
-		return shares.map(share => ({
+		// A stop on an application that has since closed can never be shared again (reopen() is 409): hide it.
+		const stopped = shares.filter(share => share.revokedBy === "student" && share.application).map(share => share.application);
+		const open = stopped.length
+			? new Set((await this.applicationModel.distinct("_id", { _id: { $in: stopped }, ...openApplicationFilter(new Types.ObjectId(ownerId)) })).map(String))
+			: new Set<string>();
+		return shares.filter(share => share.revokedBy !== "student" || !share.application || open.has(String(share.application))).map(share => ({
 			_id: share._id.toString(),
 			viewer: share.viewer as unknown as ShareView["viewer"],
 			listing: (share.listing ?? null) as unknown as ShareView["listing"],
@@ -147,11 +157,7 @@ export class DocumentSharesService {
 		if (!share) throw new NotFoundException("Share not found");
 		// Closed: rejected, withdrawn, deleted, or the student has left the household.
 		if (share.application) {
-			const open = await this.applicationModel.exists({
-				_id: share.application,
-				applicants: filter.owner,
-				stage: { $nin: [ApplicationStage.REJECTED, ApplicationStage.WITHDRAWN] }
-			});
+			const open = await this.applicationModel.exists({ _id: share.application, ...openApplicationFilter(filter.owner) });
 			if (!open) throw new ConflictException("This application is closed.");
 		}
 		const result = await this.shareModel.updateOne(filter, {

@@ -885,6 +885,26 @@ describe("ApplicationService pipeline", () => {
 			expect(conversationModel.updateOne).toHaveBeenCalledWith({ _id: conversationId }, { $set: { closedAt: expect.any(Date) } });
 		});
 
+		it("tells the landlord (with the booked viewing) and the housemates when the owner deletes a viewed application", async () => {
+			const housemate = new Types.ObjectId();
+			(service as any).converstaionModel = { updateOne: jest.fn().mockReturnValue({ exec: jest.fn() }) };
+			const row = stored(ApplicationStage.VIEWED, { owner: studentId, applicants: [studentId, housemate], viewingAt: future });
+			applicationModel.findById.mockReturnValue({ lean: () => exec(row) });
+			applicationModel.findOneAndDelete = jest.fn().mockResolvedValue(row);
+
+			await service.delete(applicationId.toString());
+
+			const [inputs] = notifications.notifyMany.mock.calls[0];
+			expect(inputs.map((input: any) => input.user)).toEqual([landlordId, housemate]);
+			expect(inputs[0]).toMatchObject({ kind: "OFFER_WITHDRAWN", title: "A household withdrew its application for Cotham Flat", body: expect.stringMatching(/viewing booked for .* is cancelled/), dedupeKey: `application-withdrawn:${applicationId}` });
+			// The row is gone: the landlord link opens the applicants list, not the deleted application.
+			expect(inputs[0].link).toBe("/applicants");
+
+			notifications.notifyMany.mockClear();
+			await service.delete(applicationId.toString(), false);
+			expect(notifications.notifyMany.mock.calls[0][0].map((input: any) => input.user)).toEqual([landlordId]);
+		});
+
 		it("withdraws an offered household and immediately records its simulated holding-deposit refund", async () => {
 			const conversation = new Types.ObjectId();
 			const paid = {
