@@ -393,6 +393,11 @@ export class AccountService {
 			?.get(ApplicationService, { strict: false })
 			.releaseDeletedMember(userId)
 			.catch(error => this.logger.warn(`Leaving applications after deleting ${userId.toString()} failed: ${(error as Error).message}`));
+		// Households waiting on this landlord are declined: shares revoked, holding deposits refunded, students told.
+		await this.moduleRef
+			?.get(ApplicationService, { strict: false })
+			.releaseDeletedLandlord(userId)
+			.catch(error => this.logger.warn(`Closing applications after deleting landlord ${userId.toString()} failed: ${(error as Error).message}`));
 		return { deletedAt };
 	}
 }

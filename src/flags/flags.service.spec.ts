@@ -222,6 +222,18 @@ describe("FlagsService", () => {
 			expect(notifications.notify).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "LISTING_NEEDS_CHANGES" }));
 		});
 
+		it("sends a team member's report outcome to the account owner, deduped per reporter", async () => {
+			const { service, flagModel, userModel, notifications } = setup();
+			const member = new Types.ObjectId();
+			const owner = new Types.ObjectId();
+			flagModel.distinct.mockReturnValue(exec([member]));
+			userModel.find.mockReturnValue({ lean: () => exec([{ _id: owner, team: [{ user: member }] }]) });
+			await service.suspend(reported, "first");
+			const [row] = notifications.notifyMany.mock.calls[0][0];
+			expect(row).toMatchObject({ user: owner, kind: "REPORT_ACTIONED" });
+			expect(row.dedupeKey).toContain(`:${member.toString()}:`);
+		});
+
 		it("counts a team member's report as their owner's, and the owner and member as one reporter", async () => {
 			// The caller (reporter) is on owner's team; chats and tenancies hold the owner's id, never the member's.
 			const owner = new Types.ObjectId();

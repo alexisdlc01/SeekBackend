@@ -3,6 +3,7 @@ import {
 	ConflictException,
 	ForbiddenException,
 	Injectable,
+	Logger,
 	NotFoundException
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
@@ -41,6 +42,8 @@ const HOUSEHOLD_OPEN_STAGES = [ApplicationStage.NOT_SENT, ApplicationStage.SENT,
 
 @Injectable()
 export class ApplicationService {
+	private readonly logger = new Logger(ApplicationService.name);
+
 	constructor(
 		@InjectModel(Application.name)
 		private readonly applicationModel: Model<Application>,
@@ -1218,6 +1221,25 @@ export class ApplicationService {
 			if (application.stage === ApplicationStage.OFFERED) {
 				await this.dropUnpaidHoldingDeposits(application._id, gone);
 				await this.refundHoldingDeposits(application._id, gone);
+			}
+		}
+	}
+
+	/** A deleted landlord declines every open application (shares revoked, holding deposits refunded, students told) and closes its chat. */
+	async releaseDeletedLandlord(userId: Types.ObjectId): Promise<void> {
+		const applications = await this.applicationModel
+			.find({ landlord: userId, stage: { $in: LANDLORD_OPEN_STAGES } }, { _id: 1, conversation: 1 })
+			.lean()
+			.exec();
+		for (const application of applications) {
+			try {
+				await this.reject(application._id.toString(), "The landlord has left Seek");
+				if (application.conversation) {
+					await this.converstaionModel.updateOne({ _id: application.conversation }, { $set: { closedAt: new Date() } }).exec();
+				}
+			} catch (error) {
+				// One application must not stop the others; the account is already deleted.
+				this.logger.warn(`Closing application ${application._id.toString()} of deleted landlord ${userId.toString()} failed: ${(error as Error).message}`);
 			}
 		}
 	}

@@ -1,7 +1,7 @@
 import { NOTIFICATION_ROUTES, NotificationTargetKind, notificationTarget } from "./links";
 
 /** Routes the clients actually declare (seek-web router, seek-mobile app/ folder). */
-const WEB_ROUTES = ["/student/home", "/student/home/rent", "/student/home/deposit", "/rent", "/dashboard", "/contracts", "/applicants", "/application", "/student/inbox", "/chat"];
+const WEB_ROUTES = ["/student/home", "/student/home/rent", "/student/home/deposit", "/rent", "/dashboard", "/repairs", "/contracts", "/applicants", "/application", "/student/inbox", "/chat"];
 const MOBILE_ROUTES = ["/(app)/(tabs)/rent", "/(app)/deposit", "/(app)/(tabs)/my-home", "/(app)/contract", "/(app)/repairs", "/(app)/(tabs)/applied", "/(app)/chat/[id]"];
 
 describe("notification links", () => {
@@ -43,5 +43,9 @@ describe("notification links", () => {
 		});
 		expect(notificationTarget("student", NotificationTargetKind.COMPLIANCE).link).toBe("/student/home/deposit");
 		expect(notificationTarget("landlord", NotificationTargetKind.COMPLIANCE, "t1").link).toBe("/dashboard");
+	});
+
+	it("sends a landlord's repair notification to the Repairs page", () => {
+		expect(notificationTarget("landlord", NotificationTargetKind.REPAIRS).link).toBe("/repairs");
 	});
 });
