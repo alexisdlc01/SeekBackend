@@ -568,6 +568,16 @@ export class ContractsService {
 					...notificationTarget("landlord", NotificationTargetKind.CONTRACTS, tenancy._id),
 					dedupeKey: `contract-signed:${contract._id.toString()}`
 				});
+				await this.notifications.notifyMany(
+					(await this.liveTenants(tenancy.tenants)).map(tenant => ({
+						user: tenant,
+						kind: NotificationKind.CONTRACT_SIGNED,
+						title: "Everyone has signed",
+						body: contract.title,
+						...notificationTarget("student", NotificationTargetKind.CONTRACTS, tenancy._id),
+						dedupeKey: `contract-signed:${contract._id.toString()}`
+					}))
+				);
 				// The pipeline ends here: an accepted household with a signed agreement.
 				if (tenancy.application) {
 					await this.applicationModel

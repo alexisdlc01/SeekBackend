@@ -292,19 +292,24 @@ describe("ContractsService signed email", () => {
 				{ _id: landlord, email: "priya@example.com", name: "Priya" }
 			])
 		};
+		const notifications = { notify: jest.fn(), notifyMany: jest.fn() };
 		const mail = { sendContractSignedEmail: mailError ? jest.fn().mockRejectedValue(mailError) : jest.fn().mockResolvedValue(undefined) };
 		const service = new ContractsService(
 			contractModel as any, {} as any, {} as any, {} as any, {} as any,
 			{ findForTenant: jest.fn().mockResolvedValue(tenancy), appendDocument: jest.fn() } as any,
-			{ notify: jest.fn() } as any, { get: () => "secret" } as any, userModel as any, mail as any
+			notifications as any, { get: () => "secret" } as any, userModel as any, mail as any
 		);
-		return { service, contract, mail };
+		return { service, contract, mail, notifications };
 	}
 
 	it("emails every tenant and the landlord once the last tenant signs, even if mail fails", async () => {
-		const { service, contract, mail } = setup([maya], new Error("Mailgun down"));
+		const { service, contract, mail, notifications } = setup([maya], new Error("Mailgun down"));
 		const signed = await service.sign(contract._id.toString(), { _id: tom } as any);
 		expect(signed.status).toBe(ContractStatus.SIGNED);
+		expect(notifications.notifyMany).toHaveBeenCalledWith([
+			expect.objectContaining({ user: maya, title: "Everyone has signed", dedupeKey: `contract-signed:${contract._id}` }),
+			expect.objectContaining({ user: tom })
+		]);
 		expect(mail.sendContractSignedEmail).toHaveBeenCalledTimes(3);
 		expect(mail.sendContractSignedEmail).toHaveBeenCalledWith("maya@example.com", "Maya", "Tenancy agreement", "/student/home");
 		expect(mail.sendContractSignedEmail).toHaveBeenCalledWith("priya@example.com", "Priya", "Tenancy agreement", "/contracts");
@@ -339,7 +344,7 @@ describe("ContractsService after a tenant deletes their account", () => {
 				{ _id: landlord, email: "priya@example.com", name: "Priya" }
 			])
 		};
-		const notifications = { notify: jest.fn() };
+		const notifications = { notify: jest.fn(), notifyMany: jest.fn() };
 		const mail = { sendContractSignedEmail: jest.fn().mockResolvedValue(undefined) };
 		const service = new ContractsService(
 			contractModel as any, {} as any, {} as any, { find: () => lean([tenancy]) } as any, {} as any,

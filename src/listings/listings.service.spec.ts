@@ -36,7 +36,7 @@ describe("ListingsService", () => {
 		service = new ListingsService(
 			listingModel as any,
 			gateway as unknown as ListingsGateway,
-			{} as ConfigService,
+			{ get: jest.fn() } as unknown as ConfigService,
 			applicationModel as any,
 			tenancyModel as any
 		);
@@ -215,6 +215,14 @@ describe("ListingsService", () => {
 			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { registerOfTitleKey: "private/old.pdf" } as never);
 			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { registerOfTitleKey: ownKey } as never);
 			expect(listingModel.findOneAndUpdate).toHaveBeenCalledTimes(2);
+		});
+
+		it("re-geocodes a live listing when only the postcode changes, filling the rest from the stored address", async () => {
+			listingModel.findOne = jest.fn().mockReturnValue(found({ isDraft: false, streetAddress: "1 Road", cityTown: "St Andrews", postcodeZIP: "KY16 9AA", country: "UK" }));
+			const geocode = jest.spyOn(service, "getCoordinates").mockResolvedValue({ formatted_address: "1 Road, KY16 9XX", lat: 56.3, lng: -2.8 });
+			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { postcodeZIP: "KY16 9XX" } as never);
+			expect(geocode).toHaveBeenCalledWith("1 Road", "St Andrews", "KY16 9XX", "UK");
+			expect(updateOf().location).toEqual({ type: "Point", coordinates: [-2.8, 56.3] });
 		});
 
 		it("sends a verified live listing back to moderation when its address changes", async () => {
