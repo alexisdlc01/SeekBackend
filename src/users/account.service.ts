@@ -14,6 +14,7 @@ import { ConnectionStatus, EmailConnection } from "../connectors/email-connectio
 import { ConnectorsService } from "../connectors/connectors.service";
 import { UploadService } from "../upload/upload.service";
 import { isKeyOwnedBy } from "../upload/object-key";
+import { referencedKeys } from "../upload/referenced-keys";
 import { Listing } from "../listings/listings.schema";
 import { ModerationStatus } from "../listings/enums/moderation-status.enum";
 import { ContractsService } from "../contracts/contracts.service";
@@ -169,17 +170,14 @@ export class AccountService {
 	 * Keys a tenancy, a contract or a synced email still points at: those files must stay.
 	 * `leavingUser`'s own emails are ignored, as they are deleted with the account.
 	 */
-	private async referencedKeys(candidates: string[], leavingUser?: Types.ObjectId): Promise<Set<string>> {
-		if (!candidates.length) return new Set();
-		const tenancyKeys = (await this.tenancyModel.distinct("documents.key", { "documents.key": { $in: candidates } })).map(String);
-		const contractKeys = this.moduleRef
-			? await this.moduleRef.get(ContractsService, { strict: false }).referencedDocumentKeys(candidates)
-			: candidates;
-		const messageKeys = (await this.messageModel.distinct("attachments.key", {
-			...(leavingUser ? { user: { $ne: leavingUser } } : {}),
-			"attachments.key": { $in: candidates }
-		})).map(String);
-		return new Set([...tenancyKeys, ...contractKeys, ...messageKeys]);
+	private referencedKeys(candidates: string[], leavingUser?: Types.ObjectId): Promise<Set<string>> {
+		return referencedKeys({
+			tenancyModel: this.tenancyModel,
+			messageModel: this.messageModel,
+			contractKeys: async keys => this.moduleRef
+				? this.moduleRef.get(ContractsService, { strict: false }).referencedDocumentKeys(keys)
+				: keys
+		}, candidates, leavingUser);
 	}
 
 	/** A Seek Passport file replaced by a new upload is erased, unless the account or anything else still uses it. A failure only logs. */

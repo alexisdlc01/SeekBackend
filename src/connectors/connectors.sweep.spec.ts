@@ -1,4 +1,5 @@
 import { BadRequestException, ServiceUnavailableException } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import { Types } from "mongoose";
 import { ConnectorsService } from "./connectors.service";
 import { ConnectionStatus, EmailProvider } from "./email-connection.schema";
@@ -17,7 +18,7 @@ function setup(connections: Record<string, unknown>[], aggregate: unknown[] = []
 	};
 	const messageModel = { aggregate: jest.fn().mockResolvedValue(aggregate) };
 	const none = {} as any;
-	const service = new ConnectorsService(config as any, connectionModel as any, messageModel as any, none, none, none, none, none, none, none, none);
+	const service = new ConnectorsService(config as any, connectionModel as any, messageModel as any, none, none, none, none, none, none, none, none, none);
 	return { service, connectionModel, messageModel };
 }
 
@@ -137,12 +138,65 @@ describe("ConnectorsService disconnect", () => {
 	it("clears lastSyncAt so a reconnect re-imports the history it deleted", async () => {
 		const imap = { ...conn(EmailProvider.IMAP), lastSyncAt: new Date("2026-11-10T00:00:00Z") };
 		const { service, connectionModel, messageModel } = setup([imap]);
-		Object.assign(messageModel, { deleteMany: jest.fn().mockResolvedValue({ deletedCount: 40 }) });
+		Object.assign(messageModel, { deleteMany: jest.fn().mockResolvedValue({ deletedCount: 40 }), distinct: jest.fn().mockResolvedValue([]) });
 
 		await service.disconnect({ _id: owner } as any, imap._id.toString());
 		expect((connectionModel.updateOne.mock.calls[0] as any)[1].$set).toMatchObject({
 			status: ConnectionStatus.DISCONNECTED,
 			lastSyncAt: null
+		});
+	});
+
+	describe("erases the mailbox's attachment files", () => {
+		const key = () => `private/${owner.toString()}/${randomUUID()}.pdf`;
+		const run = (deletePrivateObject: jest.Mock) => {
+			const imap = conn(EmailProvider.IMAP);
+			const { connectionModel } = setup([imap]);
+			const unused = key();
+			const otherEmail = key();
+			const filedToTenancy = key();
+			const inPassport = key();
+			const notOwned = `private/${new Types.ObjectId().toString()}/${randomUUID()}.pdf`;
+			const messageModel = {
+				deleteMany: jest.fn().mockResolvedValue({ deletedCount: 3 }),
+				distinct: jest.fn()
+					// The mailbox's own emails, read before they are deleted.
+					.mockResolvedValueOnce([unused, otherEmail, filedToTenancy, inPassport, notOwned, "public/x.png"])
+					// Emails left afterwards (another mailbox) that still point at a file.
+					.mockResolvedValueOnce([otherEmail])
+			};
+			const tenancyModel = { distinct: jest.fn().mockResolvedValue([filedToTenancy]) };
+			const userModel = { distinct: jest.fn().mockResolvedValue([inPassport]) };
+			const contractModel = { distinct: jest.fn().mockResolvedValue([]) };
+			const none = {} as any;
+			const service = new ConnectorsService(
+				{ get: () => "test" } as any, connectionModel as any, messageModel as any, tenancyModel as any, none,
+				userModel as any, none, none, none, { deletePrivateObject } as any, none, contractModel as any
+			);
+			return { service, imap, unused, notOwned, messageModel };
+		};
+
+		it("deletes an attachment nothing else uses and keeps one still referenced", async () => {
+			const deletePrivateObject = jest.fn().mockResolvedValue(undefined);
+			const { service, imap, unused, messageModel } = run(deletePrivateObject);
+
+			await expect(service.disconnect({ _id: owner } as any, imap._id.toString())).resolves.toMatchObject({ removedEmails: 3 });
+			expect(messageModel.distinct.mock.calls[0][1]).toMatchObject({ connection: imap._id });
+			// Only the unused file, and only after its emails were deleted; never another user's file or a public one.
+			expect(deletePrivateObject.mock.calls).toEqual([[unused]]);
+			expect(messageModel.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(deletePrivateObject.mock.invocationCallOrder[0]);
+		});
+
+		it("still disconnects when S3 refuses the delete", async () => {
+			const s3Error = Object.assign(new Error("Service Unavailable"), { name: "ServiceUnavailable", $metadata: { httpStatusCode: 503 } });
+			const deletePrivateObject = jest.fn().mockRejectedValue(s3Error);
+			const { service, imap } = run(deletePrivateObject);
+
+			await expect(service.disconnect({ _id: owner } as any, imap._id.toString())).resolves.toMatchObject({
+				status: ConnectionStatus.DISCONNECTED,
+				removedEmails: 3
+			});
+			expect(deletePrivateObject).toHaveBeenCalledTimes(1);
 		});
 	});
 });
@@ -189,7 +243,7 @@ describe("ConnectorsService store files a referee's reply", () => {
 
 	it("replaces only an expired or rejected reference, atomically, and says whether it added one", async () => {
 		const userModel = { updateOne: jest.fn().mockResolvedValueOnce({}).mockResolvedValueOnce({ modifiedCount: 0 }) };
-		const service = new ConnectorsService({ get: () => undefined } as any, {} as any, {} as any, {} as any, {} as any, userModel as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+		const service = new ConnectorsService({ get: () => undefined } as any, {} as any, {} as any, {} as any, {} as any, userModel as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
 		const add = () => (service as any).addReference(student, "LANDLORD_REFERENCE", "maya.pdf", { url: "https://files/x.pdf", key: null });
 
 		expect(await add()).toBe(false);

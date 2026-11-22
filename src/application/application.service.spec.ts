@@ -14,6 +14,9 @@ function documentFrom(value: Record<string, unknown>) {
 	};
 }
 
+// No tenancy has ended unless a test says so.
+const tenancyModel = { distinct: jest.fn(() => ({ exec: jest.fn().mockResolvedValue([] as Types.ObjectId[]) })) };
+
 describe("ApplicationService", () => {
 	const listingId = new Types.ObjectId();
 	const userId = new Types.ObjectId();
@@ -86,6 +89,7 @@ describe("ApplicationService", () => {
 			{} as never,
 			{} as never,
 			{} as never,
+			tenancyModel as never,
 		);
 	});
 
@@ -172,10 +176,28 @@ describe("ApplicationService", () => {
 		await expect(applying).rejects.toThrow(ConflictException);
 		await expect(applying).rejects.toThrow("Another household has already accepted this property.");
 		expect(applicationModel.exists.mock.calls[0][0]).toEqual({
+			_id: { $nin: [] },
 			listing: listingId,
 			stage: { $in: [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] },
 		});
 		expect(conversationModel.create).not.toHaveBeenCalled();
+	});
+
+	it("lets a property again once the accepted household's tenancy has ended, but not while it runs", async () => {
+		const endedApplication = new Types.ObjectId();
+		tenancyModel.distinct.mockClear().mockReturnValueOnce({ exec: jest.fn().mockResolvedValue([endedApplication]) });
+		applicationModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) });
+		// Like Mongo: only the ended household's application is accepted, and the query leaves it out.
+		applicationModel.exists.mockImplementation(async (filter: any) =>
+			filter._id.$nin.some((id: Types.ObjectId) => id.equals(endedApplication)) ? null : { _id: endedApplication });
+		conversationModel.create.mockResolvedValue({ _id: conversationId });
+		applicationModel.create.mockResolvedValue(documentFrom({ _id: applicationId, listing: listingId, owner: userId, applicants: [userId] }));
+
+		await expect(service.create(listingId.toString(), user)).resolves.toBeDefined();
+		expect(tenancyModel.distinct).toHaveBeenCalledWith("application", { listing: listingId, status: "ENDED" });
+
+		// Tenancy still ACTIVE, PENDING_ACCEPTANCE or under notice: not ENDED, so the listing stays let.
+		await expect(service.create(listingId.toString(), user)).rejects.toThrow("Another household has already accepted this property.");
 	});
 
 	it("refuses to send an application once another household has accepted the property (409)", async () => {
@@ -247,7 +269,7 @@ describe("ApplicationService", () => {
 
 		await expect(service.create(listingId.toString(), user)).rejects.toThrow(ConflictException);
 		expect(applicationModel.exists.mock.calls[0][0]).toEqual({
-			_id: { $ne: applicationId },
+			_id: { $nin: [applicationId] },
 			listing: listingId,
 			stage: { $in: [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] },
 		});
@@ -714,7 +736,8 @@ describe("ApplicationService.getAllByListing", () => {
 		sharesService as never,
 		{} as never,
 		{} as never,
-		{} as never
+		{} as never,
+		tenancyModel as never
 	);
 
 	it("only returns applications the student has actually sent", async () => {
@@ -808,6 +831,7 @@ describe("ApplicationService pipeline", () => {
 			{ createFromApplication: jest.fn().mockResolvedValue({ _id: new Types.ObjectId() }), assertNoCurrentTenancy: jest.fn() } as never,
 			notifications as never,
 			paymentModel as never,
+			tenancyModel as never,
 		);
 	});
 
@@ -1590,7 +1614,7 @@ describe("ApplicationService.getAllMyApplications", () => {
 			findById: jest.fn().mockReturnValue({ populate: jest.fn().mockReturnThis(), lean: jest.fn().mockReturnThis(), exec: jest.fn().mockResolvedValue(own) }),
 		};
 		const listingService = { findListingById: jest.fn().mockResolvedValue({ _id: listingId }), viewingSlotAvailability: jest.fn().mockResolvedValue([]) };
-		service = new ApplicationService(applicationModel as never, {} as never, listingService as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never);
+		service = new ApplicationService(applicationModel as never, {} as never, listingService as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, tenancyModel as never);
 		jest.spyOn(service as any, "householdEntry").mockReturnValue({ id: applicationId.toString(), qualified, readiness: qualified ? 100 : 50, criteria: [], members: [] });
 		const earlier = { id: new Types.ObjectId().toString(), qualified: true };
 		const mine = { id: applicationId.toString(), qualified: true };
@@ -1619,7 +1643,7 @@ describe("ApplicationService.getAllMyApplications", () => {
 		const chain = { populate: jest.fn().mockReturnThis(), sort: jest.fn().mockReturnThis(), lean: jest.fn().mockReturnThis(), exec: jest.fn().mockResolvedValue([lapsed, waiting]) };
 		const applicationModel = { find: jest.fn().mockReturnValue(chain), exists: jest.fn().mockResolvedValue(null) };
 		const listingService = { findListingById: jest.fn().mockResolvedValue({ _id: listingId }) };
-		const queueService = new ApplicationService(applicationModel as never, {} as never, listingService as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never);
+		const queueService = new ApplicationService(applicationModel as never, {} as never, listingService as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, tenancyModel as never);
 		jest.spyOn(queueService as any, "householdEntry").mockImplementation((application: any) => ({ id: application._id.toString(), application, qualified: true }));
 
 		const { qualified } = await (queueService as any).queueFor(listingId, new Date());

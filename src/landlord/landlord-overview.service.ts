@@ -14,7 +14,7 @@ import { proportionalRefund } from "../payments/refund";
 import { Repair, RepairStatus } from "../repairs/repair.schema";
 import { propertyComplianceStatus, propertyRentStatus } from "./property-rows";
 import { ComplianceItem, listingCompliance, sortCompliance, tenancyCompliance } from "../tenancies/compliance";
-import { Tenancy } from "../tenancies/tenancy.schema";
+import { endedTenancyApplications, Tenancy } from "../tenancies/tenancy.schema";
 import { TenancyStatus } from "../tenancies/tenancy.enums";
 import { PassportDocumentInput } from "../users/passport";
 import { NotificationTarget, notificationTarget, NotificationTargetKind } from "../notifications/links";
@@ -75,7 +75,8 @@ export class LandlordOverviewService {
 				.select("amount")
 				.lean()
 				.exec(),
-			this.applicationModel.distinct("listing", { landlord, stage: { $in: [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] } }).exec()
+			endedTenancyApplications(this.tenancyModel, { landlord }).then(ended =>
+				this.applicationModel.distinct("listing", { _id: { $nin: ended }, landlord, stage: { $in: [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] } }).exec())
 		]);
 		// A let property has no queue: applications still open on it are not waiting for an offer.
 		const letToHousehold = new Set(letListingIds.map(id => String(id)));
@@ -287,15 +288,17 @@ export class LandlordOverviewService {
 	 */
 	async listingsWithStats(landlordId: string, now: Date = new Date()) {
 		const landlord = new Types.ObjectId(landlordId);
-		const [listings, applications] = await Promise.all([
+		const [listings, applications, ended] = await Promise.all([
 			this.listingModel.find({ landlord }).select("-likedBy -registerOfTitleKey -registrationNumber").sort({ lastUpdated: -1 }).lean().exec(),
 			this.applicationModel
 				.find({ landlord, stage: { $ne: ApplicationStage.NOT_SENT } })
 				.populate({ path: "applicants", select: "documents studentVerifiedAt" })
 				.select("listing stage applicants")
 				.lean()
-				.exec()
+				.exec(),
+			endedTenancyApplications(this.tenancyModel, { landlord })
 		]);
+		const over = new Set(ended.map(String));
 		const byListing = new Map<string, typeof applications>();
 		for (const application of applications) {
 			const key = application.listing.toString();
@@ -303,7 +306,8 @@ export class LandlordOverviewService {
 		}
 		return listings.map(listing => {
 			const sent = byListing.get(listing._id.toString()) ?? [];
-			const isLet = sent.some(application => application.stage === ApplicationStage.ACCEPTED || application.stage === ApplicationStage.SIGNED);
+			const isLet = sent.some(application =>
+				(application.stage === ApplicationStage.ACCEPTED || application.stage === ApplicationStage.SIGNED) && !over.has(application._id.toString()));
 			const qualifiedCount = isLet ? 0 : sent.filter(application =>
 				LANDLORD_OPEN_STAGES.includes(application.stage as ApplicationStage) &&
 				householdReadiness(

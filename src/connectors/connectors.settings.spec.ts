@@ -47,7 +47,8 @@ function setup(env: Record<string, string> = {}, connectorSettings?: Record<stri
 		{} as any,
 		{} as any,
 		{} as any,
-		redis as any
+		redis as any,
+		{} as any
 	);
 	return { service, userId, connectionModel, userModel, messageModel };
 }

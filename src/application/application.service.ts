@@ -20,6 +20,7 @@ import { ConversationAccessService } from "../conversation/conversation-access.s
 import { generateToken, hashToken, tokensMatch } from "../shared/tokens";
 import { DocumentSharesService } from "../users/shares/document-shares.service";
 import { TenanciesService } from "../tenancies/tenancies.service";
+import { endedTenancyApplications, Tenancy } from "../tenancies/tenancy.schema";
 import { NotificationsService } from "../notifications/notifications.service";
 import { NotificationKind } from "../notifications/notification-kind.enum";
 import { notificationTarget, NotificationTargetKind } from "../notifications/links";
@@ -57,6 +58,8 @@ export class ApplicationService {
 		private readonly notificationsService: NotificationsService,
 		@InjectModel(Payment.name)
 		private readonly paymentModel: Model<Payment>,
+		@InjectModel(Tenancy.name)
+		private readonly tenancyModel: Model<Tenancy>,
 	) { }
 
 	async create(
@@ -264,6 +267,7 @@ export class ApplicationService {
 	 * needs (no names, labels or file links), so entries' passports are partial.
 	 */
 	private async queueFor(listingId: Types.ObjectId | string, now: Date) {
+		const ended = await endedTenancyApplications(this.tenancyModel, { listing: listingId });
 		const [open, listing, letTo] = await Promise.all([
 			this.applicationModel
 				.find({ listing: listingId, stage: { $in: LANDLORD_OPEN_STAGES } })
@@ -272,7 +276,7 @@ export class ApplicationService {
 				.lean()
 				.exec(),
 			this.listingService.findListingById(listingId.toString()).catch(() => null),
-			this.applicationModel.exists({ listing: listingId, stage: { $in: [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] } }),
+			this.applicationModel.exists({ _id: { $nin: ended }, listing: listingId, stage: { $in: [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] } }),
 		]);
 		const all = (open ?? []).map(application => this.householdEntry(application, listing, now))
 			// A household whose offer lapsed goes to the back of the queue (stable sort keeps the rest in order).
@@ -596,9 +600,10 @@ export class ApplicationService {
 
 	/** `_id` is the household's own application, left out for one not created yet. */
 	private async assertNotLet(application: Pick<Application, "listing"> & { _id?: Types.ObjectId }) {
-		// shortcut: one let per listing; allow a later period here if re-letting is ever needed.
+		// A household whose tenancy has ended no longer holds the listing: it can be let again.
+		const ended = await endedTenancyApplications(this.tenancyModel, { listing: application.listing });
 		const taken = await this.applicationModel.exists({
-			...(application._id ? { _id: { $ne: application._id } } : {}),
+			_id: { $nin: application._id ? [...ended, application._id] : ended },
 			listing: application.listing,
 			stage: { $in: [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] },
 		});

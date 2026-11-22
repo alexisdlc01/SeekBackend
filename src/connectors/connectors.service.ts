@@ -25,6 +25,9 @@ import { ApplicationStage, LANDLORD_OPEN_STAGES } from "../application/enums/app
 import { Listing } from "../listings/listings.schema";
 import { Bill, BillCategory, BillSource, BillStatus } from "../bills/bill.schema";
 import { UploadService } from "../upload/upload.service";
+import { isKeyOwnedBy } from "../upload/object-key";
+import { referencedKeys } from "../upload/referenced-keys";
+import { Contract } from "../contracts/contract.schema";
 import { EmailMessage } from "../inbox/email-message.schema";
 import { EmailCategory } from "../inbox/email-category.enum";
 import { ConnectionStatus, EmailConnection, EmailProvider } from "./email-connection.schema";
@@ -174,7 +177,8 @@ export class ConnectorsService {
 		@InjectModel(Bill.name) private readonly billModel: Model<Bill>,
 		private readonly tenancies: TenanciesService,
 		private readonly uploads: UploadService,
-		@Inject("REDIS_CLIENT") private readonly redis: Redis
+		@Inject("REDIS_CLIENT") private readonly redis: Redis,
+		@InjectModel(Contract.name) private readonly contractModel: Model<Contract>
 	) {}
 
 	// ---------------------------------------------------------------- setup
@@ -673,8 +677,40 @@ export class ConnectorsService {
 				}
 			}
 		);
+		// Read before the emails go: their stored attachments are erased after, unless something else still uses them.
+		const attachmentKeys = await this.messageModel
+			.distinct("attachments.key", { connection: connection._id, "attachments.key": { $type: "string" } })
+			.then(keys => keys.map(String).filter(key => key.startsWith("private/") && isKeyOwnedBy(key, connection.user.toString())))
+			.catch((error: Error) => {
+				this.logger.warn(`Listing attachments of mailbox ${id} failed: ${error.message}`);
+				return [] as string[];
+			});
 		const removed = await this.messageModel.deleteMany({ connection: connection._id });
+		await this.eraseUnusedAttachments(id, attachmentKeys);
 		return { id, status: ConnectionStatus.DISCONNECTED, removedEmails: removed.deletedCount ?? 0 };
+	}
+
+	/** Deletes attachment files no tenancy, contract, email or Passport still uses. A failure only logs: the mailbox is already disconnected. */
+	private async eraseUnusedAttachments(connectionId: string, keys: string[]) {
+		if (!keys.length) return;
+		try {
+			const [referenced, passportKeys] = await Promise.all([
+				referencedKeys({
+					tenancyModel: this.tenancyModel,
+					messageModel: this.messageModel,
+					contractKeys: async candidates => (await this.contractModel.distinct("key", { key: { $in: candidates } })).map(String)
+				}, keys),
+				// A reference filed from an email shares the attachment's key with the student's Passport.
+				this.userModel.distinct("documents.key", { "documents.key": { $in: keys } })
+			]);
+			const kept = new Set([...referenced, ...passportKeys.map(String)]);
+			for (const key of keys.filter(key => !kept.has(key))) {
+				await this.uploads.deletePrivateObject(key).catch((error: Error) =>
+					this.logger.warn(`Erasing an attachment of mailbox ${connectionId} failed: ${error.message}`));
+			}
+		} catch (error) {
+			this.logger.warn(`Erasing attachments of mailbox ${connectionId} failed: ${(error as Error).message}`);
+		}
 	}
 
 	async ownedConnection(user: Pick<User, "_id">, id: string): Promise<ConnectionLean> {

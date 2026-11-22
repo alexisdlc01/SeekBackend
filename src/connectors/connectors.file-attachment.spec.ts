@@ -51,6 +51,7 @@ function setup(attachment: Record<string, unknown> = {}, role = Role.STUDENT, fr
 		{} as any,
 		tenancies as any,
 		{} as any,
+		{} as any,
 		{} as any
 	);
 	// A real mailbox: the attachment is re-read from Gmail, with what Gmail says about the sender.
@@ -220,7 +221,8 @@ describe("ConnectorsService.storeFile", () => {
 	it("takes an application/octet-stream PDF by its name, but only when the bytes are a PDF", async () => {
 		const uploads = { putPrivateObject: jest.fn().mockResolvedValue({ url: "https://files.example/x.pdf", key: "k" }) };
 		const service = new ConnectorsService(
-			{ get: () => "test" } as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, uploads as any, {} as any
+			{ get: () => "test" } as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, uploads as any, {} as any,
+			{} as any
 		);
 		const store = (name: string, mimeType: string, bytes: string) => (service as any).storeFile(
 			{ provider: EmailProvider.GMAIL },
