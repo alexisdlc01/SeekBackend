@@ -119,3 +119,19 @@ describe("DocumentSharesService.reopen", () => {
 		expect(shareModel.updateOne).not.toHaveBeenCalled();
 	});
 });
+
+describe("DocumentSharesService.listForOwner", () => {
+	it("hides a student's stop once its application is closed, keeps the rest", async () => {
+		const now = new Date("2026-11-22T10:00:00Z");
+		const owner = new Types.ObjectId();
+		const [openApp, closedApp] = [new Types.ObjectId(), new Types.ObjectId()];
+		const row = (application: Types.ObjectId | null, revokedBy: string | null) => ({ _id: new Types.ObjectId(), owner, viewer: new Types.ObjectId(), application, revokedBy, revokedAt: revokedBy ? now : null, expiresAt: now });
+		const shares = [row(openApp, "student"), row(closedApp, "student"), row(closedApp, "system"), row(null, "student")];
+		const query: any = { populate: () => query, sort: () => query, lean: () => ({ exec: () => Promise.resolve(shares) }) };
+		const applicationModel = { distinct: jest.fn().mockResolvedValue([openApp]) };
+		const service = new DocumentSharesService({ find: () => query } as never, {} as never, applicationModel as never);
+		const list = await service.listForOwner(owner.toString(), now);
+		expect(applicationModel.distinct.mock.calls[0][1]).toMatchObject({ _id: { $in: [openApp, closedApp] }, applicants: owner, stage: { $nin: ["REJECTED", "WITHDRAWN"] } });
+		expect(list.map(item => item._id)).toEqual([shares[0], shares[2], shares[3]].map(share => share._id.toString()));
+	});
+});

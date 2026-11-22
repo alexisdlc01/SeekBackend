@@ -150,8 +150,10 @@ export class ApplicationService {
 		}
 	}
 
+	/** `housemates: false` when every member's account is gone (releaseDeletedMember): only the landlord is told. */
 	async delete(
 		applicationId: string,
+		housemates = true,
 	): Promise<void> {
 		if (Types.ObjectId.isValid(applicationId)) {
 			const current = await this.applicationModel.findById(applicationId).lean().exec();
@@ -172,6 +174,37 @@ export class ApplicationService {
 		if (deleted?.conversation) {
 			await this.converstaionModel.updateOne({ _id: deleted.conversation }, { $set: { closedAt: new Date() } }).exec();
 		}
+		if (deleted && [ApplicationStage.SENT, ApplicationStage.VIEWED].includes(deleted.stage as ApplicationStage)) {
+			await this.notifyWithdrawn(deleted, housemates);
+		}
+	}
+
+	/** Same notice as a withdrawn offer: the landlord (with any booked viewing, whose slot is now free) and the other members. */
+	private async notifyWithdrawn(application: Application & { _id: Types.ObjectId }, housemates: boolean) {
+		const listing = await this.listingService.findListingById(application.listing.toString()).catch(() => null);
+		const title = listing?.propertyTitle ?? listing?.streetAddress ?? "the property";
+		const viewing = application.viewingAt && new Date(application.viewingAt).getTime() > Date.now()
+			? ` The viewing booked for ${new Date(application.viewingAt).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })} is cancelled.`
+			: "";
+		const others = housemates ? application.applicants.filter(id => id.toString() !== application.owner?.toString()) : [];
+		await this.notificationsService.notifyMany([
+			{
+				user: application.landlord,
+				kind: NotificationKind.OFFER_WITHDRAWN,
+				title: `A household withdrew its application for ${title}`,
+				body: `They deleted their application.${viewing}`,
+				...notificationTarget("landlord", NotificationTargetKind.APPLICATION, undefined, { listing: application.listing }),
+				dedupeKey: `application-withdrawn:${application._id.toString()}`
+			},
+			...others.map(user => ({
+				user,
+				kind: NotificationKind.OFFER_WITHDRAWN,
+				title: `Your household's application for ${title} was withdrawn`,
+				body: `The household owner deleted the application.${viewing}`,
+				...notificationTarget("student", NotificationTargetKind.APPLICATION),
+				dedupeKey: `application-withdrawn:${application._id.toString()}`
+			}))
+		]);
 	}
 
 	/** An offered household may withdraw; keep its audit row and return any paid reservation fee. */
@@ -1213,7 +1246,7 @@ export class ApplicationService {
 			const gone = application.applicants.filter((applicant, i) => applicant.toString() === userId.toString() || !users[i] || users[i]?.deletedAt);
 			const remaining = application.applicants.filter(applicant => !gone.includes(applicant));
 			if (!remaining.length) {
-				await this.delete(application._id.toString());
+				await this.delete(application._id.toString(), false);
 				continue;
 			}
 			const ownerGone = gone.some(applicant => applicant.toString() === application.owner?.toString());

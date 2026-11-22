@@ -258,3 +258,44 @@ describe("deposit question keyword routing", () => {
 		expect(r.advice).toMatch(/fair wear and tear/);
 	});
 });
+
+describe("rent advice overdue cut-off", () => {
+	const rentDraft = (now: Date) => {
+		const due = { amount: 80000, status: "SCHEDULED", dueDate: new Date("2026-11-01T00:00:00Z") };
+		const paymentModel = { find: () => ({ sort: () => ({ lean: () => ({ exec: () => Promise.resolve([due]) }) }) }) };
+		const none = {} as any;
+		const service = new AiService(none, none, none, none, none, none, paymentModel as any, none, none, none, { get: () => undefined } as any);
+		return (service as any).rentAdvice({ role: Role.STUDENT, _id: "a".repeat(24) }, { _id: "t1", monthlyRent: 80000, tenants: ["a".repeat(24)] }, null, now);
+	};
+
+	it("is not overdue on the London due day, only the day after", async () => {
+		const dueDay = await rentDraft(new Date("2026-11-01T18:00:00Z"));
+		expect(dueDay.title).toBe("Your rent");
+		expect(dueDay.advice).toMatch(/Next payment: £800/);
+		expect((await rentDraft(new Date("2026-11-02T00:30:00Z"))).title).toBe("Rent is overdue");
+	});
+});
+
+describe("Northern Ireland deposit and bills links", () => {
+	const none = {} as any;
+	const make = () => new AiService({ isConfigured: () => false } as any, none, none, none, none, none, none, none, none, none, { get: () => undefined } as any);
+
+	it("gives NI schemes, the one-month cap and the 28-day window, never England's", () => {
+		const ni = { nation: "NORTHERN_IRELAND" };
+		const general = (make() as any).depositAdvice({ role: Role.STUDENT, _id: "u1" }, null, ni, new Date());
+		expect(general.advice).toMatch(/one month's rent.*TDS Northern Ireland or mydeposits Northern Ireland.*28 days/);
+		expect(general.actions.map((a: any) => a.link)).toEqual(["https://www.tdsnorthernireland.com", "https://www.mydeposits.co.uk", expect.stringContaining("nidirect.gov.uk")]);
+		expect(depositAnswer("They never protected it", "NORTHERN_IRELAND")).not.toMatch(/three times/);
+		const tenancy = { monthlyRent: 80000, depositAmount: 90000, documents: [], tenants: [], depositReceivedAt: new Date("2026-09-01T00:00:00Z") };
+		const draft = (make() as any).depositAdvice({ role: Role.STUDENT, _id: "u1" }, tenancy, ni, new Date("2026-09-30T12:00:00Z"));
+		expect(draft.advice).toMatch(/28-day deadline passed on 29 September 2026/);
+		expect(draft.advice).toMatch(/legal cap of one month's rent \(£800\)/);
+	});
+
+	it("links the bills action to the student's bills page", async () => {
+		const billModel = { find: () => ({ sort: () => ({ lean: () => ({ exec: () => Promise.resolve([]) }) }) }) };
+		const service = new AiService(none, none, none, none, none, billModel as any, none, none, none, none, { get: () => undefined } as any);
+		const draft = await (service as any).billsAdvice({ role: Role.STUDENT, _id: "a".repeat(24) }, { _id: "t1", tenants: [], documents: [] }, null);
+		expect(draft.actions[0]).toEqual({ label: "See household bills", link: "/student/home/bills" });
+	});
+});

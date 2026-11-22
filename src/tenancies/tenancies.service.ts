@@ -706,7 +706,9 @@ export class TenanciesService {
 			throw new BadRequestException(
 				nation === Nation.SCOTLAND
 					? `Rent (Scotland) Act: the deposit can be at most two months' rent (£${(cap / 100).toFixed(2)} per tenant).`
-					: `Tenant Fees Act: the deposit can be at most five weeks' rent (£${(cap / 100).toFixed(2)} per tenant).`
+					: nation === Nation.NORTHERN_IRELAND
+						? `Private Tenancies Act (NI): the deposit can be at most one month's rent (£${(cap / 100).toFixed(2)} per tenant).`
+						: `Tenant Fees Act: the deposit can be at most five weeks' rent (£${(cap / 100).toFixed(2)} per tenant).`
 			);
 		}
 	}
