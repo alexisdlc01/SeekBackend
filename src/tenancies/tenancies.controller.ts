@@ -17,7 +17,7 @@ import { CreateTenancyDto } from "./dto/create-tenancy.dto";
 import { DepositReceivedDto, PrescribedInfoDto, UpdateDepositDto, UpdateEnergyAllowanceDto } from "./dto/update-deposit.dto";
 import { AddTenancyDocumentDto } from "./dto/add-tenancy-document.dto";
 import { UpdateBankTransferInstructionsDto } from "./dto/update-bank-transfer-instructions.dto";
-import { EndTenancyDto } from "./dto/end-tenancy.dto";
+import { EndTenancyDto, GiveNoticeDto } from "./dto/end-tenancy.dto";
 
 @Controller("tenancies")
 export class TenanciesController {
@@ -192,5 +192,24 @@ export class TenanciesController {
 	) {
 		const [year, month, day] = body.endDate.split("-").map(Number);
 		return this.tenanciesService.endTenancy(id, new Date(Date.UTC(year, month - 1, day)), user);
+	}
+
+	@Post(":id/notice")
+	@Student()
+	@ApiOperation({
+		summary:
+			"A tenant gives notice to end a rolling tenancy. Joint tenants must each give notice for the same endDate (the first sets it, a different date is a 409). Once all have, endDate is set, later rent is cancelled and the landlord is told."
+	})
+	@ApiResponse({ status: 201, type: Tenancy })
+	@ApiResponse({ status: 400, type: ErrorDto })
+	@ApiResponse({ status: 403, type: ErrorDto })
+	@ApiResponse({ status: 409, type: ErrorDto })
+	async notice(
+		@Param("id", ParseObjectIdPipe) id: string,
+		@Body() body: GiveNoticeDto,
+		@CurrentUser() user: User
+	) {
+		const [year, month, day] = body.endDate.split("-").map(Number);
+		return this.tenanciesService.giveNotice(id, new Date(Date.UTC(year, month - 1, day)), user);
 	}
 }

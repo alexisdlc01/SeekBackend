@@ -112,6 +112,22 @@ export class Tenancy {
 	@Prop({ default: true })
 	periodic: boolean;
 
+	@ApiProperty({ type: String, format: "date", nullable: true, description: "End date (exclusive London day) the tenants' notice asks for. It becomes endDate once every tenant has given notice for it." })
+	@Prop({ type: Date, default: null })
+	noticeEndDate?: Date | null;
+
+	@ApiProperty({ type: [String], description: "Tenants who have given notice for noticeEndDate." })
+	@Prop({ type: [{ type: SchemaTypes.ObjectId, ref: "User" }], default: [] })
+	noticeFrom?: Types.ObjectId[];
+
+	@ApiProperty({ type: String, nullable: true, description: "The tenant who first gave notice and chose the date." })
+	@Prop({ type: SchemaTypes.ObjectId, ref: "User", default: null })
+	noticeGivenBy?: Types.ObjectId | null;
+
+	@ApiProperty({ type: String, format: "date-time", nullable: true, description: "When the notice took effect (every tenant had given it). Set together with endDate." })
+	@Prop({ type: Date, default: null })
+	noticeGivenAt?: Date | null;
+
 	@ApiProperty({ description: "Rent per tenant per month, in pence." })
 	@Prop({ required: true, min: 0 })
 	monthlyRent: number;

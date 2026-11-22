@@ -47,17 +47,40 @@ export function depositReceivedDate(value?: string, now: Date = new Date()): Dat
 }
 
 /**
+ * Only Northern Ireland still has fixed-term tenancies. In England (Renters' Rights Act 2025), Scotland (private
+ * residential tenancy) and Wales (periodic occupation contract) every tenancy rolls on until ended by notice.
+ */
+export const hasFixedTerms = (nation?: Nation | null) => nation === Nation.NORTHERN_IRELAND;
+
+/** The first rent day (start date + whole months) on or after `from`. */
+export function nextRentDay(startDate: Date, from: Date) {
+	const anchor = startOfUtcDay(new Date(startDate));
+	let months = 1;
+	while (addMonths(anchor, months) < from) months += 1;
+	return addMonths(anchor, months);
+}
+
+/**
+ * Earliest end date (exclusive London day) a tenant's notice given `today` can ask for. England: two months,
+ * ending with a rent period. Scotland: 28 days. Wales: four weeks. Northern Ireland: four weeks (periodic).
+ */
+export function earliestNoticeEnd(nation: Nation, startDate: Date, today: Date) {
+	return nation === Nation.ENGLAND ? nextRentDay(startDate, addMonths(today, 2)) : new Date(today.getTime() + 28 * 86_400_000);
+}
+
+/**
  * The period a tenancy made from an application gets: the listing's availability, never starting in the past.
  * Refuses (409) once the availability has ended, else the tenancy would end before it starts and schedule no rent.
+ * Outside Northern Ireland availableUntil is only when the landlord hopes to get the home back, never an end date.
  */
-export function applicationTenancyPeriod(listing: Pick<Listing, "availableFrom" | "availableUntil">, now = new Date()) {
+export function applicationTenancyPeriod(listing: Pick<Listing, "availableFrom" | "availableUntil" | "nation">, now = new Date()) {
 	const future = listing.availableFrom && new Date(listing.availableFrom) > now ? new Date(listing.availableFrom) : null;
-	const endDate = listing.availableUntil ? new Date(listing.availableUntil) : null;
-	if (endDate && endDate <= (future ?? now)) {
+	const until = listing.availableUntil ? new Date(listing.availableUntil) : null;
+	if (until && until <= (future ?? now)) {
 		throw new ConflictException("This listing's availability has ended. The landlord needs to update its 'available until' date before the tenancy can be agreed.");
 	}
 	// Starting now: anchor on the London day at midnight UTC, like every other tenancy date.
-	return { startDate: future ?? londonCalendarDay(now), endDate };
+	return { startDate: future ?? londonCalendarDay(now), endDate: hasFixedTerms(listing.nation) ? until : null };
 }
 
 type Viewer = Pick<User, "_id" | "role">;
@@ -180,16 +203,16 @@ export class TenanciesService {
 		if (students !== tenantIds.length) {
 			throw new BadRequestException("Every tenant must be a Seek student account.");
 		}
-		await this.assertNoCurrentTenancy(tenantIds, {
-			startDate: new Date(dto.startDate),
-			endDate: dto.endDate ? new Date(dto.endDate) : null
-		});
+		// Outside Northern Ireland a date picked in advance can't end the tenancy, so it is not kept.
+		const fixedTerm = hasFixedTerms(listing.nation);
+		const endDate = fixedTerm && dto.endDate ? new Date(dto.endDate) : null;
+		await this.assertNoCurrentTenancy(tenantIds, { startDate: new Date(dto.startDate), endDate });
 		const manual = !dto.application;
 
 		const depositAmount = dto.depositAmount ?? 0;
 		this.assertDepositWithinCap(depositAmount, dto.monthlyRent, listing.nation);
 		this.assertSchemeForNation(dto.depositScheme, listing.nation);
-		if (dto.endDate && new Date(dto.endDate) <= new Date(dto.startDate)) {
+		if (endDate && endDate <= new Date(dto.startDate)) {
 			throw new BadRequestException("The end date must be after the start date.");
 		}
 
@@ -202,8 +225,8 @@ export class TenanciesService {
 			status: manual ? TenancyStatus.PENDING_ACCEPTANCE : TenancyStatus.ACTIVE,
 			application: dto.application ? new Types.ObjectId(dto.application) : null,
 			startDate: new Date(dto.startDate),
-			endDate: dto.endDate ? new Date(dto.endDate) : null,
-			periodic: dto.periodic ?? !dto.endDate,
+			endDate,
+			periodic: fixedTerm ? dto.periodic ?? !endDate : true,
 			monthlyRent: dto.monthlyRent,
 			depositAmount,
 			energyAllowance: dto.energyAllowance ?? null,
@@ -305,7 +328,7 @@ export class TenanciesService {
 				application: application._id,
 				startDate,
 				endDate,
-				periodic: !listing.availableUntil,
+				periodic: !endDate,
 				// Listings store whole-property pounds; tenancies store pence per tenant.
 				monthlyRent: Math.round(((listing.monthlyRent ?? 0) * 100) / people),
 				depositAmount: Math.round(((listing.securityDeposit ?? 0) * 100) / people)
@@ -342,7 +365,7 @@ export class TenanciesService {
 		if (studentIds.length === 0) return;
 		let period = when instanceof Types.ObjectId ? undefined : when;
 		if (when instanceof Types.ObjectId) {
-			const listing = await this.listingModel.findById(when, { availableFrom: 1, availableUntil: 1 }).lean().exec();
+			const listing = await this.listingModel.findById(when, { availableFrom: 1, availableUntil: 1, nation: 1 }).lean().exec();
 			if (listing) period = applicationTenancyPeriod(listing);
 		}
 		const clash = await this.tenancyModel.exists({
@@ -493,6 +516,23 @@ export class TenanciesService {
 		if (ended.modifiedCount === 0) {
 			throw new ConflictException("This tenancy has already been ended.");
 		}
+		await this.stopRentAfter(tenancy, end);
+		const endDay = end.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+		await this.notifications.notifyMany(
+			(tenancy.tenants ?? []).map(tenant => ({
+				user: tenant,
+				kind: NotificationKind.TENANCY_ENDED,
+				title: `Your tenancy now ends on ${endDay}`,
+				body: "Rent due after that date is cancelled, and any rent you paid for days after it is refunded.",
+				...notificationTarget("student", NotificationTargetKind.TENANCY, tenancy._id),
+				dedupeKey: `tenancy-ended:${tenancy._id.toString()}:${end.toISOString().slice(0, 10)}`
+			}))
+		);
+		return this.getDetail(id, landlord);
+	}
+
+	/** Removes rent due on or after `end` and refunds or reprices any rent period that runs past it. */
+	private async stopRentAfter(tenancy: TenancyLean, end: Date) {
 		await this.paymentModel.updateMany(
 			{
 				tenancy: tenancy._id,
@@ -563,18 +603,66 @@ export class TenanciesService {
 				await refundPayment(this.paymentModel, claimed, process.env.STRIPE_SECRET_KEY, claimed.refundAmount);
 			}
 		}
-		const endDay = end.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
-		await this.notifications.notifyMany(
-			(tenancy.tenants ?? []).map(tenant => ({
-				user: tenant,
+	}
+
+	/**
+	 * A tenant gives notice to end a rolling tenancy. Joint tenants must all give it for the same date: the
+	 * first one sets it, the others confirm. Once the last one has, it takes effect: endDate is set, rent
+	 * stops there and the landlord is told. The hourly sweep then ends the tenancy on that date.
+	 */
+	async giveNotice(id: string, end: Date, student: Viewer) {
+		const tenancy = await this.findRaw(id);
+		const me = new Types.ObjectId(student._id.toString());
+		if (!isTenant(tenancy, me.toString())) throw new ForbiddenException("Only a tenant of this tenancy can give notice.");
+		const listing = await this.listingModel.findById(tenancy.listing, { nation: 1, propertyTitle: 1, streetAddress: 1 }).lean().exec();
+		const nation = listing?.nation ?? Nation.ENGLAND;
+		if (tenancy.status !== TenancyStatus.ACTIVE || (!tenancy.periodic && hasFixedTerms(nation))) {
+			throw new ConflictException("Notice can only be given on an active rolling tenancy.");
+		}
+		if (tenancy.noticeGivenAt) throw new ConflictException("Notice has already been given on this tenancy.");
+		if ((tenancy.noticeFrom ?? []).some(from => from.equals(me))) throw new ConflictException("You have already given notice. It takes effect once every housemate has given it too.");
+		const day = (date: Date) => date.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+		const earliest = earliestNoticeEnd(nation, tenancy.startDate, londonCalendarDay());
+		if (end < earliest) throw new BadRequestException(`That is too soon: the earliest end date you can give notice for is ${day(earliest)}.`);
+		if (nation === Nation.ENGLAND && nextRentDay(tenancy.startDate, end).getTime() !== end.getTime()) {
+			throw new BadRequestException(`In England notice must end with a rent period: pick a rent day, such as ${day(earliest)}.`);
+		}
+		// A housemate's date that no longer leaves the full notice period has lapsed: this notice replaces it.
+		const proposed = tenancy.noticeEndDate && new Date(tenancy.noticeEndDate) >= earliest ? new Date(tenancy.noticeEndDate) : null;
+		if (proposed && proposed.getTime() !== end.getTime()) {
+			throw new ConflictException(`A housemate has given notice to end on ${day(proposed)}. Joint tenants must all give notice for the same date.`);
+		}
+		const signed = await this.tenancyModel
+			.findOneAndUpdate(
+				{ _id: tenancy._id, status: TenancyStatus.ACTIVE, noticeGivenAt: null, noticeEndDate: tenancy.noticeEndDate ?? null },
+				proposed ? { $addToSet: { noticeFrom: me } } : { $set: { noticeEndDate: end, noticeFrom: [me], noticeGivenBy: me } },
+				{ new: true }
+			)
+			.lean()
+			.exec();
+		if (!signed) throw new ConflictException("The notice changed in the meantime. Reload and try again.");
+		if (!(signed.tenants ?? []).every(tenant => (signed.noticeFrom ?? []).some(from => from.equals(tenant)))) return this.getDetail(id, student);
+
+		const effective = await this.tenancyModel
+			.findOneAndUpdate(
+				{ _id: tenancy._id, status: TenancyStatus.ACTIVE, noticeGivenAt: null, noticeEndDate: end },
+				{ $set: { endDate: end, noticeGivenAt: new Date() } },
+				{ new: true }
+			)
+			.lean()
+			.exec();
+		if (effective) {
+			await this.stopRentAfter(effective as TenancyLean, end);
+			await this.notifications.notify({
+				user: effective.landlord,
 				kind: NotificationKind.TENANCY_ENDED,
-				title: `Your tenancy now ends on ${endDay}`,
-				body: "Rent due after that date is cancelled, and any rent you paid for days after it is refunded.",
-				...notificationTarget("student", NotificationTargetKind.TENANCY, tenancy._id),
-				dedupeKey: `tenancy-ended:${tenancy._id.toString()}:${end.toISOString().slice(0, 10)}`
-			}))
-		);
-		return this.getDetail(id, landlord);
+				title: `Your tenants at ${listing?.propertyTitle || listing?.streetAddress || "your property"} gave notice`,
+				body: `The tenancy ends on ${day(end)}. Rent after that date is cancelled.`,
+				...notificationTarget("landlord", NotificationTargetKind.TENANCY, effective._id),
+				dedupeKey: `tenancy-notice:${effective._id.toString()}`
+			});
+		}
+		return this.getDetail(id, student);
 	}
 
 	async appendDocument(
