@@ -14,6 +14,7 @@ import { proportionalRefund } from "../payments/refund";
 import { Repair, RepairStatus } from "../repairs/repair.schema";
 import { propertyComplianceStatus, propertyRentStatus } from "./property-rows";
 import { ComplianceItem, listingCompliance, sortCompliance, tenancyCompliance } from "../tenancies/compliance";
+import { londonCalendarDay } from "../tenancies/tenancies.service";
 import { endedTenancyApplications, Tenancy } from "../tenancies/tenancy.schema";
 import { TenancyStatus } from "../tenancies/tenancy.enums";
 import { PassportDocumentInput } from "../users/passport";
@@ -43,7 +44,7 @@ export class LandlordOverviewService {
 
 	async overview(landlordId: string, now: Date = new Date()) {
 		const landlord = new Types.ObjectId(landlordId);
-		const month = monthRange(undefined, now);
+		const month = monthRange(undefined, londonCalendarDay(now));
 
 		const [listings, tenancies, monthPayments, openApplications, holdingPaid, letListingIds] = await Promise.all([
 			this.listingModel

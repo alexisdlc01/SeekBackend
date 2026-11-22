@@ -41,6 +41,9 @@ import {
 import { DeductionsDto, InventoryDto, RespondDeductionsDto } from "./dto/contract-extras.dto";
 
 type Viewer = Pick<User, "_id" | "role">;
+type SnapshotSigner = { user: string; name?: string; email?: string };
+/** Contract.snapshot: the terms and signer names frozen when the contract became SIGNED. */
+type DocumentSnapshot = Omit<ContractDocumentData, "signatures"> & { signers?: SnapshotSigner[] };
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** The daily sweep stops after this many reminders; the landlord can still remind by hand. */
 const MAX_AUTO_REMINDERS = 3;
@@ -104,6 +107,36 @@ export class ContractsService {
 		}
 		const contract = await this.find(contractId);
 		if (!contract.templateKind) throw new NotFoundException("This contract was uploaded, so Seek has no copy to show.");
+		const live = await this.documentData(contract, contract.templateKind);
+		const signatures = contract.signatures ?? [];
+		const { signers: frozen = [], ...terms } = (contract.snapshot as DocumentSnapshot | null | undefined) ?? (live as DocumentSnapshot);
+		const signers = await this.signers(signatures);
+		const data: ContractDocumentData = {
+			// A signed agreement keeps the terms it was signed on; contracts signed before snapshots existed render live.
+			...terms,
+			// Prescribed information is completed after signing, so deposit protection stays live.
+			depositScheme: live.depositScheme,
+			depositReference: live.depositReference,
+			depositReceivedAt: live.depositReceivedAt,
+			depositProtectedAt: live.depositProtectedAt,
+			// Names as they were when everyone signed, so a later rename or account deletion does not show here.
+			signatures: signatures.map(s => {
+				const signer = frozen.find(u => u.user === s.user.toString()) ?? signers.find(u => u.user === s.user.toString());
+				return { name: signer?.name, email: signer?.email, signedAt: s.signedAt };
+			})
+		};
+		return doc === "agreement" ? renderAgreement(data) : renderPrescribedInformation(data);
+	}
+
+	/** Current name and email of each signer. */
+	private async signers(signatures: { user: Types.ObjectId }[]): Promise<SnapshotSigner[]> {
+		if (!signatures.length || !this.userModel) return [];
+		const users = await this.userModel.find({ _id: { $in: signatures.map(s => s.user) } }, { name: 1, email: 1 }).lean().exec();
+		return users.map(u => ({ user: u._id.toString(), name: u.name, email: u.email }));
+	}
+
+	/** The agreement's terms from the live tenancy, listing and users, without signatures. */
+	private async documentData(contract: Pick<Contract, "tenancy" | "title">, kind: ContractTemplateKind): Promise<Omit<ContractDocumentData, "signatures">> {
 		const tenancy = await this.tenancyModel
 			.findById(contract.tenancy)
 			.populate({ path: "listing", select: "streetAddress cityTown postcodeZIP billsIncluded licenceNumber" })
@@ -112,10 +145,6 @@ export class ContractsService {
 			.lean()
 			.exec();
 		if (!tenancy) throw new NotFoundException("Tenancy not found.");
-		const signatures = contract.signatures ?? [];
-		const signers = signatures.length && this.userModel
-			? await this.userModel.find({ _id: { $in: signatures.map(s => s.user) } }, { name: 1, email: 1 }).lean().exec()
-			: [];
 		const listing = tenancy.listing as unknown as {
 			streetAddress?: string;
 			cityTown?: string;
@@ -123,11 +152,13 @@ export class ContractsService {
 			billsIncluded?: boolean;
 			licenceNumber?: string;
 		} | null;
-		const data: ContractDocumentData = {
-			kind: contract.templateKind,
+		const landlord = tenancy.landlord as unknown as (ContractDocumentData["landlord"] & { registrations?: { kind: string; number: string }[] }) | null;
+		const tenants = (tenancy.tenants as unknown as ContractDocumentData["tenants"]) ?? [];
+		return {
+			kind,
 			title: contract.title,
-			landlord: (tenancy.landlord as unknown as ContractDocumentData["landlord"]) ?? {},
-			tenants: (tenancy.tenants as unknown as ContractDocumentData["tenants"]) ?? [],
+			landlord: landlord ? { name: landlord.name, email: landlord.email, companyName: landlord.companyName } : {},
+			tenants: tenants.map(t => ({ name: t.name, email: t.email })),
 			address: [listing?.streetAddress, listing?.cityTown, listing?.postcodeZIP].filter(Boolean).join(", "),
 			startDate: tenancy.startDate,
 			monthlyRent: tenancy.monthlyRent,
@@ -138,14 +169,8 @@ export class ContractsService {
 			depositProtectedAt: tenancy.depositProtectedAt,
 			billsIncluded: listing?.billsIncluded,
 			licenceNumber: listing?.licenceNumber,
-			rentSmartWales: (tenancy.landlord as unknown as { registrations?: { kind: string; number: string }[] } | null)?.registrations
-				?.find(r => r.kind === RegistrationKind.RENT_SMART_WALES)?.number,
-			signatures: signatures.map(s => {
-				const signer = signers.find(u => u._id.equals(s.user));
-				return { name: signer?.name, email: signer?.email, signedAt: s.signedAt };
-			})
+			rentSmartWales: landlord?.registrations?.find(r => r.kind === RegistrationKind.RENT_SMART_WALES)?.number
 		};
-		return doc === "agreement" ? renderAgreement(data) : renderPrescribedInformation(data);
 	}
 
 	/** Records the check-in inventory and tells the tenants it is ready to check. */
@@ -537,15 +562,19 @@ export class ContractsService {
 
 	/** Flips a SENT contract to SIGNED once every live tenant has signed, then files and announces it. Null otherwise. */
 	private async completeSigning(
-		contract: Pick<Contract, "status" | "signatures" | "title" | "url" | "key"> & { _id: Types.ObjectId },
+		contract: Pick<Contract, "status" | "signatures" | "title" | "url" | "key" | "tenancy" | "templateKind"> & { _id: Types.ObjectId },
 		tenancy: TenancyLean,
 		now = new Date()
 	) {
 		if (contract.status === ContractStatus.SENT && tenancy.status === TenancyStatus.ACTIVE && allTenantsSigned({ ...tenancy, tenants: await this.liveTenants(tenancy.tenants) }, contract.signatures)) {
+			// Freeze the terms everyone signed: later listing or account edits must not change the agreement.
+			const snapshot: DocumentSnapshot | null = contract.templateKind
+				? { ...(await this.documentData(contract, contract.templateKind)), signers: await this.signers(contract.signatures ?? []) }
+				: null;
 			const signed = await this.contractModel
 				.findOneAndUpdate(
 					{ _id: contract._id, status: ContractStatus.SENT },
-					{ $set: { status: ContractStatus.SIGNED, signedAt: now } },
+					{ $set: { status: ContractStatus.SIGNED, signedAt: now, ...(snapshot && { snapshot }) } },
 					{ new: true }
 				)
 				.lean()

@@ -45,6 +45,13 @@ describe("notification links", () => {
 		expect(notificationTarget("landlord", NotificationTargetKind.COMPLIANCE, "t1").link).toBe("/dashboard");
 	});
 
+	it("opens a landlord's contracts page on the tenancy it is about", () => {
+		expect(notificationTarget("landlord", NotificationTargetKind.CONTRACTS, "t 1").link).toBe("/contracts?tenancy=t%201");
+		expect(notificationTarget("landlord", NotificationTargetKind.TENANCY, "t1").link).toBe("/contracts?tenancy=t1");
+		expect(notificationTarget("landlord", NotificationTargetKind.CONTRACTS).link).toBe("/contracts");
+		expect(notificationTarget("student", NotificationTargetKind.CONTRACTS, "t1")).toMatchObject({ link: "/student/home", target: { mobile: "/(app)/contract" } });
+	});
+
 	it("sends a landlord's repair notification to the Repairs page", () => {
 		expect(notificationTarget("landlord", NotificationTargetKind.REPAIRS).link).toBe("/repairs");
 	});

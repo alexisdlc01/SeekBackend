@@ -189,6 +189,10 @@ export class Contract {
 	@Prop({ type: SchemaFactory.createForClass(Inventory), default: null })
 	inventory: Inventory | null;
 
+	/** Seek agreements: the document data and signer names (not the signature dates) frozen when the contract became SIGNED. */
+	@Prop({ type: SchemaTypes.Mixed, default: undefined })
+	snapshot?: Record<string, unknown> | null;
+
 	@ApiProperty({ type: Deductions, nullable: true, description: "Proposed end-of-tenancy deductions." })
 	@Prop({ type: SchemaFactory.createForClass(Deductions), default: null })
 	deductions: Deductions | null;

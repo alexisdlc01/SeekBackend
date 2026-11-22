@@ -116,7 +116,7 @@ export class GmailClient implements MailProviderClient {
 		const base = new URLSearchParams({
 			maxResults: "500",
 			// before: is exclusive, so +1s keeps messages received exactly at `before`.
-			q: `after:${Math.floor(since.getTime() / 1000)}${before ? ` before:${Math.floor(before.getTime() / 1000) + 1}` : ""} -in:chats -in:spam -in:trash`
+			q: `after:${Math.floor(since.getTime() / 1000)}${before ? ` before:${Math.floor(before.getTime() / 1000) + 1}` : ""} -in:chats -in:spam -in:trash -in:drafts`
 		});
 		// Ids are cheap: list the whole window, keep the unknown ones, and fetch headers only for those.
 		const fresh: string[] = [];
@@ -140,7 +140,8 @@ export class GmailClient implements MailProviderClient {
 			const message = await fetchJson<GmailMessage>(`${API}/messages/${id}?format=metadata&${query}`, {
 				headers: this.auth(accessToken)
 			});
-			metas.push(this.toMeta(message));
+			// Drafts are the user's own unsent mail, never incoming mail.
+			if (!message.labelIds?.includes("DRAFT")) metas.push(this.toMeta(message));
 		}
 		return metas;
 	}
