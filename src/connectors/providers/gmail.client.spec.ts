@@ -59,4 +59,17 @@ describe("GmailClient.listRecent", () => {
 		// limit stops the header fetches, so the caller can tell the window was bigger than one sync.
 		expect(await new GmailClient().listRecent("token", new Date(0), 5)).toHaveLength(5);
 	});
+
+	it("excludes drafts from the query and skips a message still labelled DRAFT", async () => {
+		const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+		const fetch = jest.spyOn(global, "fetch").mockImplementation(async input => {
+			const url = String(input);
+			if (url.includes("/messages?")) return json({ messages: [{ id: "draft" }, { id: "mail" }] });
+			const id = url.split("/messages/")[1].split("?")[0];
+			return json({ id, threadId: "t", labelIds: id === "draft" ? ["DRAFT"] : ["INBOX"] });
+		});
+		const metas = await new GmailClient().listRecent("token", new Date(0), 500);
+		expect(metas.map(m => m.providerMessageId)).toEqual(["mail"]);
+		expect(new URL(String(fetch.mock.calls[0][0])).searchParams.get("q")).toContain("-in:drafts");
+	});
 });

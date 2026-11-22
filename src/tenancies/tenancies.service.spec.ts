@@ -246,7 +246,7 @@ describe("TenanciesService create / accept", () => {
 		expect(rentSchedule.ensureDefaultPlans.mock.calls[0][0].tenants).toEqual([a, b]);
 		// The landlord learns the contract can now be sent.
 		expect(notifications.notify).toHaveBeenCalledWith(expect.objectContaining({
-			user: landlordId, link: "/contracts", dedupeKey: `tenancy-active:${tenancyId.toString()}`
+			user: landlordId, link: `/contracts?tenancy=${tenancyId.toString()}`, dedupeKey: `tenancy-active:${tenancyId.toString()}`
 		}));
 	});
 

@@ -82,4 +82,15 @@ describe("LandlordOverviewService todo", () => {
 		);
 		expect((await service.overview(new Types.ObjectId().toString(), now)).seekFeeThisMonth).toBe(310);
 	});
+
+	it("picks the month on the London clock: 00:30 BST on 1 April is April", async () => {
+		const paymentModel = { find: jest.fn(() => query([])), countDocuments: async () => 0, distinct: () => query([]) };
+		const service = new LandlordOverviewService(
+			model() as never, model() as never, paymentModel as never, model() as never,
+			model() as never, model() as never, model() as never
+		);
+		const overview = await service.overview(new Types.ObjectId().toString(), new Date("2026-03-31T23:30:00Z"));
+		expect(paymentModel.find.mock.calls[0]).toEqual([expect.objectContaining({ dueDate: { $gte: new Date("2026-04-01T00:00:00Z"), $lt: new Date("2026-05-01T00:00:00Z") } })]);
+		expect(overview.month).toBe("2026-04");
+	});
 });

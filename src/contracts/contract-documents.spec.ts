@@ -92,6 +92,62 @@ describe("ContractsService renderDocument", () => {
 		expect(html).not.toContain("<td>Tom</td><td>Signed");
 		expect(userModel.find).toHaveBeenCalledWith({ _id: { $in: [maya] } }, { name: 1, email: 1 });
 	});
+
+	it("keeps the signed terms after the listing or a tenant changes, but reads deposit protection live", async () => {
+		const maya = new Types.ObjectId();
+		let stored: any = {
+			_id: new Types.ObjectId(),
+			tenancy: new Types.ObjectId(),
+			status: ContractStatus.SENT,
+			title: "Assured periodic tenancy agreement",
+			templateKind: ContractTemplateKind.ENGLAND_ASSURED_PERIODIC,
+			signatures: []
+		};
+		const populated: any = {
+			landlord: { name: "Priya" },
+			tenants: [{ name: "Maya" }],
+			listing: { streetAddress: "14 Cotham Grove", cityTown: "Bristol", billsIncluded: true },
+			startDate: new Date("2026-09-01"),
+			monthlyRent: 50000,
+			depositAmount: 50000
+		};
+		const tenancyQuery: any = { populate: () => tenancyQuery, lean: () => ({ exec: () => Promise.resolve(structuredClone(populated)) }) };
+		const contractModel = {
+			findById: () => lean(stored),
+			findOneAndUpdate: jest.fn((_filter: any, update: any) => {
+				stored = update.$push
+					? { ...stored, signatures: [...stored.signatures, update.$push.signatures] }
+					: { ...stored, ...update.$set };
+				return lean(stored);
+			})
+		};
+		let mayaName = "Maya";
+		const userModel = { find: (filter: any) => lean(filter.deletedAt ? [] : [{ _id: maya, name: mayaName, email: "maya@example.com" }]) };
+		const tenancy = { _id: stored.tenancy, landlord: new Types.ObjectId(), tenants: [maya], status: TenancyStatus.ACTIVE };
+		const service = new ContractsService(
+			contractModel as any, {} as any, {} as any, { findById: () => tenancyQuery } as any, {} as any,
+			{ findForTenant: jest.fn().mockResolvedValue(tenancy), appendDocument: jest.fn() } as any,
+			{ notify: jest.fn(), notifyMany: jest.fn() } as any, { get: () => "secret" } as any, userModel as any
+		);
+		const id = stored._id.toString();
+		await service.sign(id, { _id: maya } as any);
+		expect(stored.status).toBe(ContractStatus.SIGNED);
+		expect(stored.snapshot).toEqual(expect.objectContaining({ address: "14 Cotham Grove, Bristol", billsIncluded: true }));
+		expect(stored.snapshot.signatures).toBeUndefined();
+
+		populated.listing = { streetAddress: "1 Other Road", cityTown: "Leeds", billsIncluded: false };
+		populated.tenants = [{ name: "Deleted user" }];
+		mayaName = "Deleted user";
+		populated.depositScheme = "DPS";
+		const html = await service.renderDocument(id, "agreement", documentSignature("secret", id, "agreement"));
+		expect(html).toContain("14 Cotham Grove, Bristol");
+		expect(html).toContain("Included in the rent");
+		expect(html).not.toContain("1 Other Road");
+		expect(html).not.toContain("Deleted user");
+		expect(html).toContain("<td>Maya</td><td>Signed");
+		const info = await service.renderDocument(id, "prescribed-information", documentSignature("secret", id, "prescribed-information"));
+		expect(info).toContain("Deposit Protection Service");
+	});
 });
 
 describe("ContractsService deductions", () => {
@@ -312,7 +368,7 @@ describe("ContractsService signed email", () => {
 		]);
 		expect(mail.sendContractSignedEmail).toHaveBeenCalledTimes(3);
 		expect(mail.sendContractSignedEmail).toHaveBeenCalledWith("maya@example.com", "Maya", "Tenancy agreement", "/student/home");
-		expect(mail.sendContractSignedEmail).toHaveBeenCalledWith("priya@example.com", "Priya", "Tenancy agreement", "/contracts");
+		expect(mail.sendContractSignedEmail).toHaveBeenCalledWith("priya@example.com", "Priya", "Tenancy agreement", `/contracts?tenancy=${tenancy._id}`);
 	});
 
 	it("sends nothing on a partial signature", async () => {
