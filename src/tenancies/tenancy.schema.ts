@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { ApiProperty } from "@nestjs/swagger";
-import { SchemaTypes, Types } from "mongoose";
+import { FilterQuery, Model, SchemaTypes, Types } from "mongoose";
 import { Role } from "../auth/role.enum";
 import {
 	DepositScheme,
@@ -193,3 +193,8 @@ TenancySchema.index(
 	{ application: 1 },
 	{ unique: true, partialFilterExpression: { application: { $type: "objectId" } } }
 );
+
+/** Applications whose tenancy has ended: their let is over, so they no longer keep the listing off the market. */
+export async function endedTenancyApplications(tenancyModel: Model<Tenancy>, filter: FilterQuery<Tenancy> = {}): Promise<Types.ObjectId[]> {
+	return (await tenancyModel.distinct("application", { ...filter, status: TenancyStatus.ENDED }).exec()).filter(Boolean) as Types.ObjectId[];
+}

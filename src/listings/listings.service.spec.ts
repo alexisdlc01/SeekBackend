@@ -24,7 +24,10 @@ describe("ListingsService", () => {
 			distinct: jest.fn().mockResolvedValue([]),
 			exists: jest.fn().mockResolvedValue(null)
 		};
-		tenancyModel = { exists: jest.fn().mockResolvedValue(null) };
+		tenancyModel = {
+			exists: jest.fn().mockResolvedValue(null),
+			distinct: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([]) })
+		};
 		gateway = {
 			emitListingCreated: jest.fn(),
 			emitListingUpdated: jest.fn(),
@@ -304,6 +307,21 @@ describe("ListingsService", () => {
 
 			expect(applicationModel.distinct.mock.calls[0][1].stage.$in).toEqual(["ACCEPTED", "SIGNED"]);
 			expect(listingModel.find.mock.calls[0][0]._id).toEqual({ $nin: [let_] });
+		});
+
+		it("puts a listing back in public search once its tenancy has ended, keeps it hidden while the tenancy runs", async () => {
+			const endedApplication = new Types.ObjectId();
+			const ended = { application: endedApplication, listing: new Types.ObjectId() };
+			const running = { application: new Types.ObjectId(), listing: new Types.ObjectId() };
+			tenancyModel.distinct.mockReturnValue({ exec: jest.fn().mockResolvedValue([endedApplication, null]) });
+			// Like Mongo: accepted applications minus those the query leaves out.
+			applicationModel.distinct.mockImplementation(async (_field: string, filter: any) => [ended, running]
+				.filter(row => !filter._id.$nin.some((id: Types.ObjectId) => id.equals(row.application)))
+				.map(row => row.listing));
+			await service.filters({} as never);
+
+			expect(tenancyModel.distinct).toHaveBeenCalledWith("application", { status: "ENDED" });
+			expect(listingModel.find.mock.calls[0][0]._id).toEqual({ $nin: [running.listing] });
 		});
 
 		it("hides listings whose availableUntil has passed, alongside a text search", async () => {

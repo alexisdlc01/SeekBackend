@@ -11,7 +11,7 @@ import { InjectModel } from "@nestjs/mongoose";
 import { Listing, ViewingSlotAvailability } from "./listings.schema";
 import { Application } from "../application/application.schema";
 import { ApplicationStage } from "../application/enums/application-stage.enum";
-import { Tenancy } from "../tenancies/tenancy.schema";
+import { endedTenancyApplications, Tenancy } from "../tenancies/tenancy.schema";
 import { Model, Types } from "mongoose";
 import { CreateListingDto } from "./dto/create-listing.dto";
 import { User } from "../users/users.schema";
@@ -275,9 +275,10 @@ export class ListingsService {
 		);
 	}
 
-	/** Listings a household has already accepted: no longer open to applicants, so hidden from public search. */
+	/** Listings a household has accepted and whose tenancy has not ended: not open to applicants, so hidden from public search. */
 	private async letListingIds(): Promise<Types.ObjectId[]> {
 		return this.applicationModel.distinct("listing", {
+			_id: { $nin: await endedTenancyApplications(this.tenancyModel) },
 			stage: { $in: [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] }
 		});
 	}

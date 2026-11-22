@@ -73,7 +73,8 @@ describe("ConnectorsService.contactBook for landlords", () => {
 			none,
 			none,
 			none,
-			none
+			none,
+			{} as any
 		);
 
 		const book = await service.contactBook({
@@ -107,7 +108,8 @@ describe("ConnectorsService.tenancyFor for students", () => {
 		none,
 		none,
 		none,
-		none
+		none,
+		{} as any
 	);
 	const student = { _id: new Types.ObjectId(), role: Role.STUDENT } as any;
 	const mail = { subject: "Your new tenancy agreement", body: "" } as any;
@@ -151,7 +153,8 @@ describe("ConnectorsService.contactBook for students", () => {
 			none,
 			none,
 			none,
-			none
+			none,
+			{} as any
 		);
 
 		const book = await service.contactBook({ _id: studentId, role: Role.STUDENT } as any);
