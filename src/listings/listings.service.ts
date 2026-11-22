@@ -47,6 +47,8 @@ type DraftUpdateData = Partial<Omit<CreateListingDto, "viewingSlots">> & {
 /** What moderation checks: a change on a live listing re-runs the automatic check (ListingModerationService). */
 const REVIEWED_FIELDS = ["propertyTitle", "propertyDesc", "amenities", "streetAddress", "cityTown", "postcodeZIP", "country", "photos", "monthlyRent", "numOfPeople", "registrationNumber", "registerOfTitleKey", "propertyType", "bedroomsCount", "availableFrom", "gasSafetyExpiry", "eicrExpiry"] as const;
 
+const ADDRESS_FIELDS = ["streetAddress", "cityTown", "postcodeZIP", "country"] as const;
+
 export type ListingWithCoordinates = Listing & {
 	lat: number | null;
 	lng: number | null;
@@ -140,7 +142,7 @@ export class ListingsService {
 		if (reviewed.length > 0) {
 			const current = await this.listingModel
 				.findOne({ _id: new Types.ObjectId(listingId), landlord: new Types.ObjectId(landlord._id) })
-				.select(["isDraft", ...reviewed].join(" "))
+				.select(["isDraft", "streetAddress", "cityTown", "postcodeZIP", "country", ...reviewed].join(" "))
 				.lean()
 				.exec();
 			// Stored dates come back as Date: compare by time, so resending the same date is not a change.
@@ -157,6 +159,16 @@ export class ListingsService {
 				update.isVerified = false;
 				// PENDING until checked, so the sweeper retries it if the check in this request fails.
 				update.moderationStatus = ModerationStatus.PENDING;
+				// A moved address must move the map pin too; publish already does this, the step saves do not.
+				if (ADDRESS_FIELDS.some(key => changed.includes(key))) {
+					const stored = current as unknown as Record<string, string>;
+					const merged = (key: (typeof ADDRESS_FIELDS)[number]) => (data[key] as string | undefined) ?? stored[key];
+					const place = await this.getCoordinates(merged("streetAddress"), merged("cityTown"), merged("postcodeZIP"), merged("country"));
+					if (place) {
+						update.formatted_address = place.formatted_address;
+						update.location = { type: "Point", coordinates: [place.lng, place.lat] };
+					}
+				}
 			}
 		}
 		if (data.criteria) update.criteria = normaliseCriteria(data.criteria);
