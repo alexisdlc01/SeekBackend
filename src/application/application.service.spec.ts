@@ -973,6 +973,35 @@ describe("ApplicationService pipeline", () => {
 			expect(pref).toBe("newQualifiedHousehold");
 		});
 
+		it("tells the other members when the owner turns down an offer", async () => {
+			const housemate = new Types.ObjectId();
+			applicationModel.findById.mockReturnValue({ lean: () => exec(stored(ApplicationStage.OFFERED, { owner: studentId, applicants: [studentId, housemate] })) });
+			applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.WITHDRAWN)));
+			queue();
+
+			await service.delete(applicationId.toString());
+
+			const [inputs] = notifications.notifyMany.mock.calls[0];
+			expect(inputs.map((input: any) => input.user)).toEqual([housemate]);
+			expect(inputs[0]).toMatchObject({ kind: "OFFER_WITHDRAWN", dedupeKey: `offer-withdrawn-household:${applicationId}` });
+		});
+
+		it("tells joined housemates, but not the landlord, when the owner deletes an unsent draft", async () => {
+			const housemate = new Types.ObjectId();
+			(service as any).converstaionModel = { updateOne: jest.fn().mockReturnValue({ exec: jest.fn() }) };
+			const row = stored(ApplicationStage.NOT_SENT, { owner: studentId, applicants: [studentId, housemate] });
+			applicationModel.findById.mockReturnValue({ lean: () => exec(row) });
+			applicationModel.findOneAndDelete = jest.fn().mockResolvedValue(row);
+
+			await service.delete(applicationId.toString());
+			expect(notifications.notifyMany.mock.calls[0][0].map((input: any) => input.user)).toEqual([housemate]);
+
+			notifications.notifyMany.mockClear();
+			applicationModel.findOneAndDelete.mockResolvedValue({ ...row, applicants: [studentId] });
+			await service.delete(applicationId.toString());
+			expect(notifications.notifyMany).not.toHaveBeenCalled();
+		});
+
 		it("releases a closing member of an offered household: the leaver's holding deposit is refunded, or a lone household's offer is withdrawn", async () => {
 			const memberId = new Types.ObjectId();
 			const conversation = new Types.ObjectId();

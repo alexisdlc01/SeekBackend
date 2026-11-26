@@ -219,6 +219,15 @@ export class ContractsService {
 		if (contract.deductions && contract.deductions.status !== DeductionStatus.DISPUTED) {
 			throw new BadRequestException(`These deductions are already ${contract.deductions.status.toLowerCase()}.`);
 		}
+		// One deposit per tenancy: tenants only see the first agreement with deductions, so a second set would be hidden and could exceed the deposit.
+		const elsewhere = await this.contractModel.exists({
+			tenancy: contract.tenancy,
+			_id: { $ne: contract._id },
+			"deductions.status": { $in: Object.values(DeductionStatus) }
+		});
+		if (elsewhere) {
+			throw new BadRequestException("Deductions were already proposed on another agreement for this tenancy. Update them there.");
+		}
 		const total = dto.items.reduce((sum, item) => sum + item.amount, 0);
 		const deposit = tenancy.depositAmount * tenancy.tenants.length;
 		if (total > deposit) {

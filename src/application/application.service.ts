@@ -166,7 +166,7 @@ export class ApplicationService {
 		if (Types.ObjectId.isValid(applicationId)) {
 			const current = await this.applicationModel.findById(applicationId).lean().exec();
 			if (current?.stage === ApplicationStage.OFFERED) {
-				await this.withdrawOffer(current);
+				await this.withdrawOffer(current, housemates);
 				return;
 			}
 			// An accepted/signed application backs a tenancy and its payments; deleting it would orphan them.
@@ -184,26 +184,30 @@ export class ApplicationService {
 		}
 		if (deleted && [ApplicationStage.SENT, ApplicationStage.VIEWED].includes(deleted.stage as ApplicationStage)) {
 			await this.notifyWithdrawn(deleted, housemates);
+		} else if (deleted?.stage === ApplicationStage.NOT_SENT && housemates) {
+			// A draft never reached the landlord, but housemates who joined it must learn it is gone.
+			await this.notifyWithdrawn(deleted, true, false);
 		}
 	}
 
 	/** Same notice as a withdrawn offer: the landlord (with any booked viewing, whose slot is now free) and the other members. */
-	private async notifyWithdrawn(application: Application & { _id: Types.ObjectId }, housemates: boolean) {
+	private async notifyWithdrawn(application: Application & { _id: Types.ObjectId }, housemates: boolean, landlord = true) {
 		const listing = await this.listingService.findListingById(application.listing.toString()).catch(() => null);
 		const title = listing?.propertyTitle ?? listing?.streetAddress ?? "the property";
 		const viewing = application.viewingAt && new Date(application.viewingAt).getTime() > Date.now()
 			? ` The viewing booked for ${new Date(application.viewingAt).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })} is cancelled.`
 			: "";
 		const others = housemates ? application.applicants.filter(id => id.toString() !== application.owner?.toString()) : [];
+		if (!landlord && !others.length) return;
 		await this.notificationsService.notifyMany([
-			{
+			...(landlord ? [{
 				user: application.landlord,
 				kind: NotificationKind.OFFER_WITHDRAWN,
 				title: `A household withdrew its application for ${title}`,
 				body: `They deleted their application.${viewing}`,
 				...notificationTarget("landlord", NotificationTargetKind.APPLICATION, undefined, { listing: application.listing }),
 				dedupeKey: `application-withdrawn:${application._id.toString()}`
-			},
+			}] : []),
 			...others.map(user => ({
 				user,
 				kind: NotificationKind.OFFER_WITHDRAWN,
@@ -216,7 +220,7 @@ export class ApplicationService {
 	}
 
 	/** An offered household may withdraw; keep its audit row and return any paid reservation fee. */
-	private async withdrawOffer(application: Application & { _id: Types.ObjectId }) {
+	private async withdrawOffer(application: Application & { _id: Types.ObjectId }, housemates = true) {
 		const withdrawn = await this.applicationModel.findOneAndUpdate(
 			{ _id: application._id, stage: ApplicationStage.OFFERED },
 			{ $set: { stage: ApplicationStage.WITHDRAWN, offerExpiresAt: null, holdingDeposit: null } },
@@ -239,6 +243,17 @@ export class ApplicationService {
 			...notificationTarget("landlord", NotificationTargetKind.APPLICATION, application._id, { listing: application.listing }),
 			dedupeKey: `offer-withdrawn:${application._id.toString()}`
 		});
+		const others = housemates ? application.applicants.filter(id => id.toString() !== application.owner?.toString()) : [];
+		if (others.length) {
+			await this.notificationsService.notifyMany(others.map(user => ({
+				user,
+				kind: NotificationKind.OFFER_WITHDRAWN,
+				title: `Your household turned down the offer for ${title}`,
+				body: "The household owner turned the offer down. Any holding deposit you paid is refunded automatically.",
+				...notificationTarget("student", NotificationTargetKind.APPLICATION),
+				dedupeKey: `offer-withdrawn-household:${application._id.toString()}`
+			})));
+		}
 		await this.notifyNextQualified(application, queue.qualified, `Offer withdrawn for ${title}`, `offer-next:${application._id.toString()}:withdrawn`);
 	}
 

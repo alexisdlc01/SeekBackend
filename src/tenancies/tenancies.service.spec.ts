@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { BadRequestException, ConflictException, ExecutionContext, ForbiddenException } from "@nestjs/common";
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
@@ -59,7 +60,8 @@ describe("TenanciesService create / accept", () => {
 			contractModel as any,
 			rentSchedule as any,
 			notifications as any,
-			paymentModel as any
+			paymentModel as any,
+			{ getOrThrow: (name: string) => ({ AWS_PRIVATE_BUCKET: "seek-private", AWS_S3_REGION: "eu-west-2" })[name] } as any
 		);
 		jest.spyOn(service, "getDetail").mockResolvedValue({} as any);
 		return { service, tenancyModel, listingModel, applicationModel, contractModel, rentSchedule, notifications, paymentModel, created };
@@ -709,7 +711,7 @@ describe("TenanciesService create / accept", () => {
 		const { service, tenancyModel } = setup();
 		const student = { _id: new Types.ObjectId(), role: Role.STUDENT } as any;
 		jest.spyOn(service, "findForMember").mockResolvedValue({ _id: new Types.ObjectId(), landlord: landlordId, tenants: [student._id] } as any);
-		const doc = (type: TenancyDocumentType) => ({ type, title: "Signed tenancy agreement", url: "https://x.example/a" });
+		const doc = (type: TenancyDocumentType) => ({ type, title: "Signed tenancy agreement", url: "https://x.example/a", key: `private/${student._id}/${randomUUID()}.pdf` });
 		const filedType = () => tenancyModel.updateOne.mock.calls.at(-1)![1].$push.documents.type;
 
 		await service.addDocument("t", doc(TenancyDocumentType.TENANCY_AGREEMENT), student);
@@ -718,7 +720,7 @@ describe("TenanciesService create / accept", () => {
 		expect(filedType()).toBe(TenancyDocumentType.OTHER);
 		await service.addDocument("t", doc(TenancyDocumentType.COUNCIL_TAX_EXEMPTION), student);
 		expect(filedType()).toBe(TenancyDocumentType.COUNCIL_TAX_EXEMPTION);
-		await service.addDocument("t", doc(TenancyDocumentType.TENANCY_AGREEMENT), landlord);
+		await service.addDocument("t", { ...doc(TenancyDocumentType.TENANCY_AGREEMENT), key: undefined }, landlord);
 		expect(filedType()).toBe(TenancyDocumentType.TENANCY_AGREEMENT);
 	});
 
@@ -730,7 +732,8 @@ describe("TenanciesService create / accept", () => {
 			type: TenancyDocumentType.INVENTORY,
 			stage: InventoryStage.CHECK_OUT,
 			title: "Bedroom wall",
-			url: "https://x.example/wall.jpg"
+			url: "https://x.example/wall.jpg",
+			key: `private/${student._id}/${randomUUID()}.jpg`
 		}, student);
 		const stored = tenancyModel.updateOne.mock.calls.at(-1)![1].$push.documents;
 		expect(stored).toMatchObject({
@@ -753,6 +756,24 @@ describe("TenanciesService create / accept", () => {
 		expect(isOfficialInventory(inventory)).toBe(true);
 		await service.addDocument("t", { ...baseDocument, type: TenancyDocumentType.GAS_SAFETY, stage: InventoryStage.CHECK_OUT }, landlord);
 		expect(tenancyModel.updateOne.mock.calls.at(-1)![1].$push.documents).not.toHaveProperty("stage");
+	});
+
+	it("refuses a housemate's document without their own upload key, and never stores the URL they sent", async () => {
+		const { service, tenancyModel } = setup();
+		const student = { _id: new Types.ObjectId(), role: Role.STUDENT } as any;
+		jest.spyOn(service, "findForMember").mockResolvedValue({ _id: new Types.ObjectId(), landlord: landlordId, tenants: [student._id] } as any);
+		const phishing = { type: TenancyDocumentType.OTHER, title: "Updated bank details", url: "https://evil.example/login" };
+
+		await expect(service.addDocument("t", phishing, student)).rejects.toThrow(BadRequestException);
+		await expect(service.addDocument("t", { ...phishing, key: `public/${student._id}/${randomUUID()}.pdf` }, student)).rejects.toThrow(BadRequestException);
+		expect(tenancyModel.updateOne).not.toHaveBeenCalled();
+
+		const key = `private/${student._id}/${randomUUID()}.pdf`;
+		await service.addDocument("t", { ...phishing, key }, student);
+		expect(tenancyModel.updateOne.mock.calls.at(-1)![1].$push.documents).toMatchObject({
+			key,
+			url: `https://seek-private.s3.eu-west-2.amazonaws.com/${key}`
+		});
 	});
 
 	it("lets only the owning landlord confirm an imported tenancy agreement", async () => {
@@ -793,7 +814,7 @@ describe("TenanciesService populated tenants", () => {
 		const query: any = { populate, sort: () => query, lean: () => ({ exec: () => Promise.resolve([]) }) };
 		populate.mockReturnValue(query);
 		const tenancyModel = { find: jest.fn().mockReturnValue(query) };
-		const service = new TenanciesService(tenancyModel as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+		const service = new TenanciesService(tenancyModel as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
 
 		await service.listForLandlord(new Types.ObjectId().toString());
 

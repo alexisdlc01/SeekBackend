@@ -161,6 +161,7 @@ describe("ContractsService deductions", () => {
 		let stored: any = { _id: new Types.ObjectId(), tenancy: tenancy._id, status: ContractStatus.SIGNED, ...contract };
 		const contractModel = {
 			findById: jest.fn(() => lean(stored)),
+			exists: jest.fn().mockResolvedValue(null),
 			findByIdAndUpdate: jest.fn((_id, update: any) => lean((stored = { ...stored, ...update.$set }))),
 			findOneAndUpdate: jest.fn((filter: any, update: any) => {
 				if ("deductions.responses" in filter && JSON.stringify(filter["deductions.responses"]) !== JSON.stringify(stored.deductions.responses)) {
@@ -251,6 +252,19 @@ describe("ContractsService deductions", () => {
 		await expect(service.proposeDeductions(id, { items: [{ description: "Carpet", amount: 60000 }] }, landlord))
 			.rejects.toThrow("These deductions are already accepted.");
 		expect(current().deductions.total).toBe(12000);
+	});
+
+	it("refuses deductions when another agreement of the tenancy already has some", async () => {
+		const { service, contractModel, current } = setup({});
+		contractModel.exists.mockResolvedValueOnce({ _id: new Types.ObjectId() });
+		await expect(service.proposeDeductions(id, { items: [{ description: "Carpet", amount: 12000 }] }, { _id: tenancy.landlord } as any))
+			.rejects.toThrow("already proposed on another agreement");
+		expect(contractModel.exists).toHaveBeenCalledWith({
+			tenancy: tenancy._id,
+			_id: { $ne: current()._id },
+			"deductions.status": { $in: [DeductionStatus.PROPOSED, DeductionStatus.ACCEPTED, DeductionStatus.DISPUTED] }
+		});
+		expect(contractModel.findByIdAndUpdate).not.toHaveBeenCalled();
 	});
 
 	it("is DISPUTED as soon as one tenant disagrees", async () => {
