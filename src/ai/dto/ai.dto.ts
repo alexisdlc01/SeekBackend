@@ -141,7 +141,7 @@ export class SearchChatResponseDto {
 	@ApiProperty({ type: [String], description: "Filters dropped because nothing matched them all.", example: ["billsIncluded"] })
 	relaxed: string[];
 
-	@ApiProperty({ type: [String], description: "Quick replies for the next message.", example: ["Quiet streets", "Nightlife", "Either"] })
+	@ApiProperty({ type: [String], description: "Quick replies for the next message.", example: ["Bills included", "Bills not included", "Either"] })
 	suggestions: string[];
 
 	@ApiProperty({ enum: ["ai", "rules"], description: "Whether the model or the built-in parser read the request." })

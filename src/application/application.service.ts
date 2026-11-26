@@ -1305,6 +1305,25 @@ export class ApplicationService {
 		}
 	}
 
+	/** A deleted listing declines its open applications like releaseDeletedLandlord, and removes its drafts. Throws on the first failure so the listing is kept. */
+	async releaseDeletedListing(listingId: Types.ObjectId): Promise<void> {
+		const applications = await this.applicationModel
+			.find({ listing: listingId, stage: { $in: [...LANDLORD_OPEN_STAGES, ApplicationStage.NOT_SENT] } }, { _id: 1, stage: 1, conversation: 1 })
+			.lean()
+			.exec();
+		for (const application of applications) {
+			if (application.stage === ApplicationStage.NOT_SENT) {
+				// housemates: false, or the draft's members would be told the owner deleted it. delete() closes the chat.
+				await this.delete(application._id.toString(), false);
+				continue;
+			}
+			await this.reject(application._id.toString(), "The landlord removed this listing");
+			if (application.conversation) {
+				await this.converstaionModel.updateOne({ _id: application.conversation }, { $set: { closedAt: new Date() } }).exec();
+			}
+		}
+	}
+
 	async sendApplication(applicationId: string): Promise<void> {
 		const application: Application | null =
 			await this.applicationModel.findById(applicationId);

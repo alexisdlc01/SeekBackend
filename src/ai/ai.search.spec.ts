@@ -18,7 +18,7 @@ describe("AiService searchChat with a model answer", () => {
 		expect(result.provider).toBe("gemini");
 		expect(result.filters).toEqual({ city: "Bristol", area: "Cotham", maxRent: 700, minBedrooms: 2, billsIncluded: true });
 		expect(findListings).toHaveBeenCalledWith(result.filters, undefined);
-		expect(result.suggestions).toEqual(["Quiet streets", "Nightlife", "Either"]);
+		expect(result.suggestions).toEqual([]);
 	});
 
 	it("keeps the Scottish town when the model files St Andrews under Bristol", async () => {
@@ -95,6 +95,15 @@ describe("search result checks and quick replies", () => {
 	it("asks for what the search still lacks", () => {
 		expect(quickReplies({})).toEqual(["Bristol", "Manchester", "Leeds"]);
 		expect(quickReplies({ city: "Bristol" })).toEqual(["Under £600", "Under £750", "Under £900"]);
+	});
+
+	it("moves past the bills question once the student answers Either, and never offers a neighbourhood chip", () => {
+		const filters = { city: "Bristol", maxRent: 750 };
+		expect(quickReplies(filters, "Under £750")).toEqual(["Bills included", "Bills not included", "Either"]);
+		expect(quickReplies(filters, "Either")).not.toContain("Bills included");
+		for (const chips of [quickReplies(filters), quickReplies(filters, "either"), quickReplies({ ...filters, billsIncluded: true })]) {
+			expect(chips).not.toContain("Nightlife");
+		}
 	});
 
 	it("flags budget, EPC and the landlord's criteria", () => {
