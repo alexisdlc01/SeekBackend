@@ -12,10 +12,15 @@ import { AdviceRequestDto, AdviceResponseDto, SearchChatDto, SearchChatResponseD
 /** Each call can reach a paid model, so both routes have a tighter limit than the default. */
 const AI_THROTTLE = { default: { limit: 20, ttl: 60_000 } };
 
-/** Per account (both routes together), on top of the per-IP limit above. */
+/** Per account, on top of the per-IP limit above. Search and advice count separately: advice cards load on their own when a page opens and must not use up the search budget. */
 export const AI_USER_LIMITS = [
 	{ name: "ai-min", ttl: 60_000, limit: 10, message: "You're asking Seek AI too quickly. Wait a minute and try again." },
 	{ name: "ai-day", ttl: 86_400_000, limit: 60, message: "You've reached today's limit of 60 Seek AI requests. Try again tomorrow." }
+];
+
+export const AI_ADVICE_LIMITS = [
+	{ name: "ai-advice-min", ttl: 60_000, limit: 30, message: "You're asking Seek AI too quickly. Wait a minute and try again." },
+	{ name: "ai-advice-day", ttl: 86_400_000, limit: 300, message: "You've reached today's limit of 300 Seek AI advice requests. Try again tomorrow." }
 ];
 
 @Controller("ai")
@@ -25,8 +30,8 @@ export class AiController {
 		@Inject(ThrottlerStorage) private readonly storage: ThrottlerStorage
 	) {}
 
-	private async capPerUser(user: User) {
-		for (const { name, ttl, limit, message } of AI_USER_LIMITS) {
+	private async capPerUser(user: User, limits: typeof AI_USER_LIMITS) {
+		for (const { name, ttl, limit, message } of limits) {
 			// Block for one window once over the limit: with blockDuration 0 the count resets instead.
 			const hit = await this.storage.increment(`${name}:${user._id}`, ttl, limit, ttl, `${name}:${user._id}`);
 			if (hit.isBlocked) throw new HttpException(message, HttpStatus.TOO_MANY_REQUESTS);
@@ -42,7 +47,7 @@ export class AiController {
 	@ApiResponse({ status: 400, type: ErrorDto })
 	@ApiResponse({ status: 429, type: ErrorDto })
 	async searchChat(@Body() body: SearchChatDto, @CurrentUser() user: User) {
-		await this.capPerUser(user);
+		await this.capPerUser(user, AI_USER_LIMITS);
 		return this.ai.searchChat(body.messages, new Date(), user.role === Role.STUDENT ? user : undefined);
 	}
 
@@ -55,7 +60,7 @@ export class AiController {
 	@ApiResponse({ status: 403, type: ErrorDto })
 	@ApiResponse({ status: 429, type: ErrorDto })
 	async advice(@Body() body: AdviceRequestDto, @CurrentUser() user: User) {
-		await this.capPerUser(user);
+		await this.capPerUser(user, AI_ADVICE_LIMITS);
 		return this.ai.advice(user, body);
 	}
 }
