@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { Type } from "class-transformer";
 import {
 	ArrayMaxSize,
+	ArrayMinSize,
 	IsArray,
 	IsBoolean,
 	IsInt,
@@ -59,6 +60,8 @@ export class InventoryItemDto {
 export class InventoryDto {
 	@ApiProperty({ type: [InventoryItemDto] })
 	@IsArray()
+	// An empty save would wipe the inventory and tell every tenant "0 items recorded".
+	@ArrayMinSize(1)
 	@ArrayMaxSize(300)
 	@ValidateNested({ each: true })
 	@Type(() => InventoryItemDto)

@@ -11,6 +11,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { InjectModel } from "@nestjs/mongoose";
 import { JwtService } from "@nestjs/jwt";
+import { ModuleRef } from "@nestjs/core";
 import { Model, Types } from "mongoose";
 import { randomBytes, randomUUID } from "node:crypto";
 import type Redis from "ioredis";
@@ -178,7 +179,9 @@ export class ConnectorsService {
 		private readonly tenancies: TenanciesService,
 		private readonly uploads: UploadService,
 		@Inject("REDIS_CLIENT") private readonly redis: Redis,
-		@InjectModel(Contract.name) private readonly contractModel: Model<Contract>
+		@InjectModel(Contract.name) private readonly contractModel: Model<Contract>,
+		// Looked up at call time: UsersModule imports this module, so injecting AccountService would loop.
+		private readonly moduleRef?: ModuleRef
 	) {}
 
 	// ---------------------------------------------------------------- setup
@@ -1373,7 +1376,7 @@ export class ConnectorsService {
 		return user.referenceRequests?.find(request => request.email === from)?.type ?? null;
 	}
 
-	/** Adds a reference to the student's documents, waiting for Seek to verify it; replaces only an expired or rejected one of that type. */
+	/** Adds a reference to the student's documents as provided (as any upload); replaces only an expired or rejected one of that type. */
 	private async addReference(user: UserLean, type: DocumentType, fileName: string, file: { url: string; key: string | null }): Promise<boolean> {
 		// "Live" as in effectiveStatus (users/passport.ts): not rejected or expired, and not past the day after its expiry date.
 		const noLiveOne = {
@@ -1388,7 +1391,9 @@ export class ConnectorsService {
 				}
 			}]
 		};
-		await this.userModel.updateOne(noLiveOne, { $pull: { documents: { type } } });
+		// Returns the account before the pull, so the replaced file can be erased like a manual re-upload.
+		const before = await this.userModel.findOneAndUpdate(noLiveOne, { $pull: { documents: { type } } }, { projection: { documents: 1 } });
+		const replacedKey = before?.documents?.find(document => document.type === type)?.key;
 		const result = await this.userModel.updateOne(
 			noLiveOne,
 			{
@@ -1397,13 +1402,18 @@ export class ConnectorsService {
 						type,
 						url: file.url,
 						...(file.key ? { key: file.key } : {}),
-						status: DocumentStatus.PENDING,
+						status: DocumentStatus.PROVIDED,
 						label: documentTitle(fileName),
 						uploadedAt: new Date()
 					}
 				}
 			}
 		);
+		if (replacedKey && this.moduleRef) {
+			// Imported at call time: account.service imports this file, a top-level import would be circular.
+			const { AccountService } = await import("../users/account.service");
+			await this.moduleRef.get(AccountService, { strict: false }).eraseReplacedDocument(user._id, replacedKey);
+		}
 		return result.modifiedCount > 0;
 	}
 

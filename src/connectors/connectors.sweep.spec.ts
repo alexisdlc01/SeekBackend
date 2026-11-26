@@ -242,14 +242,16 @@ describe("ConnectorsService store files a referee's reply", () => {
 	});
 
 	it("replaces only an expired or rejected reference, atomically, and says whether it added one", async () => {
-		const userModel = { updateOne: jest.fn().mockResolvedValueOnce({}).mockResolvedValueOnce({ modifiedCount: 0 }) };
+		const userModel = { findOneAndUpdate: jest.fn().mockResolvedValue(null), updateOne: jest.fn().mockResolvedValueOnce({ modifiedCount: 0 }) };
 		const service = new ConnectorsService({ get: () => undefined } as any, {} as any, {} as any, {} as any, {} as any, userModel as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
 		const add = () => (service as any).addReference(student, "LANDLORD_REFERENCE", "maya.pdf", { url: "https://files/x.pdf", key: null });
 
 		expect(await add()).toBe(false);
-		const [[pullFilter, pull], [pushFilter, push]] = userModel.updateOne.mock.calls;
+		const [[pullFilter, pull]] = userModel.findOneAndUpdate.mock.calls;
+		const [[pushFilter, push]] = userModel.updateOne.mock.calls;
 		expect(pull).toEqual({ $pull: { documents: { type: "LANDLORD_REFERENCE" } } });
-		expect(push.$push.documents).toMatchObject({ type: "LANDLORD_REFERENCE", status: "PENDING" });
+		// Provided straight away, like any upload: nothing at Seek verifies it later.
+		expect(push.$push.documents).toMatchObject({ type: "LANDLORD_REFERENCE", status: "PROVIDED" });
 		// Both steps share one "no live document of this type" guard, so a valid reference is never removed or doubled.
 		expect(pushFilter).toBe(pullFilter);
 		const live = pullFilter.$nor[0].documents.$elemMatch;
@@ -257,8 +259,22 @@ describe("ConnectorsService store files a referee's reply", () => {
 		const cutoff = live.$or[1].expiresAt.$gt.getTime();
 		expect(Math.abs(cutoff - (Date.now() - 24 * 3_600_000))).toBeLessThan(5_000);
 
-		userModel.updateOne.mockResolvedValueOnce({}).mockResolvedValueOnce({ modifiedCount: 1 });
+		userModel.updateOne.mockResolvedValueOnce({ modifiedCount: 1 });
 		expect(await add()).toBe(true);
+	});
+
+	it("erases the file of the expired reference it replaced, through the account's usual check", async () => {
+		const oldKey = "private/aaaaaaaaaaaaaaaaaaaaaaaa/123e4567-e89b-12d3-a456-426614174000.pdf";
+		const userModel = {
+			findOneAndUpdate: jest.fn().mockResolvedValue({ documents: [{ type: "IDENTIFICATION", key: "other" }, { type: "LANDLORD_REFERENCE", key: oldKey }] }),
+			updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 })
+		};
+		const eraseReplacedDocument = jest.fn().mockResolvedValue(undefined);
+		const moduleRef = { get: jest.fn().mockReturnValue({ eraseReplacedDocument }) };
+		const service = new ConnectorsService({ get: () => undefined } as any, {} as any, {} as any, {} as any, {} as any, userModel as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, moduleRef as any);
+
+		expect(await (service as any).addReference(student, "LANDLORD_REFERENCE", "maya.pdf", { url: "https://files/x.pdf", key: "new" })).toBe(true);
+		expect(eraseReplacedDocument).toHaveBeenCalledWith(student._id, oldKey);
 	});
 
 	it("files the PDF under the requested type when the asked referee's authenticated address sent it", async () => {

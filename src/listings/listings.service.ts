@@ -182,16 +182,29 @@ export class ListingsService {
 			const lapsed = new Set((stored?.viewingSlots ?? []).map(slot => new Date(slot).getTime()).filter(time => time <= Date.now()));
 			update.viewingSlots = normaliseViewingSlots((data.viewingSlots as string[]).filter(slot => !lapsed.has(new Date(slot).getTime())));
 		}
-		if (["holdingDeposit", "securityDeposit", "monthlyRent", "numOfPeople", "nation"].some(key => key in data)) {
+		const money = (["holdingDeposit", "securityDeposit", "monthlyRent"] as const).filter(key => data[key] !== undefined);
+		const reshaped = (["numOfPeople", "nation"] as const).some(key => data[key] !== undefined);
+		if (data.draftStep === undefined || money.length > 0 || reshaped) {
 			const current = await this.listingModel
 				.findOne({ _id: new Types.ObjectId(listingId), landlord: new Types.ObjectId(landlord._id) })
-				.select("monthlyRent numOfPeople securityDeposit holdingDeposit nation")
+				.select("isDraft monthlyRent numOfPeople securityDeposit holdingDeposit nation")
 				.lean()
 				.exec();
-				// Deposit at most 5 weeks' rent (2 months in Scotland), holding deposit always at most 1 week's per room.
-			const overCap = listingDepositCompliance({ ...current, ...data, _id: new Types.ObjectId(listingId) } as never);
+			const sent = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
+			const moved = money.some(key => Number(data[key]) !== Number((current as Record<string, unknown> | null)?.[key]));
+			const live = !!current && !current.isDraft;
+			// Publish (no draftStep) and a live listing always check: a public listing never sits above the legal cap.
+			// A draft's step save checks only when it changes rent or a deposit: a nation or people change alone
+			// must not block step 1, which has no deposit field to fix it; publish catches it.
+			// Deposit at most 5 weeks' rent (2 months in Scotland), holding deposit always at most 1 week's per room.
+			const overCap = data.draftStep === undefined || live || moved
+				? listingDepositCompliance({ ...current, ...sent, _id: new Types.ObjectId(listingId) } as never)
+				: [];
 			if (overCap.length > 0) {
-				throw new BadRequestException(overCap.map(item => item.message).join(" "));
+				const howTo = live && !moved && reshaped
+					? " Lower the deposit first, then change the nation or number of people."
+					: "";
+				throw new BadRequestException(overCap.map(item => item.message).join(" ") + howTo);
 			}
 		}
 		if (data.paymentPlans || data.nation) {

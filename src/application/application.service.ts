@@ -24,7 +24,8 @@ import { endedTenancyApplications, Tenancy } from "../tenancies/tenancy.schema";
 import { NotificationsService } from "../notifications/notifications.service";
 import { NotificationKind } from "../notifications/notification-kind.enum";
 import { notificationTarget, NotificationTargetKind } from "../notifications/links";
-import { buildPassport, PassportDocumentInput, StudentEmailProof, withoutFiles } from "../users/passport";
+import { buildPassport, effectiveStatus, PassportDocumentInput, StudentEmailProof, withoutFiles } from "../users/passport";
+import { DocumentStatus } from "../users/types/document-type";
 import { compareForLandlord, householdCap, householdReadiness, ReadinessCriteria } from "./readiness";
 import { parseUniversityDetails } from "./university-details";
 import { OFFER_WINDOW_DAYS } from "./offer";
@@ -34,6 +35,13 @@ import { PaymentKind, PaymentStatus } from "../payments/payment.enums";
 import { StripeApiError, StripeClient } from "../payments/stripe";
 import { notifyHoldingRefund, refundPayment } from "../payments/refund";
 import { holdingDepositPerPersonCapPence } from "../tenancies/compliance";
+
+/** Types of the documents that still count: an expired (or rejected) one does not satisfy a required document. */
+function liveDocumentTypes(documents: PassportDocumentInput[] = []) {
+	return documents
+		.filter(document => ![DocumentStatus.EXPIRED, DocumentStatus.REJECTED].includes(effectiveStatus(document)))
+		.map(document => document.type);
+}
 
 /** How long a shared invite link stays usable. */
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -93,7 +101,7 @@ export class ApplicationService {
 			throw new BadRequestException("This property is no longer available for the dates listed.");
 		}
 		await this.assertNotLet({ listing: listing._id });
-		const missing = missingDocuments(listing, (user.documents ?? []).map(document => document.type));
+		const missing = missingDocuments(listing, liveDocumentTypes(user.documents));
 		if (missing.length > 0) {
 			throw new BadRequestException(`Missing required documents: ${missing.join(", ")}. Add them to your Seek Passport, then apply.`);
 		}
@@ -1154,7 +1162,7 @@ export class ApplicationService {
 			throw new BadRequestException("This household is already full for this property.");
 		}
 		const joiner = await this.userSevice.getUserById(userId);
-		const missing = missingDocuments(listing, (joiner?.documents ?? []).map(document => document.type));
+		const missing = missingDocuments(listing, liveDocumentTypes(joiner?.documents));
 		if (missing.length > 0) {
 			throw new BadRequestException(`Missing required documents: ${missing.join(", ")}. Add them to your Seek Passport, then join.`);
 		}

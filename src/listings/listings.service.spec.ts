@@ -1,3 +1,4 @@
+import { BadRequestException } from "@nestjs/common";
 import { Types } from "mongoose";
 import { ConfigService } from "@nestjs/config";
 import { ListingsGateway } from "./listings.gateway";
@@ -159,6 +160,52 @@ describe("ListingsService", () => {
 		await expect(service.updateDraft(id.toString(), makeLandlord(), { holdingDeposit: 150.01 } as never))
 			.rejects.toThrow("one-week cap of £150.00 per room");
 		expect(listingModel.findOneAndUpdate).not.toHaveBeenCalled();
+	});
+
+	describe("deposit cap on step saves", () => {
+		// Five weeks of £1000 in England is £1153.85; Northern Ireland caps at one month (£1000).
+		const stored = { isDraft: true, monthlyRent: 1000, numOfPeople: 1, securityDeposit: 1150, nation: "ENGLAND" };
+		beforeEach(() => {
+			listingModel.findOne = jest.fn().mockReturnValue({
+				select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(stored) }) })
+			});
+			listingModel.findOneAndUpdate = jest.fn().mockResolvedValue(makeListing(true));
+		});
+
+		it("saves step 1 when only the nation change puts the stored deposit over the cap", async () => {
+			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { nation: "NORTHERN_IRELAND", draftStep: 1 } as never);
+			expect(listingModel.findOneAndUpdate).toHaveBeenCalled();
+		});
+
+		it("saves step 1 when the unchanged deposit is resent with the nation change", async () => {
+			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), {
+				nation: "NORTHERN_IRELAND", securityDeposit: 1150, monthlyRent: 1000, draftStep: 1
+			} as never);
+			expect(listingModel.findOneAndUpdate).toHaveBeenCalled();
+		});
+
+		it("still refuses a step save that sets the deposit over the cap", async () => {
+			await expect(service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), {
+				nation: "NORTHERN_IRELAND", securityDeposit: 1100, draftStep: 1
+			} as never)).rejects.toThrow("Lower it before letting");
+			expect(listingModel.findOneAndUpdate).not.toHaveBeenCalled();
+		});
+
+		it("refuses a nation change alone on a live listing that would put its deposit over the cap, saying what to do", async () => {
+			listingModel.findOne = jest.fn().mockReturnValue({
+				select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue({ ...stored, isDraft: false }) }) })
+			});
+			const saving = service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { nation: "NORTHERN_IRELAND", draftStep: 1 } as never);
+			await expect(saving).rejects.toBeInstanceOf(BadRequestException);
+			await expect(saving).rejects.toThrow("Lower the deposit first, then change the nation or number of people.");
+			expect(listingModel.findOneAndUpdate).not.toHaveBeenCalled();
+		});
+
+		it("still refuses to publish with the deposit over the cap, even with no money field sent", async () => {
+			await expect(service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), {
+				nation: "NORTHERN_IRELAND", holdingDeposit: undefined
+			} as never)).rejects.toThrow("Lower it before letting");
+		});
 	});
 
 	describe("viewing slots", () => {
