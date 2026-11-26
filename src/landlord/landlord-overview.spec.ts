@@ -93,4 +93,17 @@ describe("LandlordOverviewService todo", () => {
 		expect(paymentModel.find.mock.calls[0]).toEqual([expect.objectContaining({ dueDate: { $gte: new Date("2026-04-01T00:00:00Z"), $lt: new Date("2026-05-01T00:00:00Z") } })]);
 		expect(overview.month).toBe("2026-04");
 	});
+
+	it("shows a late payment of an ended tenancy on its listing's row", async () => {
+		const ended = { _id: new Types.ObjectId(), listing: listing._id };
+		const late = { amount: 62000, seekFee: 620, status: "LATE", kind: "RENT", tenancy: ended._id, dueDate: new Date("2026-11-01T00:00:00Z") };
+		const paymentModel = { find: jest.fn().mockReturnValueOnce(query([late])).mockReturnValue(query([])), countDocuments: async () => 0, distinct: () => query([]) };
+		const tenancyModel = { find: jest.fn().mockReturnValueOnce(query([])).mockReturnValue(query([ended])), distinct: () => query([]) };
+		const service = new LandlordOverviewService(
+			tenancyModel as never, model([listing]) as never, paymentModel as never, model() as never,
+			model() as never, model() as never, model() as never
+		);
+		const overview = await service.overview(new Types.ObjectId().toString(), now);
+		expect(overview.properties[0].arrears).toBe(62000);
+	});
 });

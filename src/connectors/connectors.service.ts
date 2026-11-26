@@ -422,6 +422,13 @@ export class ConnectorsService {
 				redirectUri: this.callbackUrl(provider),
 				code: query.code
 			});
+			// Google's granular consent lets the user untick "send": connecting then would make every reply fail.
+			if (provider === EmailProvider.GMAIL && tokens.scope) {
+				const granted = tokens.scope.split(/\s+/);
+				if (!client.scopes.split(" ").every(s => granted.includes(s))) {
+					return this.redirectFor(state, provider, "error", "denied");
+				}
+			}
 			const emailAddress = await client.mailboxAddress(tokens.accessToken);
 			if (!emailAddress) throw new Error("Mailbox address missing.");
 			const pending: PendingConnection = {

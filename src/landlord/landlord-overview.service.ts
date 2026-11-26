@@ -161,7 +161,14 @@ export class LandlordOverviewService {
 			...tenancies.flatMap(tenancy => tenancyCompliance(tenancy as never, tenancy.listing as never, now))
 		]);
 
-		const properties = await this.properties(listings, tenancies, [...monthPayments, ...olderLate], applications, compliance, month.start, now);
+		// Arrears of an ended tenancy still belong to its listing's row.
+		const payments = [...monthPayments, ...olderLate];
+		const known = new Set(tenancies.map(t => t._id.toString()));
+		const missing = [...new Set(payments.map(p => p.tenancy?.toString()))].filter(id => id && !known.has(id));
+		const ended = missing.length
+			? await this.tenancyModel.find({ _id: { $in: missing } }).select("listing").lean().exec()
+			: [];
+		const properties = await this.properties(listings, tenancies, payments, applications, compliance, month.start, now, ended);
 		const openRepairs = await this.repairModel.countDocuments({ landlord, status: RepairStatus.OPEN });
 		const deadlines = compliance.filter(item => item.kind !== "DEPOSIT_NOT_YET_RECEIVED");
 		const todo = [
@@ -227,11 +234,12 @@ export class LandlordOverviewService {
 		openApplications: { listing: unknown }[],
 		compliance: ComplianceItem[],
 		monthStart: Date,
-		now: Date
+		now: Date,
+		endedTenancies: { _id: Types.ObjectId; listing: unknown }[] = []
 	) {
 		const idOf = (value: unknown) =>
 			((value as { _id?: Types.ObjectId })?._id ?? (value as Types.ObjectId))?.toString();
-		const listingByTenancy = new Map(tenancies.map(t => [t._id.toString(), idOf(t.listing)]));
+		const listingByTenancy = new Map([...tenancies, ...endedTenancies].map(t => [t._id.toString(), idOf(t.listing)]));
 		const tenantsByListing = new Map<string, number>();
 		for (const tenancy of tenancies) {
 			const key = idOf(tenancy.listing);

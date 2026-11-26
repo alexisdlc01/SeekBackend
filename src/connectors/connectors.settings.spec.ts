@@ -123,6 +123,21 @@ describe("ConnectorsService OAuth callback binds the mailbox to who consented", 
 		expect(connectionModel.findOneAndUpdate).not.toHaveBeenCalled();
 	});
 
+	it("web: a Gmail grant without gmail.send is not connected and is redirected as denied", async () => {
+		const { service, userId, connectionModel } = oauthSetup();
+		jest.spyOn((service as any).clients[EmailProvider.GMAIL], "exchangeCode").mockResolvedValue({
+			accessToken: "at",
+			refreshToken: "rt",
+			expiresAt: null,
+			scope: "https://www.googleapis.com/auth/gmail.readonly"
+		});
+		const { url } = await service.authUrl({ _id: userId }, "gmail");
+		const cookieA = jwt.sign({ userId: userId.toString(), sessionId: "s" });
+		const target = await service.handleCallback("gmail", { code: "c", state: stateFor(url) }, cookieA);
+		expect(target).toBe("http://localhost:5173/connectors?connector=gmail&status=error&reason=denied");
+		expect(connectionModel.findOneAndUpdate).not.toHaveBeenCalled();
+	});
+
 	it("web: the requester's own cookie connects the mailbox to them", async () => {
 		const { service, userId, connectionModel } = oauthSetup();
 		const { url } = await service.authUrl({ _id: userId }, "gmail");

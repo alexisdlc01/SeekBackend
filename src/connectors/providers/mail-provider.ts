@@ -34,6 +34,8 @@ export interface TokenSet {
 	accessToken: string;
 	refreshToken: string | null;
 	expiresAt: Date | null;
+	/** Space-separated scopes the provider says were granted (Gmail only). */
+	scope?: string;
 }
 
 export interface OutgoingMail {
