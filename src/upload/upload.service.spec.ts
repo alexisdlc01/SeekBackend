@@ -1,4 +1,4 @@
-import { ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Types } from "mongoose";
 import { UploadService } from "./upload.service";
@@ -75,6 +75,14 @@ describe("UploadService private-file authorization", () => {
 		for (const [, command] of presign.mock.calls) {
 			expect((command as any).input).not.toHaveProperty("ServerSideEncryption");
 		}
+	});
+
+	it("rejects HEIC for public uploads but still accepts it for private ones", async () => {
+		const { service } = setup();
+		const owner = new Types.ObjectId().toString();
+		await expect(service.getPresignedUploadUrl("image/heic", "public", owner, 5)).rejects.toThrow(BadRequestException);
+		await expect(service.getPresignedUploadUrl("image/heif", "public", owner, 5)).rejects.toThrow(BadRequestException);
+		await expect(service.getPresignedUploadUrl("image/heic", "private", owner, 5)).resolves.toBeDefined();
 	});
 
 	it("lets a superuser open a listing's title deed but no other private file", async () => {
