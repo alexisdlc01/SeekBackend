@@ -221,7 +221,7 @@ export class GmailClient implements MailProviderClient {
 	}
 
 	private async token(values: Record<string, string>): Promise<TokenSet> {
-		const data = await fetchJson<{ access_token: string; refresh_token?: string; expires_in?: number }>(
+		const data = await fetchJson<{ access_token: string; refresh_token?: string; expires_in?: number; scope?: string }>(
 			"https://oauth2.googleapis.com/token",
 			{
 				method: "POST",
@@ -232,7 +232,8 @@ export class GmailClient implements MailProviderClient {
 		return {
 			accessToken: data.access_token,
 			refreshToken: data.refresh_token ?? null,
-			expiresAt: expiryFrom(data.expires_in)
+			expiresAt: expiryFrom(data.expires_in),
+			scope: data.scope
 		};
 	}
 
