@@ -331,6 +331,9 @@ export class Listing {
 	@ApiProperty({ required: false, description: "True when the listing is let or past its availableUntil. Returned by GET /listings/{id} only." })
 	closed?: boolean;
 
+	@ApiProperty({ required: false, description: "True when the landlord entered a registration number and in-date EPC, gas and electrical safety certificates (and an HMO licence from 3 bedrooms). The documents are not inspected. Returned by GET /listings/{id} only." })
+	complianceComplete?: boolean;
+
 	@Expose()
 	@ApiProperty({
 		type: RequiredDocumentInfo,

@@ -24,7 +24,7 @@ import axios from "axios";
 import { ListingFilterDto } from "./dto/listing-filter.dto";
 import { Nation } from "./enums/nation.enum";
 import { ModerationStatus } from "./enums/moderation-status.enum";
-import { listingDepositCompliance } from "../tenancies/compliance";
+import { complianceComplete, listingDepositCompliance } from "../tenancies/compliance";
 import { isKeyOwnedBy } from "../upload/object-key";
 import {
 	assertAvailabilityWindow,
@@ -351,6 +351,12 @@ export class ListingsService {
 			throw new NotFoundException("Listing not found");
 		}
 		return listing;
+	}
+
+	/** The public fetch hides registrationNumber, so read just the compliance fields here. */
+	async isComplianceComplete(id: string): Promise<boolean> {
+		const doc = await this.listingModel.findById(id).select("registrationNumber epcRating epcExpiry eicrExpiry gasSafetyExpiry hmoLicenceExpiry bedroomsCount").lean();
+		return !!doc && complianceComplete(doc);
 	}
 
 	async findPublishedListingById(id: string): Promise<Listing> {

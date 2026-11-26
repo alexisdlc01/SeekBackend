@@ -219,6 +219,7 @@ export class ListingsController {
 			...(listing as unknown as { toObject(): Listing }).toObject(),
 			viewingSlotAvailability,
 			closed,
+			complianceComplete: await this.listingsService.isComplianceComplete(id),
 			requiredDocuments: requiredDocuments(listing)
 		};
 	}
