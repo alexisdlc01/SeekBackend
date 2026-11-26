@@ -78,6 +78,11 @@ export class UploadService {
 			);
 		}
 
+		// Chrome/Edge cannot display HEIC, and public uploads are shown as images.
+		if (folder === "public" && /^image\/hei[cf]$/.test(fileType)) {
+			throw new BadRequestException("Use a JPEG, PNG or WebP image.");
+		}
+
 		const bucket =
 			folder === "private" ? this.privateBucket : this.publicBucket;
 
