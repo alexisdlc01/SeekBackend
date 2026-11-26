@@ -27,6 +27,7 @@ function setup(env: Record<string, string> = {}, connectorSettings?: Record<stri
 	const messageModel = { exists: jest.fn().mockResolvedValue(null), deleteMany: jest.fn().mockResolvedValue({}) };
 	const userModel = {
 		findById: jest.fn(() => selectLean({ _id: userId, name: "Maya", email: "maya@example.com", connectorSettings })),
+		findOneAndUpdate: jest.fn().mockResolvedValue(null),
 		updateOne: jest.fn().mockResolvedValue({}),
 		exists: jest.fn().mockResolvedValue(null)
 	};
@@ -462,8 +463,8 @@ describe("ConnectorsService settings", () => {
 			const on = storeSetup({}, "STUDENT", fromLandlord);
 			on.userModel.updateOne.mockResolvedValue({ modifiedCount: 1 });
 			await expect(on.run(withFile("Your landlord reference", "Landlord-reference.pdf"))).resolves.toBe(1);
-			const [, update] = on.userModel.updateOne.mock.calls[1] as any;
-			expect(update.$push.documents).toMatchObject({ type: "LANDLORD_REFERENCE", status: "PENDING" });
+			const [, update] = on.userModel.updateOne.mock.calls[0] as any;
+			expect(update.$push.documents).toMatchObject({ type: "LANDLORD_REFERENCE", status: "PROVIDED" });
 		});
 
 		it("never adds a reference sent by a housemate or a stranger", async () => {

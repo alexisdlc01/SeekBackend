@@ -145,6 +145,18 @@ describe("ApplicationService", () => {
 		expect(conversationModel.create).not.toHaveBeenCalled();
 	});
 
+	it("does not count an expired document as the required one", async () => {
+		applicationModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) });
+		listingService.findPublishedListingById.mockResolvedValue({
+			...listing,
+			requirements: [{ name: "Identification", desc: "National ID or Passport", required: true }],
+		});
+		const expired = { ...user, documents: [{ type: "IDENTIFICATION", status: "PROVIDED", expiresAt: new Date(Date.now() - 3 * 86400000) }] } as unknown as User;
+
+		await expect(service.create(listingId.toString(), expired)).rejects.toThrow("Missing required documents: Identification");
+		expect(conversationModel.create).not.toHaveBeenCalled();
+	});
+
 	it("refuses a new application once the listing's available-until date has passed", async () => {
 		applicationModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) });
 		listingService.findPublishedListingById.mockResolvedValue({ ...listing, availableUntil: new Date(Date.now() - 1000) });
@@ -532,6 +544,20 @@ describe("ApplicationService", () => {
 				...listing,
 				requirements: [{ name: "Identification", desc: "National ID or Passport", required: true }],
 			});
+			await expect(service.join(applicationId.toString(), new Types.ObjectId().toString(), VALID_INVITE))
+				.rejects.toThrow("Missing required documents: Identification");
+			expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
+		});
+
+		it("refuses a joiner whose required document has expired", async () => {
+			mockApplication({ stage: ApplicationStage.SENT });
+			listingService.findPublishedListingById.mockResolvedValue({
+				...listing,
+				requirements: [{ name: "Identification", desc: "National ID or Passport", required: true }],
+			});
+			Object.assign(service, { userSevice: { getUserById: jest.fn().mockResolvedValue({
+				documents: [{ type: "IDENTIFICATION", status: "VERIFIED", expiresAt: new Date(Date.now() - 3 * 86400000) }],
+			}) } });
 			await expect(service.join(applicationId.toString(), new Types.ObjectId().toString(), VALID_INVITE))
 				.rejects.toThrow("Missing required documents: Identification");
 			expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();

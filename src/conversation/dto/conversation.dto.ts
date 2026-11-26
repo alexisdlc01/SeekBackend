@@ -29,6 +29,11 @@ export class ConversationDto {
 	@Expose()
 	createdAt: Date;
 
+	/** Set once the conversation is closed (application deleted, offer withdrawn...): sending is refused, so clients hide the composer. */
+	@ApiProperty({ required: false })
+	@Expose()
+	closedAt?: Date;
+
 	@ApiProperty()
 	@Expose()
 	groupDescription: string;
