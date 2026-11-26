@@ -397,7 +397,7 @@ export class User {
 
 	/** Bank account the landlord's payouts go to, refreshed from Stripe on connect status. */
 	@Prop({ type: Object })
-	payoutBank?: { last4: string | null; bankName: string | null; verified: boolean };
+	payoutBank?: { last4: string | null; bankName: string | null; verified: boolean; status?: string | null };
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

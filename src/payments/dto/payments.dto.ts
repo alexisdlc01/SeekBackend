@@ -180,6 +180,9 @@ export class PayoutBankDto {
 
 	@ApiProperty({ description: "Stripe has verified the account." })
 	verified: boolean;
+
+	@ApiProperty({ type: String, required: false, nullable: true, description: "Stripe's bank account status: new, validated, verified, verification_failed or errored (payouts to it fail). Missing on a bank saved before this field existed." })
+	status?: string | null;
 }
 
 export class ReminderScheduleDto {
@@ -317,10 +320,10 @@ export class LandlordPaymentRowDto {
 	@ApiProperty({ description: "Pence refunded to the tenant so far; below amount means a partial refund. 0 if never refunded." })
 	refundedAmount: number;
 
-	@ApiProperty({ description: "Seek's 1% fee on this payment, pence." })
+	@ApiProperty({ description: "Seek's 1% fee on this payment, pence, after any refund. 0 when cancelled." })
 	fee: number;
 
-	@ApiProperty({ description: "What the landlord receives for this payment, pence." })
+	@ApiProperty({ description: "What the landlord receives for this payment, pence, after any refund. 0 when cancelled." })
 	payout: number;
 
 	@ApiProperty({ description: "The tenant's paid holding deposit counted toward this rent, pence (0 if none). `amount` is already reduced by it." })
@@ -330,7 +333,7 @@ export class LandlordPaymentRowDto {
 		type: String,
 		format: "date-time",
 		nullable: true,
-		description: "Estimated payout date for this payment: two working days after it is paid or due. Null once it is late or failed, or while it is held."
+		description: "Estimated payout date for this payment: two working days after it is paid or due. Null once it is late or failed, while it is held, or while payouts are on hold or paused."
 	})
 	nextPayout: Date | null;
 
@@ -370,12 +373,15 @@ export class LandlordPaymentsDto {
 		type: String,
 		format: "date-time",
 		nullable: true,
-		description: "Estimated date of the next payout: two working days after the earliest paid or due rent. Null when nothing is on its way, or while payouts are on hold."
+		description: "Estimated date of the next payout: two working days after the earliest paid or due rent. Null when nothing is on its way, or while payouts are on hold or paused."
 	})
 	nextPayoutDate: Date | null;
 
 	@ApiProperty({ description: "True when tenants can't pay this landlord by card yet (no Stripe account able to take card payments): card payment is blocked until setup is finished." })
 	payoutsOnHold: boolean;
+
+	@ApiProperty({ description: "True when tenants can pay by card but Stripe has paused payouts to the landlord's bank. Payout dates are null then." })
+	payoutsPaused: boolean;
 
 	@ApiProperty({ description: "Legacy: paid this month but held by Seek from before direct card payments, pence (after Seek's fee)." })
 	held: number;

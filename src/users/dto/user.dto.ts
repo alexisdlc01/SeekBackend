@@ -151,7 +151,7 @@ export class UserDto {
 	})
 	@Expose()
 	@Transform(({ obj }) => obj?.payoutBank ?? null)
-	payoutBank?: { last4: string | null; bankName: string | null; verified: boolean } | null;
+	payoutBank?: { last4: string | null; bankName: string | null; verified: boolean; status?: string | null } | null;
 
 	@ApiProperty({ type: TeamOfDto, required: false, nullable: true, description: "Set when this account is on a landlord's team: whose account it helps run." })
 	@Expose()

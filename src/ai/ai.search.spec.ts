@@ -177,6 +177,17 @@ describe("AiService bills advice", () => {
 		const draft = await (service as any).billsAdvice({ _id: c, role: "STUDENT" }, { _id: "t1", tenants: [a, b, c], documents: [] }, { propertyTitle: "14 Cotham Grove" });
 		expect(draft.advice).toContain("your share is £33.33.");
 	});
+
+	it("quotes the energy allowance of the most recent billing period, not the first listed", async () => {
+		const a = "64b000000000000000000011";
+		const energy = (used: number, periodEnd: string) => ({ amount: used, category: "ENERGY", status: "PAID", includedInRent: true, periodStart: new Date(periodEnd.slice(0, 8) + "01"), periodEnd: new Date(periodEnd), splitBetween: [a], paidShares: [] });
+		const bills = [energy(5000, "2026-08-31"), energy(9000, "2026-10-31")];
+		const billModel = { find: () => ({ sort() { return this; }, lean() { return this; }, exec: async () => bills }) };
+		const none = {} as any;
+		const service = new AiService({ isConfigured: () => false } as any, none, none, none, none, billModel as any, none, none, none, none, { get: () => undefined } as any);
+		const draft = await (service as any).billsAdvice({ _id: a, role: "STUDENT" }, { _id: "t1", tenants: [a], documents: [], energyAllowance: 6000 }, { propertyTitle: "14 Cotham Grove" });
+		expect(draft.advice).toContain("£90");
+	});
 });
 
 describe("AiService contract advice", () => {

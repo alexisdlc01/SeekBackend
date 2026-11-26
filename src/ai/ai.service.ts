@@ -641,7 +641,8 @@ export class AiService {
 			);
 		}
 		// Same fair-use figure the bills screen shows, from the latest energy bill.
-		const energy = bills.map(bill => allowanceFor(bill, tenancy)).find(Boolean);
+		const billTime = (bill: (typeof bills)[number]) => new Date(bill.periodEnd ?? bill.periodStart ?? (bill as { createdAt?: Date }).createdAt ?? 0).getTime();
+		const energy = [...bills].sort((a, b) => billTime(b) - billTime(a)).map(bill => allowanceFor(bill, tenancy)).find(Boolean);
 		if (energy && energy.allowance > 0) {
 			const usage = `The latest energy bill used ${energy.percentUsed}% of the fair-use allowance (${money(energy.used)} of ${money(energy.allowance)}).`;
 			const myOverage = energy.overagePerMember.find(share => share.user === uid)?.amount ?? 0;
