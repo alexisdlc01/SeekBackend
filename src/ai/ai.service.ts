@@ -316,7 +316,7 @@ export class AiService {
 			filters,
 			listings,
 			relaxed,
-			suggestions: quickReplies(filters),
+			suggestions: quickReplies(filters, messages.filter(turn => turn.role === "user").at(-1)?.content),
 			source: fromModel ? ("ai" as const) : ("rules" as const),
 			provider: fromModel?.provider ?? ("rules" as const)
 		};
@@ -1107,12 +1107,12 @@ export class AiService {
 	}
 }
 
-/** Quick replies for the next turn: what the search still lacks, else the design's neighbourhood question. */
-export function quickReplies(filters: SearchFilters): string[] {
+/** Quick replies for the next turn: what the search still lacks. `lastUserMessage` "Either" answers the bills question. */
+export function quickReplies(filters: SearchFilters, lastUserMessage = ""): string[] {
 	if (!filters.city && !filters.nearUniversity) return ["Bristol", "Manchester", "Leeds"];
 	if (!filters.maxRent) return ["Under £600", "Under £750", "Under £900"];
-	if (filters.billsIncluded === undefined) return ["Bills included", "Bills not included", "Either"];
-	return ["Quiet streets", "Nightlife", "Either"];
+	if (filters.billsIncluded === undefined && !/^either$/i.test(lastUserMessage.trim())) return ["Bills included", "Bills not included", "Either"];
+	return [];
 }
 
 const EFFICIENT_EPC = ["A", "B", "C"];

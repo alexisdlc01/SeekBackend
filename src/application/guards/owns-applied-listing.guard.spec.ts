@@ -60,6 +60,7 @@ describe("OwnsAppliedListingGuard", () => {
 		{} as never,
 		{} as never,
 		{} as never,
+		{} as never,
 		{} as never
 	);
 

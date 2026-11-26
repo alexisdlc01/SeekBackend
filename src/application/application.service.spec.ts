@@ -709,6 +709,43 @@ describe("ApplicationService", () => {
 			reject.mockRestore();
 		});
 
+		it("declines a deleted listing's offered and sent applications, closes their chats and deletes its drafts", async () => {
+			const listing = new Types.ObjectId();
+			const offered = { _id: new Types.ObjectId(), stage: "OFFERED", conversation: new Types.ObjectId() };
+			const sent = { _id: new Types.ObjectId(), stage: "SENT", conversation: conversationId };
+			const draft = { _id: new Types.ObjectId(), stage: "NOT_SENT", conversation: new Types.ObjectId() };
+			const find = jest.fn().mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue([offered, sent, draft]) }) });
+			Object.assign(applicationModel, { find });
+			conversationModel.updateOne.mockReturnValue({ exec: jest.fn().mockResolvedValue({}) });
+			const reject = jest.spyOn(service, "reject").mockResolvedValue();
+			const remove = jest.spyOn(service, "delete").mockResolvedValue();
+
+			await service.releaseDeletedListing(listing);
+
+			expect(find.mock.calls[0][0]).toEqual({ listing, stage: { $in: ["SENT", "VIEWED", "OFFERED", "NOT_SENT"] } });
+			expect(reject.mock.calls).toEqual([
+				[offered._id.toString(), "The landlord removed this listing"],
+				[sent._id.toString(), "The landlord removed this listing"]
+			]);
+			expect(conversationModel.updateOne).toHaveBeenCalledWith({ _id: offered.conversation }, { $set: { closedAt: expect.any(Date) } });
+			expect(conversationModel.updateOne).toHaveBeenCalledWith({ _id: conversationId }, { $set: { closedAt: expect.any(Date) } });
+			expect(remove).toHaveBeenCalledWith(draft._id.toString(), false);
+			reject.mockRestore();
+			remove.mockRestore();
+		});
+
+		it("stops at the first failed decline so the listing is not deleted", async () => {
+			const find = jest.fn().mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue([
+				{ _id: applicationId, stage: "OFFERED", conversation: conversationId }
+			]) }) });
+			Object.assign(applicationModel, { find });
+			const reject = jest.spyOn(service, "reject").mockRejectedValue(new BadRequestException("Only open applications can be declined."));
+
+			await expect(service.releaseDeletedListing(new Types.ObjectId())).rejects.toBeInstanceOf(BadRequestException);
+			expect(conversationModel.updateOne).not.toHaveBeenCalled();
+			reject.mockRestore();
+		});
+
 		it("does not let the creator leave their own application", async () => {
 			mockApplication();
 

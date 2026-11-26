@@ -8,6 +8,7 @@ import {
 	UnauthorizedException
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
+import { ModuleRef } from "@nestjs/core";
 import { Listing, ViewingSlotAvailability } from "./listings.schema";
 import { Application } from "../application/application.schema";
 import { ApplicationStage } from "../application/enums/application-stage.enum";
@@ -88,7 +89,8 @@ export class ListingsService {
 		@InjectModel(Application.name)
 		private readonly applicationModel: Model<Application>,
 		@InjectModel(Tenancy.name)
-		private readonly tenancyModel: Model<Tenancy>
+		private readonly tenancyModel: Model<Tenancy>,
+		private readonly moduleRef: ModuleRef
 	) {}
 
 	/** Places left per viewing slot: capacity minus open households already booked at that time. */
@@ -286,6 +288,10 @@ export class ListingsService {
 			throw new ConflictException("A listing with an accepted application or a tenancy cannot be deleted.");
 		}
 
+		// Before deleteOne: reject() reads the listing title. A failure keeps the listing so no deposit is orphaned.
+		// Imported at call time: application.service imports this file, a top-level import would be circular.
+		const { ApplicationService } = await import("../application/application.service");
+		await this.moduleRef.get(ApplicationService, { strict: false }).releaseDeletedListing(listing._id);
 		await this.listingModel.deleteOne({ _id: listingId });
 		this.listingsGateway.emitListingDeleted(listing);
 		return { message: "Listing successfully deleted" };

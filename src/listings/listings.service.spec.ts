@@ -5,6 +5,7 @@ import { ListingsGateway } from "./listings.gateway";
 import { ListingsService } from "./listings.service";
 import { Listing } from "./listings.schema";
 import { User } from "../users/users.schema";
+import { ApplicationService } from "../application/application.service";
 
 describe("ListingsService", () => {
 	let service: ListingsService;
@@ -12,6 +13,8 @@ describe("ListingsService", () => {
 	let gateway: Record<string, jest.Mock>;
 	let applicationModel: Record<string, jest.Mock>;
 	let tenancyModel: Record<string, jest.Mock>;
+	let applicationService: { releaseDeletedListing: jest.Mock };
+	let moduleRef: { get: jest.Mock };
 
 	beforeEach(() => {
 		listingModel = {
@@ -34,12 +37,15 @@ describe("ListingsService", () => {
 			emitListingUpdated: jest.fn(),
 			emitListingDeleted: jest.fn()
 		};
+		applicationService = { releaseDeletedListing: jest.fn().mockResolvedValue(undefined) };
+		moduleRef = { get: jest.fn().mockReturnValue(applicationService) };
 		service = new ListingsService(
 			listingModel as any,
 			gateway as unknown as ListingsGateway,
 			{ get: jest.fn() } as unknown as ConfigService,
 			applicationModel as any,
-			tenancyModel as any
+			tenancyModel as any,
+			moduleRef as any
 		);
 	});
 
@@ -83,6 +89,28 @@ describe("ListingsService", () => {
 		expect(gateway.emitListingDeleted).toHaveBeenCalledWith(listing);
 	});
 
+	it("releases the listing's applications before deleting it", async () => {
+		const listing = makeListing(false);
+		listingModel.findById.mockResolvedValue(listing);
+		listingModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
+
+		await service.deleteListing(listing._id.toString(), makeLandlord());
+
+		expect(moduleRef.get).toHaveBeenCalledWith(ApplicationService, { strict: false });
+		expect(applicationService.releaseDeletedListing).toHaveBeenCalledWith(listing._id);
+		expect(applicationService.releaseDeletedListing.mock.invocationCallOrder[0]).toBeLessThan(listingModel.deleteOne.mock.invocationCallOrder[0]);
+	});
+
+	it("keeps the listing when releasing an application fails", async () => {
+		const listing = makeListing(false);
+		listingModel.findById.mockResolvedValue(listing);
+		applicationService.releaseDeletedListing.mockRejectedValue(new Error("refund failed"));
+
+		await expect(service.deleteListing(listing._id.toString(), makeLandlord())).rejects.toThrow("refund failed");
+		expect(listingModel.deleteOne).not.toHaveBeenCalled();
+		expect(gateway.emitListingDeleted).not.toHaveBeenCalled();
+	});
+
 	it.each([
 		["an accepted or signed application", "application"],
 		["a tenancy", "tenancy"]
@@ -94,6 +122,7 @@ describe("ListingsService", () => {
 		await expect(service.deleteListing(listing._id.toString(), makeLandlord())).rejects.toThrow("cannot be deleted");
 		expect(listingModel.deleteOne).not.toHaveBeenCalled();
 		expect(gateway.emitListingDeleted).not.toHaveBeenCalled();
+		expect(applicationService.releaseDeletedListing).not.toHaveBeenCalled();
 	});
 
 	describe("availableFrom in the past", () => {
