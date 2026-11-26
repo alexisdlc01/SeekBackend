@@ -1797,7 +1797,8 @@ export class PaymentsService {
 					body: holding
 						? "Your holding deposit is paid. Your landlord has been notified."
 						: `Rent due ${formatDay(paid.dueDate)} is paid. Your landlord has been notified.`,
-					...notificationTarget("student", NotificationTargetKind.PAYMENTS),
+					// No tenancy yet when a holding deposit is paid: the rent tab would say "No tenancy yet".
+					...notificationTarget("student", holding ? NotificationTargetKind.APPLICATION : NotificationTargetKind.PAYMENTS),
 					dedupeKey: `receipt:${paid._id.toString()}`
 				},
 				"receiptEveryPayment"
@@ -1807,7 +1808,7 @@ export class PaymentsService {
 				const emailBody = holding
 					? `Your payment of ${formatPence(paid.amount)} for your holding deposit went through and was sent to your landlord.`
 					: `Your payment of ${formatPence(paid.amount)} for your rent due ${formatDay(paid.dueDate)} went through and was sent to your landlord.`;
-				const { link } = notificationTarget("student", NotificationTargetKind.PAYMENTS);
+				const { link } = notificationTarget("student", holding ? NotificationTargetKind.APPLICATION : NotificationTargetKind.PAYMENTS);
 				await this.mail.sendPaymentReceiptEmail(tenant.email, tenant.name ?? "there", receiptTitle, emailBody, link).catch(error =>
 					this.logger.warn(`Payment receipt email to ${paid.tenant.toString()} failed: ${(error as Error).message}`)
 				);

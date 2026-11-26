@@ -1,3 +1,4 @@
+import { NotificationTargetKind, notificationTarget } from "../notifications/links";
 import { Types } from "mongoose";
 import { PaymentsService } from "./payments.service";
 import { PaymentStatus } from "./payment.enums";
@@ -167,6 +168,12 @@ describe("PaymentsService.markPaid receipt email", () => {
 		const { service, paid, mail } = build(true);
 		await (service as any).markPaid(paid, "SIMULATED", "sim_1");
 		expect(mail.sendPaymentReceiptEmail).toHaveBeenCalledWith("maya@seek.local", "Maya", expect.stringContaining("£695.00"), "Your payment of £695.00 for your rent due 1 Sept went through and was sent to your landlord.", "/student/home/rent");
+	});
+
+	it("links a holding-deposit receipt to the application, not the rent tab", async () => {
+		const { service, paid, mail } = build(true);
+		await (service as any).markPaid(Object.assign(paid, { kind: "HOLDING_DEPOSIT" }), "SIMULATED", "sim_1");
+		expect(mail.sendPaymentReceiptEmail).toHaveBeenCalledWith("maya@seek.local", "Maya", expect.any(String), expect.any(String), notificationTarget("student", NotificationTargetKind.APPLICATION).link);
 	});
 
 	it("sends nothing when the receipt pref skips the in-app receipt", async () => {

@@ -43,6 +43,16 @@ export class ConversationService {
 		if (await this.conversationModel.exists({ _id: conversationId, closedAt: { $ne: null } })) {
 			throw new ForbiddenException("This conversation is closed.");
 		}
+		// Nobody is left to read it once every other member deleted their account.
+		const members = await this.conversationModel
+			.findById(conversationId, { users: 1 })
+			.populate<{ users: Pick<User, "_id" | "deletedAt">[] }>({ path: "users", select: "deletedAt" })
+			.lean()
+			.exec();
+		const others = (members?.users ?? []).filter(u => u._id.toString() !== senderId);
+		if (others.length > 0 && others.every(u => u.deletedAt)) {
+			throw new ForbiddenException("This conversation is closed.");
+		}
 
 		const message = await this.messageModel.create({
 			sender: senderId,
