@@ -28,6 +28,7 @@ const CLOSED_RESPONSE = "Thanks for your report. We keep it on file for 30 days:
 const SUSPENDED_RESPONSE = "Thanks for your report. We have suspended this account.";
 // Neutral on purpose: a landlord with one applicant must not learn who reported him.
 const HIDDEN_AFTER_REPORT = "Your listing needs a new automatic check: edit and resubmit it.";
+const SUSPENDED_LISTING_REASON = "This account is suspended.";
 const SEVERE_CATEGORIES: FlagTriage["category"][] = ["THREATS_VIOLENCE", "FRAUD_SCAM"];
 
 // No AI (product decision): a report is severe when its text names a threat or a scam.
@@ -209,7 +210,7 @@ export class FlagsService {
 			.exec();
 		if (result.modifiedCount === 0) return;
 		this.logger.warn(`Account ${id.toString()} suspended: ${reason}`);
-		await this.hideListings(id, "This account is suspended.");
+		await this.hideListings(id, SUSPENDED_LISTING_REASON);
 		await this.closeAsSuspended(id, now, resolvedFlag);
 	}
 
@@ -258,6 +259,21 @@ export class FlagsService {
 				{ $set: { status: FlagStatus.NO_ACTION, resolutionDate: new Date(), supportResponse: "Suspension lifted after review." } }
 			)
 			.exec();
+		// Listings hidden by the suspension stay offline (no auto re-publish) but must stop saying the account is suspended.
+		const stale = await this.listingModel
+			?.updateMany(
+				{ landlord: new Types.ObjectId(userId), moderationReasons: SUSPENDED_LISTING_REASON },
+				{ $set: { moderationReasons: ["Your account is active again. Edit and resubmit this listing."] } }
+			)
+			.exec();
+		await this.notifications?.notify({
+			user: new Types.ObjectId(userId),
+			kind: NotificationKind.LISTING_NEEDS_CHANGES,
+			title: "Your account is active again",
+			body: stale?.matchedCount ? "Edit and resubmit your listings to put them back online." : "Your account is active again.",
+			...(stale?.matchedCount ? { link: "/listings" } : {}),
+			dedupeKey: `suspension-lifted:${userId}:${Date.now()}`
+		});
 	}
 
 	/** Reports that reached no threshold within the window get a fixed answer, so none waits on a person. */

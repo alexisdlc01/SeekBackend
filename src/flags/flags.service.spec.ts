@@ -326,6 +326,18 @@ describe("FlagsService", () => {
 			);
 		});
 
+		it("lifting a suspension rewrites the stale listing reason and notifies the user", async () => {
+			const { service, listingModel, notifications } = setup();
+			await service.liftSuspension(reported);
+			expect(listingModel.updateMany).toHaveBeenCalledWith(
+				{ landlord: new Types.ObjectId(reported), moderationReasons: "This account is suspended." },
+				{ $set: { moderationReasons: [expect.stringContaining("active again")] } }
+			);
+			expect(notifications.notify).toHaveBeenCalledWith(
+				expect.objectContaining({ user: new Types.ObjectId(reported), title: "Your account is active again", link: "/listings" })
+			);
+		});
+
 		it("PATCH resolve rejects a status outside the resolutions and stamps resolutionDate", async () => {
 			for (const status of ["FOO", FlagStatus.UNDER_REVIEW]) {
 				const errors = await validate(plainToInstance(ResolveFlagDto, { status }));
