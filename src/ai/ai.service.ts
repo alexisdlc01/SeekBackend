@@ -161,9 +161,11 @@ function depositRules(nation?: unknown) {
 		window: depositProtectionWindow(nation),
 		cap: scotland ? "two months' rent" : ni ? "one month's rent" : "five weeks' rent",
 		deadlineName: scotland ? "30-working-day" : ni ? "28-day" : "30-day",
-		// England and Wales: a court can award the tenant up to 3x. NI: the council fines the landlord instead.
+		// England and Wales: a court can award the tenant up to 3x; Scotland: the tribunal. NI: the council fines the landlord instead.
 		penalty: ni
 			? "the local council's Environmental Health office can fine the landlord."
+			: scotland
+			? "the First-tier Tribunal for Scotland (Housing and Property Chamber) can order the landlord to pay up to three times the deposit."
 			: "a court can award up to three times the deposit."
 	};
 }

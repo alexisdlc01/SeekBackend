@@ -622,7 +622,7 @@ describe("TenanciesService create / accept", () => {
 			const payment = { ...paid(62000, "2027-01-01"), status: "SCHEDULED", seekFee: 620, payout: 61380 };
 			const ctx = setup();
 			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
-				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE, monthlyRent: 62000
 			} as any);
 			ctx.paymentModel.find.mockImplementation((filter: any) => lean(filter.status?.$nin ? [payment] : []));
 
@@ -638,7 +638,7 @@ describe("TenanciesService create / accept", () => {
 			const payment = { ...paid(62000, "2027-01-01"), status: "SCHEDULED", provider: "stripe", providerRef: "cs_old", stripeAccountId: "acct_1" };
 			const ctx = setup();
 			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
-				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE, monthlyRent: 62000
 			} as any);
 			ctx.paymentModel.find.mockImplementation((filter: any) => lean(filter.status?.$nin && !filter.providerRef ? [payment] : []));
 			const urls: string[] = [];
@@ -662,6 +662,49 @@ describe("TenanciesService create / accept", () => {
 				global.fetch = realFetch;
 				process.env.STRIPE_SECRET_KEY = realKey;
 			}
+		});
+
+		it("prorates an unpaid period from its full rent when the end date moves earlier twice", async () => {
+			// Already reduced to £300 by an end on 16 January; the end now moves to 6 January.
+			const payment = { ...paid(30000, "2027-01-01"), status: "SCHEDULED" };
+			const ctx = setup();
+			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE, monthlyRent: 62000
+			} as any);
+			ctx.paymentModel.find.mockImplementation((filter: any) => lean(filter.status?.$nin && !filter.providerRef ? [payment] : []));
+
+			await ctx.service.endTenancy(tenancyId.toString(), new Date("2027-01-06"), landlord);
+
+			// 5 of 31 days of £620 is £100, the same as a single shortening to 6 January.
+			expect(62000 - earlyEndRefundAmount(62000, payment.dueDate, 1, new Date("2027-01-06"))).toBe(10000);
+			expect(ctx.paymentModel.updateOne).toHaveBeenCalledWith(
+				{ _id: payment._id, status: { $nin: ["PAID", "PENDING"] }, amount: 30000 },
+				{ $set: { amount: 10000, seekFee: 100, payout: 9900 } }
+			);
+		});
+
+		it("raises a paid period's refund not yet sent to Stripe when the end date moves earlier again", async () => {
+			// An end on 16 January claimed £320; the Stripe refund has not run yet. The end now moves to 6 January.
+			const payment = { ...paid(62000, "2027-01-01"), refundDue: true, autoRefund: true, refundAmount: 32000, refundRef: null };
+			const ctx = setup();
+			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE, monthlyRent: 62000
+			} as any);
+			ctx.paymentModel.find.mockImplementation((filter: any) => lean(filter.status?.$nin ? [] : [payment]));
+			ctx.paymentModel.findOneAndUpdate
+				.mockReturnValueOnce(lean(null))
+				.mockImplementationOnce((_filter: any, update: any) => lean({ ...payment, ...update.$set }));
+
+			await ctx.service.endTenancy(tenancyId.toString(), new Date("2027-01-06"), landlord);
+
+			expect(ctx.paymentModel.findOneAndUpdate.mock.calls[1][0]).toMatchObject({
+				_id: payment._id, refundedAt: null, refundRef: null, refundAmount: { $lt: 52000 }
+			});
+			expect(ctx.paymentModel.findOneAndUpdate.mock.calls[1][1]).toEqual({ $set: { refundAmount: 52000 } });
+			expect(ctx.paymentModel.updateOne).toHaveBeenLastCalledWith(
+				{ _id: payment._id, refundedAt: null },
+				expect.objectContaining({ $set: expect.objectContaining({ refundedAmount: 52000 }) })
+			);
 		});
 
 		it("uses the tenancy anchor for a short-month due date", () => {

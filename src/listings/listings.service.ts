@@ -125,6 +125,17 @@ export class ListingsService {
 		data: Partial<DraftUpdateData>
 	): Promise<Listing> {
 		const update: Record<string, unknown> = { ...data, lastUpdated: new Date() };
+		if (data.nation) {
+			const stored = await this.listingModel
+				.findOne({ _id: new Types.ObjectId(listingId), landlord: new Types.ObjectId(landlord._id) })
+				.select("nation")
+				.lean()
+				.exec();
+			// Tenancy rules (notice, deposit, end dates) read the listing's current nation: it is fixed once let.
+			if (stored && data.nation !== (stored.nation ?? Nation.ENGLAND) && await this.isLet(new Types.ObjectId(listingId))) {
+				throw new ConflictException("The nation cannot change once a tenancy or accepted application exists.");
+			}
+		}
 		if (data.availableFrom || data.availableUntil) {
 			const current = await this.listingModel
 				.findOne({ _id: new Types.ObjectId(listingId), landlord: new Types.ObjectId(landlord._id) })
@@ -280,11 +291,7 @@ export class ListingsService {
 		}
 
 		// An accepted/signed application or any tenancy references the listing; deleting it would orphan them.
-		const [let_, tenancy] = await Promise.all([
-			this.applicationModel.exists({ listing: listing._id, stage: { $in: [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] } }),
-			this.tenancyModel.exists({ listing: listing._id })
-		]);
-		if (let_ || tenancy) {
+		if (await this.isLet(listing._id)) {
 			throw new ConflictException("A listing with an accepted application or a tenancy cannot be deleted.");
 		}
 
@@ -295,6 +302,14 @@ export class ListingsService {
 		await this.listingModel.deleteOne({ _id: listingId });
 		this.listingsGateway.emitListingDeleted(listing);
 		return { message: "Listing successfully deleted" };
+	}
+
+	private async isLet(listingId: Types.ObjectId): Promise<boolean> {
+		const [let_, tenancy] = await Promise.all([
+			this.applicationModel.exists({ listing: listingId, stage: { $in: [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] } }),
+			this.tenancyModel.exists({ listing: listingId })
+		]);
+		return !!(let_ || tenancy);
 	}
 
 	async getAllUnverifiedListings(): Promise<Listing[]> {
