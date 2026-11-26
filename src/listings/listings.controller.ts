@@ -212,11 +212,13 @@ export class ListingsController {
 	@ApiGetByIdDocs()
 	async getById(@Param("id") id: string) {
 		const listing = await this.listingsService.findPublishedListingById(id);
-		void this.listingsService.recordView(id);
+		const closed = await this.listingsService.isClosed(listing);
+		if (!closed) void this.listingsService.recordView(id);
 		const viewingSlotAvailability = await this.listingsService.viewingSlotAvailability(listing);
 		return {
 			...(listing as unknown as { toObject(): Listing }).toObject(),
 			viewingSlotAvailability,
+			closed,
 			requiredDocuments: requiredDocuments(listing)
 		};
 	}

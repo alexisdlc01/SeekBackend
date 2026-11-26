@@ -328,6 +328,9 @@ export class Listing {
 	})
 	viewingSlotAvailability?: ViewingSlotAvailability[];
 
+	@ApiProperty({ required: false, description: "True when the listing is let or past its availableUntil. Returned by GET /listings/{id} only." })
+	closed?: boolean;
+
 	@Expose()
 	@ApiProperty({
 		type: RequiredDocumentInfo,

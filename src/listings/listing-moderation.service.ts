@@ -83,7 +83,7 @@ export function listingRuleFailures(listing: Partial<Listing>, now: Date, geocod
 	}
 	for (const [field, label] of [["gasSafetyExpiry", "gas safety certificate"], ["eicrExpiry", "electrical safety report (EICR)"]] as const) {
 		const expiry = listing[field];
-		if (expiry && new Date(expiry).getTime() < now.getTime()) reasons.push(`Your ${label} has expired. Renew it and update the expiry date.`);
+		if (expiry && new Date(expiry).getTime() + 86_400_000 <= now.getTime()) reasons.push(`Your ${label} has expired. Renew it and update the expiry date.`);
 	}
 	if (typeof listing.monthlyRent === "number") {
 		const perPerson = listing.monthlyRent / Math.max(1, listing.numOfPeople ?? 1);
@@ -132,13 +132,15 @@ export class ListingModerationService implements OnApplicationBootstrap, OnModul
 		if (this.running) return;
 		this.running = true;
 		try {
+			// The expiry date is the last valid day: expired only from the day after.
+			const expiredBefore = new Date(Date.now() - 86_400_000);
 			const pending = await this.listingModel
 				.find({
 					isDraft: false,
 					$or: [
 						{ isVerified: false, moderationStatus: { $in: [ModerationStatus.PENDING, null] } },
 						// A live listing whose gas or EICR certificate has since expired goes back through the rules (and offline).
-						{ isVerified: true, $or: [{ gasSafetyExpiry: { $lt: new Date() } }, { eicrExpiry: { $lt: new Date() } }] }
+						{ isVerified: true, $or: [{ gasSafetyExpiry: { $lt: expiredBefore } }, { eicrExpiry: { $lt: expiredBefore } }] }
 					]
 				})
 				.select("_id")

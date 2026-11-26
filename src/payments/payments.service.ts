@@ -1357,14 +1357,14 @@ export class PaymentsService {
 			.exec();
 		for (const payment of reminderCandidates) {
 			const plan = await this.planModel
-				.findOne({ tenancy: payment.tenancy, tenant: payment.tenant }, { autopay: 1, paymentMethodId: 1 })
+				.findOne({ tenancy: payment.tenancy, tenant: payment.tenant }, { autopay: 1, paymentMethodId: 1, remindDaysBefore: 1 })
 				.lean()
 				.exec();
 			const stage = dueReminderStage({
 				status: payment.status,
 				dueDate: payment.dueDate,
 				today,
-				remindDaysBefore: await reminderDaysFor(payment.tenant),
+				remindDaysBefore: plan?.remindDaysBefore ?? await reminderDaysFor(payment.tenant),
 				schedule: await scheduleFor(payment.landlord)
 			});
 			if (!stage) continue;

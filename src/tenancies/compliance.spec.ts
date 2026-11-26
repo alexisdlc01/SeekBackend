@@ -27,6 +27,13 @@ describe("compliance", () => {
 		]);
 	});
 
+	it("keeps a certificate valid through its printed expiry day", () => {
+		const expiry = new Date("2026-06-01T00:00:00Z");
+		const message = (at: string) => listingCompliance({ _id: new Types.ObjectId(), gasSafetyExpiry: expiry } as never, new Date(at))[0].message;
+		expect(message("2026-06-01T15:00:00Z")).toContain("expires soon");
+		expect(message("2026-06-02T00:00:00Z")).toContain("has expired");
+	});
+
 	it("flags an unprotected deposit and one above the cap", () => {
 		const tenancy = {
 			_id: new Types.ObjectId(),

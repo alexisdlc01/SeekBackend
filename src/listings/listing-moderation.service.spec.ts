@@ -149,6 +149,13 @@ describe("ListingModerationService.moderate", () => {
 		expect(notifications.notify).toHaveBeenCalledWith(expect.objectContaining({ user: listing.landlord, kind: "LISTING_NEEDS_CHANGES" }));
 	});
 
+	it("treats the printed expiry day as still valid", () => {
+		const expiry = new Date("2026-06-01T00:00:00Z");
+		const failures = (at: string) => listingRuleFailures(goodListing({ gasSafetyExpiry: expiry }) as never, new Date(at), false).filter(r => r.includes("expired"));
+		expect(failures("2026-06-01T15:00:00Z")).toHaveLength(0);
+		expect(failures("2026-06-02T00:00:00Z")).toHaveLength(1);
+	});
+
 	it("retries every pending or never-checked live listing", async () => {
 		const ids = [new Types.ObjectId(), new Types.ObjectId()];
 		const sort = jest.fn().mockReturnValue({ limit: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(ids.map(_id => ({ _id }))) }) }) });
