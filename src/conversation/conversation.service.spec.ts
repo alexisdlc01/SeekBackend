@@ -18,7 +18,7 @@ describe("ConversationService authorization", () => {
 
 	beforeEach(() => {
 		conversationModel = {
-			findById: jest.fn(),
+			findById: jest.fn().mockReturnValue({ populate: () => ({ lean: () => ({ exec: async () => null }) }) }),
 			updateOne: jest.fn().mockResolvedValue(undefined),
 			exists: jest.fn().mockResolvedValue(null),
 		};
@@ -61,6 +61,20 @@ describe("ConversationService authorization", () => {
 		expect(conversationModel.exists).toHaveBeenCalledWith({ _id: conversationId.toString(), closedAt: { $ne: null } });
 		expect(messageModel.create).not.toHaveBeenCalled();
 		expect(gateway.emitNewMessage).not.toHaveBeenCalled();
+	});
+
+	it("refuses new messages when every other member deleted their account", async () => {
+		const other = new Types.ObjectId();
+		conversationModel.findById.mockReturnValue({
+			populate: () => ({ lean: () => ({ exec: async () => ({ users: [{ _id: userId }, { _id: other, deletedAt: new Date() }] }) }) }),
+		});
+
+		await expect(service.sendMessage(
+			{ message: "Hello?" },
+			conversationId.toString(),
+			userId.toString(),
+		)).rejects.toThrow("This conversation is closed.");
+		expect(messageModel.create).not.toHaveBeenCalled();
 	});
 
 	it("checks membership before loading conversation contents", async () => {
@@ -186,7 +200,8 @@ describe("ConversationService authorization", () => {
 		});
 
 		it("still sends the message when the notification lookup fails", async () => {
-			conversationModel.findById.mockImplementation(() => { throw new Error("db down"); });
+			const open = { populate: () => ({ lean: () => ({ exec: async () => null }) }) };
+			conversationModel.findById.mockImplementationOnce(() => open).mockImplementation(() => { throw new Error("db down"); });
 			const plain = { _id: new Types.ObjectId(), sender: userId, conversation: conversationId, messageType: "Text", data: "hello", createdAt: new Date(), deliveredTo: [], seenUsers: [] };
 			messageModel.create.mockResolvedValue({ ...plain, populate: jest.fn(), toObject: () => plain });
 
