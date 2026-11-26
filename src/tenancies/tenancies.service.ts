@@ -575,9 +575,11 @@ export class TenanciesService {
 			.lean()
 			.exec();
 		for (const payment of unpaidSpanning) {
-			const unused = earlyEndRefundAmount(payment.amount, new Date(payment.dueDate), payment.coversMonths ?? 1, end, tenancy.startDate);
-			if (unused === 0) continue;
-			const amount = payment.amount - unused;
+			// Prorate the row's full rent, not its stored amount: an earlier shortening may have reduced it already.
+			const full = Math.max(0, tenancy.monthlyRent * (payment.coversMonths ?? 1) - (payment.holdingDepositCredit ?? 0));
+			const amount = full - earlyEndRefundAmount(full, new Date(payment.dueDate), payment.coversMonths ?? 1, end, tenancy.startDate);
+			// Only ever lowers what is owed.
+			if (amount >= payment.amount) continue;
 			const repriced = await this.paymentModel.updateOne(
 				{ _id: payment._id, status: { $nin: [PaymentStatus.PAID, PaymentStatus.PENDING] }, amount: payment.amount },
 				{ $set: { amount, ...computeFee(amount) } }
@@ -609,8 +611,27 @@ export class TenanciesService {
 				)
 				.lean()
 				.exec();
-			if (claimed?.status === PaymentStatus.PAID) {
-				await refundPayment(this.paymentModel, claimed, process.env.STRIPE_SECRET_KEY, claimed.refundAmount);
+			// An earlier shortening already claimed a smaller refund: raise it while no Stripe refund exists yet.
+			// shortcut: a refund already issued is not topped up (refundPayment refunds a payment once), refund the difference by hand.
+			const raised = claimed ?? await this.paymentModel
+				.findOneAndUpdate(
+					{
+						_id: payment._id,
+						refundedAt: null,
+						refundDue: true,
+						autoRefund: true,
+						refundFailed: { $ne: true },
+						refundAmount: { $lt: amount },
+						refundedAmount: { $in: [0, null] },
+						refundRef: null
+					},
+					{ $set: { refundAmount: amount } },
+					{ new: true }
+				)
+				.lean()
+				.exec();
+			if (raised?.status === PaymentStatus.PAID) {
+				await refundPayment(this.paymentModel, raised, process.env.STRIPE_SECRET_KEY, raised.refundAmount);
 			}
 		}
 	}

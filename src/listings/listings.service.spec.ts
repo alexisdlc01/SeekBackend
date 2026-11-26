@@ -245,6 +245,43 @@ describe("ListingsService", () => {
 		});
 	});
 
+	describe("nation change", () => {
+		beforeEach(() => {
+			listingModel.findOne = jest.fn().mockReturnValue({
+				select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue({ isDraft: false, nation: "SCOTLAND" }) }) })
+			});
+			listingModel.findOneAndUpdate = jest.fn().mockResolvedValue(makeListing(false));
+		});
+
+		it("refuses to change the nation of a listing with a tenancy", async () => {
+			tenancyModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+			await expect(service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { nation: "ENGLAND", draftStep: 1 } as never))
+				.rejects.toThrow("The nation cannot change once a tenancy or accepted application exists.");
+			expect(applicationModel.exists.mock.calls[0][0].stage.$in).toEqual(["ACCEPTED", "SIGNED"]);
+			expect(listingModel.findOneAndUpdate).not.toHaveBeenCalled();
+		});
+
+		it("a null nation counts as ENGLAND: allowed on a let England listing, refused on a let Scotland one", async () => {
+			tenancyModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+			listingModel.findOne = jest.fn().mockReturnValue({
+				select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue({ isDraft: false, nation: "ENGLAND" }) }) })
+			});
+			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { nation: null, draftStep: 1 } as never);
+			expect(listingModel.findOneAndUpdate).toHaveBeenCalled();
+
+			listingModel.findOne = jest.fn().mockReturnValue({
+				select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue({ isDraft: false, nation: "SCOTLAND" }) }) })
+			});
+			await expect(service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { nation: null, draftStep: 1 } as never))
+				.rejects.toThrow("The nation cannot change once a tenancy or accepted application exists.");
+		});
+
+		it("changes the nation of a listing with no tenancy or accepted application", async () => {
+			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { nation: "ENGLAND", draftStep: 1 } as never);
+			expect(listingModel.findOneAndUpdate.mock.calls[0][1].$set.nation).toBe("ENGLAND");
+		});
+	});
+
 	describe("viewing slots", () => {
 		const found = (doc: object | null) => ({
 			select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(doc) }) })

@@ -286,6 +286,9 @@ describe("Northern Ireland deposit and bills links", () => {
 		expect(general.advice).toMatch(/one month's rent.*TDS Northern Ireland or mydeposits Northern Ireland.*28 days/);
 		expect(general.actions.map((a: any) => a.link)).toEqual(["https://www.tdsnorthernireland.com", "https://www.mydeposits.co.uk", expect.stringContaining("nidirect.gov.uk")]);
 		expect(depositAnswer("They never protected it", "NORTHERN_IRELAND")).not.toMatch(/three times/);
+		expect(depositAnswer("They never protected it", "SCOTLAND")).toMatch(/First-tier Tribunal for Scotland \(Housing and Property Chamber\) can order the landlord to pay up to three times the deposit\.$/);
+		expect(depositAnswer("They never protected it", "SCOTLAND")).not.toMatch(/court/);
+		expect(depositAnswer("They never protected it", "ENGLAND")).toMatch(/a court can award up to three times the deposit\.$/);
 		const tenancy = { monthlyRent: 80000, depositAmount: 90000, documents: [], tenants: [], depositReceivedAt: new Date("2026-09-01T00:00:00Z") };
 		const draft = (make() as any).depositAdvice({ role: Role.STUDENT, _id: "u1" }, tenancy, ni, new Date("2026-09-30T12:00:00Z"));
 		expect(draft.advice).toMatch(/28-day deadline passed on 29 September 2026/);
