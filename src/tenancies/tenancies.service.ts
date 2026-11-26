@@ -6,6 +6,7 @@ import {
 	NotFoundException
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
+import { ConfigService } from "@nestjs/config";
 import { Contract, ContractStatus } from "../contracts/contract.schema";
 import { Model, Types } from "mongoose";
 import { Tenancy, TenancyDocument } from "./tenancy.schema";
@@ -118,7 +119,8 @@ export class TenanciesService {
 		@InjectModel(Contract.name) private readonly contractModel: Model<Contract>,
 		private readonly rentSchedule: RentScheduleService,
 		private readonly notifications: NotificationsService,
-		@InjectModel(Payment.name) private readonly paymentModel: Model<Payment>
+		@InjectModel(Payment.name) private readonly paymentModel: Model<Payment>,
+		private readonly config: ConfigService
 	) {}
 
 	/** Loads a tenancy the viewer belongs to (landlord, tenant or Seek staff). */
@@ -464,11 +466,18 @@ export class TenanciesService {
 		// A housemate's "tenancy agreement" must never show as the contract: only the landlord
 		// (or their team, who act as the landlord) and support file landlord documents.
 		const asLandlord = viewer.role === Role.SUPERUSER || idOf(tenancy.landlord) === viewer._id.toString();
+		// A housemate's file must be their own private upload: an arbitrary link shown to the landlord and housemates is a phishing vector.
+		if (!asLandlord && !dto.key?.startsWith("private/")) {
+			throw new BadRequestException("Upload the file first: a document needs its upload key.");
+		}
+		const url = asLandlord
+			? dto.url
+			: `https://${this.config.getOrThrow("AWS_PRIVATE_BUCKET")}.s3.${this.config.getOrThrow("AWS_S3_REGION")}.amazonaws.com/${dto.key}`;
 		const type = asLandlord || TENANT_DOCUMENT_TYPES.has(dto.type) ? dto.type : TenancyDocumentType.OTHER;
 		await this.appendDocument(tenancy._id, {
 			type,
 			title: dto.title.trim(),
-			url: dto.url,
+			url,
 			key: dto.key,
 			source: dto.source ?? DocumentSource.UPLOAD,
 			uploadedBy: new Types.ObjectId(viewer._id.toString()),
