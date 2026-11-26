@@ -141,21 +141,37 @@ describe("AI advice privacy and abuse limits", () => {
 	it("answers 429 with a clear message after 10 AI calls a minute for one user", async () => {
 		// The real storage: a mock hid that blockDuration 0 resets the count instead of blocking.
 		const storage = new ThrottlerStorageService();
-		const ai = { advice: jest.fn().mockResolvedValue({}) } as any;
+		const ai = { searchChat: jest.fn().mockResolvedValue({}) } as any;
 		const controller = new AiController(ai, storage);
 		const user = { _id: "u1" } as any;
 		try {
-			for (let i = 0; i < 10; i++) await controller.advice({ topic: "bills" } as any, user);
-			for (let i = 0; i < 3; i++) await expect(controller.advice({ topic: "bills" } as any, user)).rejects.toMatchObject({ status: 429 });
-			await expect(controller.advice({ topic: "bills" } as any, { _id: "u2" } as any)).resolves.toBeDefined();
+			for (let i = 0; i < 10; i++) await controller.searchChat({ messages: [] } as any, user);
+			for (let i = 0; i < 3; i++) await expect(controller.searchChat({ messages: [] } as any, user)).rejects.toMatchObject({ status: 429 });
+			await expect(controller.searchChat({ messages: [] } as any, { _id: "u2" } as any)).resolves.toBeDefined();
 
 			// Daily cap: 60, then refused for the rest of the day (minute window cleared between calls).
 			const day = { _id: "u3" } as any;
 			for (let i = 0; i < 62; i++) {
 				(storage as any).storage.delete("ai-min:u3");
-				const call = controller.advice({ topic: "bills" } as any, day);
+				const call = controller.searchChat({ messages: [] } as any, day);
 				if (i < 60) await call; else await expect(call).rejects.toMatchObject({ status: 429 });
 			}
+		} finally {
+			storage.onApplicationShutdown();
+		}
+	});
+});
+
+describe("separate AI budgets", () => {
+	it("using up the advice budget does not block search", async () => {
+		const storage = new ThrottlerStorageService();
+		const ai = { advice: jest.fn().mockResolvedValue({}), searchChat: jest.fn().mockResolvedValue({}) } as any;
+		const controller = new AiController(ai, storage);
+		const user = { _id: "u9", role: Role.STUDENT } as any;
+		try {
+			for (let i = 0; i < 30; i++) await controller.advice({ topic: "bills" } as any, user);
+			await expect(controller.advice({ topic: "bills" } as any, user)).rejects.toMatchObject({ status: 429 });
+			await expect(controller.searchChat({ messages: [] } as any, user)).resolves.toBeDefined();
 		} finally {
 			storage.onApplicationShutdown();
 		}
@@ -166,17 +182,17 @@ describe("per-user throttling on shared in-memory storage", () => {
 	it("a returning blocked user does not stop other users' hits from expiring", async () => {
 		jest.useFakeTimers();
 		const storage = new ThrottlerStorageService();
-		const ai = { advice: jest.fn().mockResolvedValue({}) } as any;
+		const ai = { searchChat: jest.fn().mockResolvedValue({}) } as any;
 		const controller = new AiController(ai, storage);
 		try {
-			for (let i = 0; i < 11; i++) await controller.advice({ topic: "bills" } as any, { _id: "x" } as any).catch(() => undefined);
+			for (let i = 0; i < 11; i++) await controller.searchChat({ messages: [] } as any, { _id: "x" } as any).catch(() => undefined);
 			jest.advanceTimersByTime(30_000);
-			for (let i = 0; i < 9; i++) await controller.advice({ topic: "bills" } as any, { _id: "a" } as any);
+			for (let i = 0; i < 9; i++) await controller.searchChat({ messages: [] } as any, { _id: "a" } as any);
 			jest.advanceTimersByTime(31_000);
 			// x's block has ended and x returns: a's expiry timers (due in 29s) must survive.
-			await controller.advice({ topic: "bills" } as any, { _id: "x" } as any);
+			await controller.searchChat({ messages: [] } as any, { _id: "x" } as any);
 			jest.advanceTimersByTime(30_000);
-			for (let i = 0; i < 10; i++) await controller.advice({ topic: "bills" } as any, { _id: "a" } as any);
+			for (let i = 0; i < 10; i++) await controller.searchChat({ messages: [] } as any, { _id: "a" } as any);
 		} finally {
 			storage.onApplicationShutdown();
 			jest.useRealTimers();
