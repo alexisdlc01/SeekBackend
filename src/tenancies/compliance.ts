@@ -261,3 +261,21 @@ export function sortCompliance(items: ComplianceItem[]): ComplianceItem[] {
 		(a, b) => rank[a.severity] - rank[b.severity] || a.dueDate.getTime() - b.dueDate.getTime()
 	);
 }
+
+/**
+ * Optional "safety documents provided" badge: registration number plus in-date EPC, EICR and gas certificates
+ * (and an HMO licence from 3 bedrooms). The documents themselves are not inspected.
+ * shortcut: an all-electric property with no gas certificate gets no badge, add an explicit "no gas supply" flag to lift it.
+ */
+export function complianceComplete(
+	listing: { registrationNumber?: unknown; epcRating?: unknown; epcExpiry?: Date | string | null; eicrExpiry?: Date | string | null; gasSafetyExpiry?: Date | string | null; hmoLicenceExpiry?: Date | string | null; bedroomsCount?: number },
+	now: Date = new Date()
+): boolean {
+	// The printed date is the last valid day: expired only from the day after.
+	const inDate = (d?: Date | string | null) => !!d && new Date(d).getTime() + DAY_MS > now.getTime();
+	return (
+		typeof listing.registrationNumber === "string" && listing.registrationNumber.trim() !== "" &&
+		!!listing.epcRating && inDate(listing.epcExpiry) && inDate(listing.eicrExpiry) && inDate(listing.gasSafetyExpiry) &&
+		(!(Number(listing.bedroomsCount) >= 3) || inDate(listing.hmoLicenceExpiry))
+	);
+}

@@ -1,5 +1,5 @@
 import { Types } from "mongoose";
-import { depositCapPence, depositProtectionDeadline, holdingDepositCapPence, listingCompliance, sortCompliance, tenancyCompliance } from "./compliance";
+import { complianceComplete, depositCapPence, depositProtectionDeadline, holdingDepositCapPence, listingCompliance, sortCompliance, tenancyCompliance } from "./compliance";
 
 const now = new Date("2026-11-06T00:00:00Z");
 const days = (n: number) => new Date(now.getTime() + n * 24 * 60 * 60 * 1000);
@@ -85,4 +85,15 @@ describe("compliance in Scotland", () => {
 		expect(item.kind).toBe("DEPOSIT_UNPROTECTED");
 		expect(item.message).toBe("Deposit is not protected and the 30-working-day deadline has passed.");
 	});
+});
+
+describe("complianceComplete", () => {
+	const full = { registrationNumber: "123456/100/12345", epcRating: "C", epcExpiry: days(100), eicrExpiry: days(100), gasSafetyExpiry: days(100), bedroomsCount: 2 };
+
+	it("is true when everything is present", () => expect(complianceComplete({ ...full, bedroomsCount: 3, hmoLicenceExpiry: days(100) }, now)).toBe(true));
+	it("is false without a registration number", () => expect(complianceComplete({ ...full, registrationNumber: "  " }, now)).toBe(false));
+	it("is true when the EICR expires today", () => expect(complianceComplete({ ...full, eicrExpiry: days(0) }, now)).toBe(true));
+	it("is false when the EICR expired yesterday", () => expect(complianceComplete({ ...full, eicrExpiry: days(-1) }, now)).toBe(false));
+	it("is false for 3 bedrooms without an HMO licence", () => expect(complianceComplete({ ...full, bedroomsCount: 3 }, now)).toBe(false));
+	it("is true for 2 bedrooms without an HMO licence", () => expect(complianceComplete(full, now)).toBe(true));
 });
