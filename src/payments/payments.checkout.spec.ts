@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { BadRequestException, Logger, ServiceUnavailableException } from "@nestjs/common";
 import { Types } from "mongoose";
 import { PaymentsService } from "./payments.service";
+import { StripeApiError, StripeClient } from "./stripe";
 import { PaymentKind, PaymentProvider, PaymentStatus, PayoutStatus } from "./payment.enums";
 
 const lean = <T>(value: T) => ({ lean: () => ({ exec: () => Promise.resolve(value) }) });
@@ -1000,6 +1001,85 @@ describe("PaymentsService.landlordMonth", () => {
 		expect(earlier.rows).toHaveLength(1);
 		expect(earlier.late).toBe(0);
 	});
+
+	it("shows each row's fee and payout as kept: pro rata after a refund, 0 when cancelled, today's 1% while unpaid", async () => {
+		const query = (value: unknown) => {
+			const chain: Record<string, unknown> = { exec: () => Promise.resolve(value) };
+			for (const method of ["populate", "sort", "lean", "select", "limit"]) chain[method] = () => chain;
+			return chain;
+		};
+		const rent = (extra: Record<string, unknown>) => ({
+			_id: new Types.ObjectId(), kind: PaymentKind.RENT, tenancy: { _id: new Types.ObjectId() },
+			tenant: { _id: new Types.ObjectId(), name: "Maya" }, amount: 62000, seekFee: 620, payout: 61380, dueDate: new Date(), ...extra
+		});
+		const rows = [
+			rent({ status: PaymentStatus.PAID }),
+			rent({ status: PaymentStatus.PAID, refundedAt: new Date(), refundedAmount: 31000 }),
+			rent({ status: PaymentStatus.PAID, refundedAt: new Date(), refundedAmount: 62000 }),
+			rent({ status: PaymentStatus.CANCELLED }),
+			rent({ status: PaymentStatus.SCHEDULED }),
+			rent({ status: PaymentStatus.LATE })
+		];
+		const paymentModel = { find: jest.fn().mockReturnValueOnce(query(rows)).mockReturnValue(query([])) };
+		const service = new PaymentsService(
+			paymentModel as any, { find: jest.fn().mockReturnValue(lean([])) } as any,
+			{} as any, {} as any, {} as any, {} as any, {} as any, {} as any, { get: () => undefined } as any, {} as any
+		);
+
+		const month = await service.landlordMonth(new Types.ObjectId().toString());
+
+		expect(month.rows.map(row => [row.fee, row.payout])).toEqual([[620, 61380], [310, 30690], [0, 0], [0, 0], [620, 61380], [620, 61380]]);
+		// The rows add up to the month totals.
+		expect(month.seekFee).toBe(930);
+		expect(month.payouts).toBe(92070);
+	});
+
+	describe("Stripe payout state", () => {
+		afterEach(() => jest.restoreAllMocks());
+		const landlord = new Types.ObjectId();
+		const make = () => {
+			const query = (value: unknown) => {
+				const chain: Record<string, unknown> = { exec: () => Promise.resolve(value) };
+				for (const method of ["populate", "sort", "lean", "select", "limit"]) chain[method] = () => chain;
+				return chain;
+			};
+			const paid = {
+				_id: new Types.ObjectId(), kind: PaymentKind.RENT, tenancy: { _id: new Types.ObjectId() }, tenant: { _id: new Types.ObjectId(), name: "Maya" },
+				amount: 62000, seekFee: 620, payout: 61380, status: PaymentStatus.PAID, dueDate: new Date(), paidAt: new Date()
+			};
+			const paymentModel = { find: jest.fn().mockReturnValueOnce(query([paid])).mockReturnValue(query([])) };
+			const userModel = { findById: jest.fn().mockReturnValue(lean({ stripeAccountId: "acct_1" })) };
+			const config = { get: (key: string) => (key === "STRIPE_SECRET_KEY" ? "sk_test_x" : undefined) };
+			return new PaymentsService(
+				paymentModel as any, { find: jest.fn().mockReturnValue(lean([])) } as any,
+				{} as any, {} as any, userModel as any, {} as any, {} as any, {} as any, config as any, {} as any
+			);
+		};
+
+		it("flags paused payouts (card payments on, payouts off) and promises no payout date", async () => {
+			jest.spyOn(StripeClient.prototype, "retrieveAccount").mockResolvedValue({ id: "acct_1", capabilities: { card_payments: "active" }, payouts_enabled: false } as any);
+
+			const month = await make().landlordMonth(landlord.toString());
+
+			expect(month).toMatchObject({ payoutsOnHold: false, payoutsPaused: true, nextPayoutDate: null });
+			expect(month.rows[0].nextPayout).toBeNull();
+		});
+
+		it("reports an account that can't take card payments as on hold, not paused", async () => {
+			jest.spyOn(StripeClient.prototype, "retrieveAccount").mockResolvedValue({ id: "acct_1", capabilities: { card_payments: "pending" }, payouts_enabled: false } as any);
+
+			await expect(make().landlordMonth(landlord.toString())).resolves.toMatchObject({ payoutsOnHold: true, payoutsPaused: false, nextPayoutDate: null });
+		});
+
+		it("shows neither banner when Stripe can't be asked (rate limit), and the page still loads", async () => {
+			jest.spyOn(StripeClient.prototype, "retrieveAccount").mockRejectedValue(new StripeApiError("Too many requests", 429));
+			jest.spyOn(Logger.prototype, "warn").mockImplementation();
+			const service = make();
+			jest.spyOn(service as any, "nextPayoutDate").mockResolvedValue(null);
+
+			await expect(service.landlordMonth(landlord.toString())).resolves.toMatchObject({ payoutsOnHold: false, payoutsPaused: false });
+		});
+	});
 });
 
 describe("PaymentsService.connectOnboard (Stripe Accounts v2)", () => {
@@ -1079,6 +1159,17 @@ describe("PaymentsService.connectOnboard (Stripe Accounts v2)", () => {
 		};
 		expect(await status({ card_payments: "active" })).toBe(true);
 		expect(await status({ card_payments: "pending" })).toBe(false);
+	});
+
+	it("returns Stripe's bank account status so a failing bank can be flagged", async () => {
+		const bank = { last4: "1234", bank_name: "Monzo", status: "errored" };
+		const { service, userModel } = setup(() => ({ ok: true, status: 200, body: { id: "acct_1", capabilities: {}, external_accounts: { data: [bank] } } }));
+		userModel.findById.mockReturnValue(lean({ stripeAccountId: "acct_1" }));
+
+		const { payoutBank } = await service.connectStatus(landlord.toString());
+
+		expect(payoutBank).toEqual({ last4: "1234", bankName: "Monzo", verified: false, status: "errored" });
+		expect(userModel.updateOne).toHaveBeenCalledWith({ _id: landlord.toString() }, { $set: { payoutBank } });
 	});
 
 	const gone = { ok: false, status: 404, body: { error: { message: "No such account: 'acct_test'" } } };

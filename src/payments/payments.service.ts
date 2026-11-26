@@ -460,7 +460,7 @@ export class PaymentsService {
 			.exec();
 		const planFor = new Map(plans.map(plan => [`${plan.tenancy.toString()}:${plan.tenant.toString()}`, plan]));
 
-		const payoutsOnHold = await this.payoutsOnHold(landlordId);
+		const { onHold: payoutsOnHold, paused: payoutsPaused } = await this.payoutState(landlordId);
 		const totals = { collected: 0, expected: 0, late: 0, lateAmount: 0, seekFee: 0, payouts: 0, held: 0, holdingDepositsCollected: 0, holdingDepositsExpected: 0 };
 		const rows = payments.map(payment => {
 			// Rent totals match /landlord/overview; holding deposits are counted on their own.
@@ -476,9 +476,9 @@ export class PaymentsService {
 				if (paid) totals.collected += payment.amount;
 			}
 			const held = payment.payoutStatus === PayoutStatus.HELD;
+			// A refund also gives back Seek's fee and the payout pro rata (refund_application_fee + transfer reversal).
+			const kept = paid && payment.refundedAt ? proportionalRefund(payment.amount, payment.refundedAmount ?? payment.amount, payment.seekFee) : null;
 			if (paid) {
-				// A refund also gives back Seek's fee and the payout pro rata (refund_application_fee + transfer reversal).
-				const kept = payment.refundedAt ? proportionalRefund(payment.amount, payment.refundedAmount ?? payment.amount, payment.seekFee) : null;
 				const payout = kept ? kept.landlordNet : payment.payout;
 				totals.seekFee += kept ? kept.keptSeekFee : payment.seekFee;
 				if (held) totals.held += payout;
@@ -494,6 +494,10 @@ export class PaymentsService {
 			const listing = tenancy?.listing ?? (payment.application as unknown as { listing?: Listing } | null)?.listing;
 			const holding = payment.kind === PaymentKind.HOLDING_DEPOSIT;
 			const open = payment.status === PaymentStatus.SCHEDULED || payment.status === PaymentStatus.PENDING;
+			// Refunded rows show what was kept (as the totals do); cancelled rows cost nothing.
+			const money = kept
+				? { seekFee: kept.keptSeekFee, payout: kept.landlordNet }
+				: payment.status === PaymentStatus.CANCELLED ? { seekFee: 0, payout: 0 } : feeFor(payment);
 			return {
 				payment: payment._id.toString(),
 				kind: payment.kind ?? PaymentKind.RENT,
@@ -514,11 +518,11 @@ export class PaymentsService {
 				refundedAt: payment.refundedAt ?? null,
 				refundedAmount: payment.refundedAmount ?? 0,
 				// Rows still to collect show today's 1%, not the rate when they were scheduled.
-				fee: feeFor(payment).seekFee,
-				payout: feeFor(payment).payout,
+				fee: money.seekFee,
+				payout: money.payout,
 				holdingDepositCredit: payment.holdingDepositCredit ?? 0,
 				payoutStatus: payment.payoutStatus ?? null,
-				nextPayout: payoutsOnHold || held
+				nextPayout: payoutsOnHold || payoutsPaused || held
 					? null
 					: estimateNextPayout({
 						paidAt: payment.status === PaymentStatus.PAID && payment.paidAt ? [payment.paidAt] : [],
@@ -531,21 +535,30 @@ export class PaymentsService {
 			month: range.label,
 			...totals,
 			payoutsOnHold,
-			nextPayoutDate: payoutsOnHold ? null : await this.nextPayoutDate(landlordId),
+			payoutsPaused,
+			nextPayoutDate: payoutsOnHold || payoutsPaused ? null : await this.nextPayoutDate(landlordId),
 			rows
 		};
 	}
 
-	/** Tenants can't pay this landlord by card yet: no connected account able to take card payments. */
-	private async payoutsOnHold(landlordId: string): Promise<boolean> {
-		if (this.mode() !== "stripe") return false;
+	/**
+	 * onHold: tenants can't pay this landlord by card yet (no connected account able to take card payments).
+	 * paused: card payments work but Stripe has paused payouts to the bank, so no payout date can be promised.
+	 */
+	private async payoutState(landlordId: string): Promise<{ onHold: boolean; paused: boolean }> {
+		if (this.mode() !== "stripe") return { onHold: false, paused: false };
 		const stripe = new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!);
+		let payoutsOff = false;
 		try {
-			return !(await this.accountFor(stripe, new Types.ObjectId(landlordId)));
+			const accountId = await this.accountFor(stripe, new Types.ObjectId(landlordId), account => {
+				payoutsOff = account.payouts_enabled === false;
+				return canCharge(account);
+			});
+			return { onHold: !accountId, paused: !!accountId && payoutsOff };
 		} catch (error) {
 			// Stripe couldn't be asked: no "finish setup" banner on a guess, and the Rent page still loads.
 			this.logger.warn(`Payout status for landlord ${landlordId} could not be checked: ${(error as Error).message}`);
-			return false;
+			return { onHold: false, paused: false };
 		}
 	}
 
@@ -1221,7 +1234,7 @@ export class PaymentsService {
 			const account = await new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!).retrieveAccount(accountId);
 			const bank = account.external_accounts?.data?.[0];
 			const payoutBank = bank
-				? { last4: bank.last4 ?? null, bankName: bank.bank_name ?? null, verified: bank.status === "verified" }
+				? { last4: bank.last4 ?? null, bankName: bank.bank_name ?? null, verified: bank.status === "verified", status: bank.status ?? null }
 				: null;
 			await this.userModel.updateOne({ _id: landlordId }, payoutBank ? { $set: { payoutBank } } : { $unset: { payoutBank: 1 } });
 			// Legacy: money Seek held before direct charges goes out as soon as transfers are possible.
