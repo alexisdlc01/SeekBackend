@@ -125,14 +125,14 @@ export class ListingsService {
 		data: Partial<DraftUpdateData>
 	): Promise<Listing> {
 		const update: Record<string, unknown> = { ...data, lastUpdated: new Date() };
-		if (data.nation) {
+		if (data.nation !== undefined) {
 			const stored = await this.listingModel
 				.findOne({ _id: new Types.ObjectId(listingId), landlord: new Types.ObjectId(landlord._id) })
 				.select("nation")
 				.lean()
 				.exec();
 			// Tenancy rules (notice, deposit, end dates) read the listing's current nation: it is fixed once let.
-			if (stored && data.nation !== (stored.nation ?? Nation.ENGLAND) && await this.isLet(new Types.ObjectId(listingId))) {
+			if (stored && (data.nation ?? Nation.ENGLAND) !== (stored.nation ?? Nation.ENGLAND) && await this.isLet(new Types.ObjectId(listingId))) {
 				throw new ConflictException("The nation cannot change once a tenancy or accepted application exists.");
 			}
 		}
