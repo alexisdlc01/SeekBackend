@@ -20,6 +20,7 @@ import { DocumentShare } from "../users/shares/document-share.schema";
 import { DocumentAccess } from "../users/shares/document-access.schema";
 import { Tenancy } from "../tenancies/tenancy.schema";
 import { Contract, ContractStatus } from "../contracts/contract.schema";
+import { EmailMessage } from "../inbox/email-message.schema";
 import {
 	ALLOWED_UPLOAD_TYPES,
 	MAX_UPLOAD_BYTES
@@ -47,7 +48,9 @@ export class UploadService {
 		@InjectModel(Contract.name)
 		private readonly contractModel: Model<Contract>,
 		@InjectModel(DocumentAccess.name)
-		private readonly accessModel: Model<DocumentAccess>
+		private readonly accessModel: Model<DocumentAccess>,
+		@InjectModel(EmailMessage.name)
+		private readonly emailModel: Model<EmailMessage>
 	) {
 		this.s3Client = new S3Client({
 			region: this.configService.getOrThrow("AWS_S3_REGION"),
@@ -185,7 +188,11 @@ export class UploadService {
 			registerOfTitleKey: key
 		});
 
-		if (!ownsListingDocument && !(allows(TeamScope.TENANCIES) && await this.isTenancyDocument(key, userId))) {
+		// An inbox member opens the owner's synced attachments, and only keys an owner's email really carries.
+		const isInboxAttachment = !!memberScopes?.includes(TeamScope.VIEWINGS_INBOX) && isKeyOwnedBy(key, userId)
+			&& !!(await this.emailModel.exists({ user: user._id, "attachments.key": key }));
+
+		if (!ownsListingDocument && !isInboxAttachment && !(allows(TeamScope.TENANCIES) && await this.isTenancyDocument(key, userId))) {
 			const claimedOwnerIds = await this.userModel.distinct("_id", {
 				"documents.key": key
 			});

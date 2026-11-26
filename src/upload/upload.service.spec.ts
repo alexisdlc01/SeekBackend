@@ -29,6 +29,7 @@ describe("UploadService private-file authorization", () => {
 			})
 		};
 		const accessModel = { create: jest.fn().mockResolvedValue({}) };
+		const emailModel = { exists: jest.fn().mockResolvedValue(null) };
 		const configService = {
 			getOrThrow: (key: string) => configValues[key],
 			get: (key: string) => configValues[key]
@@ -40,12 +41,13 @@ describe("UploadService private-file authorization", () => {
 			shareModel as any,
 			tenancyModel as any,
 			contractModel as any,
-			accessModel as any
+			accessModel as any,
+			emailModel as any
 		);
 		jest.spyOn(service, "getPresignedDownloadUrl")
 			.mockResolvedValue("https://signed.example/file");
 
-		return { service, listingModel, userModel, shareModel, tenancyModel, contractModel, accessModel };
+		return { service, listingModel, userModel, shareModel, tenancyModel, contractModel, accessModel, emailModel };
 	}
 
 	it("deletes only private files, from the private bucket", async () => {
@@ -382,6 +384,46 @@ describe("UploadService private-file authorization", () => {
 			// The landlord themselves still opens it.
 			await expect(service.getAuthorizedPrivateDownloadUrl(ownKey, landlord))
 				.resolves.toBe("https://signed.example/file");
+		});
+
+		it("lets a VIEWINGS_INBOX member open an attachment synced into the owner's inbox", async () => {
+			const { service, listingModel, userModel, emailModel } = setup();
+			listingModel.exists.mockResolvedValue(null);
+			userModel.distinct.mockResolvedValue([]);
+			emailModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+			await expect(service.getAuthorizedPrivateDownloadUrl(ownKey, landlord, [TeamScope.VIEWINGS_INBOX]))
+				.resolves.toBe("https://signed.example/file");
+			expect(emailModel.exists).toHaveBeenCalledWith({ user: landlordId, "attachments.key": ownKey });
+		});
+
+		it("denies a VIEWINGS_INBOX member an owner key that no email carries", async () => {
+			const { service, listingModel, userModel, emailModel } = setup();
+			listingModel.exists.mockResolvedValue(null);
+			userModel.distinct.mockResolvedValue([]);
+			emailModel.exists.mockResolvedValue(null);
+			await expect(service.getAuthorizedPrivateDownloadUrl(ownKey, landlord, [TeamScope.VIEWINGS_INBOX]))
+				.rejects.toBeInstanceOf(ForbiddenException);
+		});
+
+		it("denies a VIEWINGS_INBOX member another owner's attachment key", async () => {
+			const { service, listingModel, userModel, emailModel } = setup();
+			listingModel.exists.mockResolvedValue(null);
+			userModel.distinct.mockResolvedValue([]);
+			emailModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+			const otherKey = `private/${new Types.ObjectId().toHexString()}/123e4567-e89b-12d3-a456-426614174000.pdf`;
+			await expect(service.getAuthorizedPrivateDownloadUrl(otherKey, landlord, [TeamScope.VIEWINGS_INBOX]))
+				.rejects.toBeInstanceOf(ForbiddenException);
+			expect(emailModel.exists).not.toHaveBeenCalled();
+		});
+
+		it("denies a member without VIEWINGS_INBOX an inbox attachment", async () => {
+			const { service, listingModel, userModel, emailModel } = setup();
+			listingModel.exists.mockResolvedValue(null);
+			userModel.distinct.mockResolvedValue([]);
+			emailModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+			await expect(service.getAuthorizedPrivateDownloadUrl(ownKey, landlord, [TeamScope.APPLICATIONS, TeamScope.LISTINGS]))
+				.rejects.toBeInstanceOf(ForbiddenException);
+			expect(emailModel.exists).not.toHaveBeenCalled();
 		});
 
 		it("leaves a non-member landlord unchanged: title deed, tenancy file and live share all open", async () => {

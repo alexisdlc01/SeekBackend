@@ -18,7 +18,7 @@ export class UploadController {
 	// Team members mint under their owner, the id the contract/tenancy/listing endpoints check keys against.
 	@TeamAccess(...ANY_TEAM_SCOPE)
 	@Get("presign")
-	@Throttle({ default: { limit: 20, ttl: 60_000 } })
+	@Throttle({ default: { limit: 60, ttl: 60_000 } })
 	@StudentOrLandlord()
 	async getPresignedUrl(
 		@Query() { fileType, folder, fileSize }: PresignReqDto,
