@@ -55,6 +55,15 @@ describe("PaymentsService reminders and receipts", () => {
 		expect(byDefault.notifications.notify).not.toHaveBeenCalled();
 	});
 
+	it("uses the plan's remindDaysBefore over the tenant's preference", async () => {
+		const inTwoDays = new Date("2026-11-08T00:00:00Z");
+		const ctx = setup({ rentReminderDaysBefore: 3 }, inTwoDays);
+		ctx.planModel.findOne.mockReturnValue(lean({ autopay: false, remindDaysBefore: 2 }));
+		await ctx.service.sweep(now);
+		expect(ctx.planModel.findOne.mock.calls[0][1]).toEqual(expect.objectContaining({ remindDaysBefore: 1 }));
+		expect(ctx.notifications.notify).toHaveBeenCalledWith(expect.objectContaining({ title: expect.stringContaining("is due on") }));
+	});
+
 	it("keeps the compliance dedupe key of an over-cap listing deposit stable from one day to the next", async () => {
 		const listing = { _id: new Types.ObjectId(), landlord, monthlyRent: 1000, securityDeposit: 3000, gasSafetyExpiry: new Date("2026-01-01") };
 		const keysOn = async (day: string) => {

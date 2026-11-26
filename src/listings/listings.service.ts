@@ -314,6 +314,16 @@ export class ListingsService {
 		});
 	}
 
+	/** Let to a household, or past its availableUntil: same rule as the search lists. */
+	async isClosed(listing: Pick<Listing, "_id" | "availableUntil">): Promise<boolean> {
+		if (listing.availableUntil && new Date(listing.availableUntil).getTime() <= Date.now()) return true;
+		return Boolean(await this.applicationModel.exists({
+			listing: listing._id,
+			_id: { $nin: await endedTenancyApplications(this.tenancyModel) },
+			stage: { $in: [ApplicationStage.ACCEPTED, ApplicationStage.SIGNED] }
+		}));
+	}
+
 	async getAllVerifiedListings(): Promise<Listing[]> {
 		const listings = await this.listingModel
 			.find({ isVerified: true, isDraft: false, _id: { $nin: await this.letListingIds() }, $and: [stillAvailable()] })

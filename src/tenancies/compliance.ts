@@ -141,7 +141,8 @@ export function listingCompliance(listing: ListingLike, now: Date = new Date()):
 		if (!raw) continue;
 		const dueDate = new Date(raw);
 		if (dueDate.getTime() > horizon) continue;
-		const expired = dueDate.getTime() < now.getTime();
+		// The printed date is the last valid day: expired only from the day after.
+		const expired = dueDate.getTime() + DAY_MS <= now.getTime();
 		items.push({
 			listing: listing._id.toString(),
 			listingTitle: titleOf(listing),

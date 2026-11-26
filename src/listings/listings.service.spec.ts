@@ -60,6 +60,14 @@ describe("ListingsService", () => {
 		})).resolves.toEqual([{ at: first, remaining: 0 }, { at: second, remaining: 2 }]);
 	});
 
+	it("reports a listing as closed when let or past availableUntil", async () => {
+		const _id = new Types.ObjectId();
+		expect(await service.isClosed({ _id, availableUntil: new Date(Date.now() - 1000) })).toBe(true);
+		expect(await service.isClosed({ _id, availableUntil: new Date(Date.now() + 86400000) })).toBe(false);
+		applicationModel.exists.mockResolvedValueOnce({ _id: new Types.ObjectId() });
+		expect(await service.isClosed({ _id })).toBe(true);
+	});
+
 	it("drops past viewing slots", async () => {
 		applicationModel.aggregate.mockResolvedValue([]);
 		const future = new Date(Date.now() + 86400000);
