@@ -22,6 +22,8 @@ import { Listing, ListingSchema } from "../listings/listings.schema";
 import { EmailMessage, EmailMessageSchema } from "../inbox/email-message.schema";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { Application, ApplicationSchema } from "../application/application.schema";
+import { Message, MessageSchema } from "../conversation/message.schema";
+import { Conversation, ConversationSchema } from "../conversation/converstaion.schema";
 
 @Module({
 	imports: [
@@ -38,7 +40,9 @@ import { Application, ApplicationSchema } from "../application/application.schem
 			{ name: Payment.name, schema: PaymentSchema },
 			{ name: Listing.name, schema: ListingSchema },
 			{ name: EmailMessage.name, schema: EmailMessageSchema },
-			{ name: Application.name, schema: ApplicationSchema }
+			{ name: Application.name, schema: ApplicationSchema },
+			{ name: Message.name, schema: MessageSchema },
+			{ name: Conversation.name, schema: ConversationSchema }
 		]),
 		SharedModule,
 		RedisModule,
