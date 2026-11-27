@@ -1503,6 +1503,25 @@ describe("ApplicationService pipeline", () => {
 		expect(filter.offerExpiresAt.$gt).toBeInstanceOf(Date);
 	});
 
+	it("refuses to accept, before any write, when the listing cannot be loaded", async () => {
+		applicationModel.findById.mockReturnValue({ lean: () => exec(stored(ApplicationStage.OFFERED, { offerExpiresAt: future })) });
+		listingService.findListingById.mockRejectedValueOnce(new NotFoundException("Listing not found"));
+		await expect(service.acceptOffer(applicationId.toString())).rejects.toThrow(NotFoundException);
+		expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
+		expect((service as any).tenanciesService.createFromApplication).not.toHaveBeenCalled();
+	});
+
+	it("guards the household size in the accept write and reports a shrink that raced it as a 409", async () => {
+		const offered = stored(ApplicationStage.OFFERED, { offerExpiresAt: future, applicants: [new Types.ObjectId(), new Types.ObjectId()] });
+		listingService.findListingById.mockResolvedValue({ _id: listingId, landlord: landlordId, numOfPeople: 2 });
+		applicationModel.findById
+			.mockReturnValueOnce({ lean: () => exec(offered) })
+			.mockReturnValueOnce({ lean: () => exec({ ...offered, applicants: [offered.applicants[0]] }) });
+		applicationModel.findOneAndUpdate.mockReturnValue(exec(null));
+		await expect(service.acceptOffer(applicationId.toString())).rejects.toThrow("no longer matches the number of tenants");
+		expect(applicationModel.findOneAndUpdate.mock.calls[0][0].$expr).toEqual({ $gte: [{ $size: "$applicants" }, 2] });
+	});
+
 	it("refuses to accept an offer once another household has accepted the property (no double let)", async () => {
 		applicationModel.findById.mockReturnValue({ lean: () => exec(stored(ApplicationStage.OFFERED, { offerExpiresAt: future })) });
 		applicationModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });

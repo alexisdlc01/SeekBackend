@@ -848,6 +848,8 @@ export class ApplicationService {
 	/** A household member accepts an open offer, which creates the tenancy. */
 	async acceptOffer(applicationId: string): Promise<{ tenancy: string }> {
 		const offered = await this.applicationModel.findById(applicationId).lean().exec();
+		const householdChanged = "Your household no longer matches the number of tenants this home was offered for.";
+		let needed: number | undefined;
 		if (offered) await this.assertNotLet(offered);
 		if (offered?.stage === ApplicationStage.OFFERED) {
 			await this.tenanciesService.assertNoCurrentTenancy(offered.applicants, offered.listing);
@@ -857,16 +859,18 @@ export class ApplicationService {
 				throw new BadRequestException("This landlord is no longer active on Seek, so the offer can't be accepted.");
 			}
 			// The household and the rent split are frozen at offer time: a shrunken household would each pay more.
-			const listing = await this.listingService.findListingById(offered.listing.toString()).catch(() => null);
-			if (listing?.numOfPeople && offered.applicants.length < listing.numOfPeople) {
-				throw new ConflictException("Your household no longer matches the number of tenants this home was offered for.");
-			}
+			// Fail closed: a listing that can't be loaded (NotFound) stops the accept.
+			const listing = await this.listingService.findListingById(offered.listing.toString());
+			needed = listing.numOfPeople || undefined;
+			if (needed && offered.applicants.length < needed) throw new ConflictException(householdChanged);
 		}
 		const application = await this.applicationModel
 			.findOneAndUpdate({
 				_id: applicationId,
 				stage: ApplicationStage.OFFERED,
 				offerExpiresAt: { $gt: new Date() },
+				// Atomic with the flip: the household may shrink between the check above and this write.
+				...(needed ? { $expr: { $gte: [{ $size: "$applicants" }, needed] } } : {}),
 			}, {
 				$set: { stage: ApplicationStage.ACCEPTED }
 			}, { new: true })
@@ -879,6 +883,7 @@ export class ApplicationService {
 				await this.dropUnpaidHoldingDeposits(existing._id);
 				return { tenancy: tenancy._id.toString() };
 			}
+			if (needed && existing?.stage === ApplicationStage.OFFERED && existing.applicants.length < needed) throw new ConflictException(householdChanged);
 			throw new BadRequestException("There is no open offer to accept. It may have expired.");
 		}
 		// Re-check after the flip: two households accepting the same listing at once both pass the check above.
