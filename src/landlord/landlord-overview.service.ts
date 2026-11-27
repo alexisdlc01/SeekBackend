@@ -250,7 +250,7 @@ export class LandlordOverviewService {
 		const arrearsByListing = new Map<string, number>();
 		for (const payment of payments) {
 			const key = listingByTenancy.get(payment.tenancy?.toString());
-			if (!key) continue;
+			if (!key || payment.status === PaymentStatus.CANCELLED) continue;
 			if (payment.status === PaymentStatus.LATE) {
 				arrearsByListing.set(key, (arrearsByListing.get(key) ?? 0) + payment.amount);
 			}

@@ -1311,6 +1311,7 @@ export class PaymentsService {
 			// Holding deposits lapse with their offer instead of going late.
 			.find({
 				kind: { $ne: PaymentKind.HOLDING_DEPOSIT },
+				amount: { $gt: 0 },
 				$or: [
 					{ status: { $in: [PaymentStatus.SCHEDULED, PaymentStatus.FAILED] } },
 					// An abandoned payment sheet or a crashed autopay leaves PENDING behind; an hour lets live attempts settle.

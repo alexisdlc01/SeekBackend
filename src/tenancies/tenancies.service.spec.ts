@@ -747,6 +747,23 @@ describe("TenanciesService create / accept", () => {
 			);
 		});
 
+		it("cancels an unpaid credited row when the credit covers all the rent owed", async () => {
+			// Ends on 4 April: owes £100 against a £230 credit, so nothing is left to pay or chase.
+			const payment = { ...paid(77000, "2027-04-01"), status: "SCHEDULED", holdingDepositCredit: 23000 };
+			const ctx = setup();
+			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE, monthlyRent: 100000
+			} as any);
+			ctx.paymentModel.find.mockImplementation((filter: any) => lean(filter.status?.$nin && !filter.providerRef ? [payment] : []));
+
+			await ctx.service.endTenancy(tenancyId.toString(), new Date("2027-04-04"), landlord);
+
+			expect(ctx.paymentModel.updateOne).toHaveBeenCalledWith(
+				{ _id: payment._id, status: { $nin: ["PAID", "PENDING"] }, amount: 77000 },
+				{ $set: expect.objectContaining({ amount: 0, status: PaymentStatus.CANCELLED }) }
+			);
+		});
+
 		it("returns the credit above the rent owed on the tenant's holding deposit", async () => {
 			// Ends on 4 April: owes 3 of 30 days (£100) against a £230 credit, so the £770 paid and £130 of the deposit go back.
 			const tenant = new Types.ObjectId();
