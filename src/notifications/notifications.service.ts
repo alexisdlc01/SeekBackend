@@ -15,7 +15,6 @@ const TEAM_SCOPE_KINDS: Record<TeamScope, NotificationKind[]> = {
 		NotificationKind.VIEWING_SCHEDULED,
 		NotificationKind.NEW_QUALIFIED_HOUSEHOLD,
 		NotificationKind.OFFER_MADE,
-		NotificationKind.OFFER_ACCEPTED,
 		NotificationKind.OFFER_EXPIRED,
 		NotificationKind.OFFER_WITHDRAWN,
 		NotificationKind.APPLICATION_REJECTED,
@@ -24,6 +23,7 @@ const TEAM_SCOPE_KINDS: Record<TeamScope, NotificationKind[]> = {
 	[TeamScope.LISTINGS]: [NotificationKind.LISTING_NEEDS_CHANGES],
 	[TeamScope.REPAIRS]: [NotificationKind.REPAIR_REPORTED, NotificationKind.REPAIR_UPDATED],
 	[TeamScope.TENANCIES]: [
+		NotificationKind.OFFER_ACCEPTED,
 		NotificationKind.TENANCY_CREATED,
 		NotificationKind.TENANCY_INVITE,
 		NotificationKind.TENANCY_ENDED,
