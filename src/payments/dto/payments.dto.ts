@@ -284,6 +284,9 @@ export class LandlordPaymentRowDto {
 	@ApiProperty({ nullable: true, type: String })
 	property: string | null;
 
+	@ApiProperty({ nullable: true, type: String, description: "Listing id, to group rows by property (two listings can share a title)." })
+	listing: string | null;
+
 	@ApiProperty()
 	tenant: { _id: string; name?: string };
 

@@ -141,6 +141,13 @@ describe("attachment filing", () => {
 		expect(parseAmountPence("Total £1,042.50, due 1 Dec")).toBe(104250);
 		expect(parseAmountPence("Your bill is £1050.20 this quarter")).toBe(105020);
 		expect(parseAmountPence("No money here")).toBeNull();
+		// Past balances and payments in the same email must not be filed as the bill.
+		expect(parseAmountPence("Previous balance £45.00. Payment received £45.00. Amount due £84.20")).toBe(8420);
+		expect(parseAmountPence("Your balance is £0.00 before this bill. Amount due £84.20")).toBe(8420);
+		expect(parseAmountPence("Your last payment of £50.00 was received. Your new bill is £84.20")).toBe(8420);
+		// Several unlabelled amounts: no guess.
+		expect(parseAmountPence("You paid £50.00 last month and £84.20 this month")).toBeNull();
+		expect(parseAmountPence("Balance £0.00")).toBeNull();
 	});
 });
 
