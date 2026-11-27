@@ -219,8 +219,11 @@ export class ApplicationService {
 		]);
 	}
 
-	/** An offered household may withdraw; keep its audit row and return any paid reservation fee. */
-	private async withdrawOffer(application: Application & { _id: Types.ObjectId }, housemates = true) {
+	/**
+	 * An offered household may withdraw; keep its audit row and return any paid reservation fee.
+	 * `memberLeft`: a member deleted their account, so the household no longer matches the offer; every remaining member is told.
+	 */
+	private async withdrawOffer(application: Application & { _id: Types.ObjectId }, housemates = true, memberLeft = false) {
 		const withdrawn = await this.applicationModel.findOneAndUpdate(
 			{ _id: application._id, stage: ApplicationStage.OFFERED },
 			{ $set: { stage: ApplicationStage.WITHDRAWN, offerExpiresAt: null, holdingDeposit: null } },
@@ -238,18 +241,22 @@ export class ApplicationService {
 		await this.notificationsService.notify({
 			user: application.landlord,
 			kind: NotificationKind.OFFER_WITHDRAWN,
-			title: `The household withdrew from your offer for ${title}`,
-			body: "They turned the offer down. Any holding deposit they paid is refunded automatically.",
+			title: memberLeft ? `Your offer for ${title} was withdrawn` : `The household withdrew from your offer for ${title}`,
+			body: memberLeft
+				? "A member of the household deleted their account, so it no longer matches the number of tenants you offered to. Any holding deposit they paid is refunded automatically."
+				: "They turned the offer down. Any holding deposit they paid is refunded automatically.",
 			...notificationTarget("landlord", NotificationTargetKind.APPLICATION, application._id, { listing: application.listing }),
 			dedupeKey: `offer-withdrawn:${application._id.toString()}`
 		});
-		const others = housemates ? application.applicants.filter(id => id.toString() !== application.owner?.toString()) : [];
+		const others = housemates ? application.applicants.filter(id => memberLeft || id.toString() !== application.owner?.toString()) : [];
 		if (others.length) {
 			await this.notificationsService.notifyMany(others.map(user => ({
 				user,
 				kind: NotificationKind.OFFER_WITHDRAWN,
-				title: `Your household turned down the offer for ${title}`,
-				body: "The household owner turned the offer down. Any holding deposit you paid is refunded automatically.",
+				title: memberLeft ? `Your offer for ${title} was withdrawn` : `Your household turned down the offer for ${title}`,
+				body: memberLeft
+					? "A housemate deleted their account, so your household no longer matches the number of tenants this home was offered for. Any holding deposit you paid is refunded automatically."
+					: "The household owner turned the offer down. Any holding deposit you paid is refunded automatically.",
 				...notificationTarget("student", NotificationTargetKind.APPLICATION),
 				dedupeKey: `offer-withdrawn-household:${application._id.toString()}`
 			})));
@@ -849,6 +856,11 @@ export class ApplicationService {
 			if (!landlord || landlord.deletedAt || landlord.suspendedAt) {
 				throw new BadRequestException("This landlord is no longer active on Seek, so the offer can't be accepted.");
 			}
+			// The household and the rent split are frozen at offer time: a shrunken household would each pay more.
+			const listing = await this.listingService.findListingById(offered.listing.toString()).catch(() => null);
+			if (listing?.numOfPeople && offered.applicants.length < listing.numOfPeople) {
+				throw new ConflictException("Your household no longer matches the number of tenants this home was offered for.");
+			}
 		}
 		const application = await this.applicationModel
 			.findOneAndUpdate({
@@ -1257,7 +1269,8 @@ export class ApplicationService {
 
 	/**
 	 * A deleted account leaves its open or offered households: ownership passes to the next member, and an application
-	 * left with nobody is deleted (an offer is withdrawn). The leaver's holding deposit is dropped or refunded.
+	 * left with nobody is deleted (an offer is withdrawn). The leaver's holding deposit is dropped or refunded, and an
+	 * offer left with fewer tenants than the listing's numOfPeople is withdrawn (its split was frozen at offer time).
 	 */
 	async releaseDeletedMember(userId: Types.ObjectId): Promise<void> {
 		const applications = await this.applicationModel
@@ -1282,6 +1295,11 @@ export class ApplicationService {
 			if (application.stage === ApplicationStage.OFFERED) {
 				await this.dropUnpaidHoldingDeposits(application._id, gone);
 				await this.refundHoldingDeposits(application._id, gone);
+				// The offer was made for this household and its split: fewer tenants than the home is let to withdraws it.
+				const listing = await this.listingService.findListingById(application.listing.toString()).catch(() => null);
+				if (listing?.numOfPeople && remaining.length < listing.numOfPeople) {
+					await this.withdrawOffer({ ...application.toObject(), applicants: remaining }, true, true);
+				}
 			}
 		}
 	}

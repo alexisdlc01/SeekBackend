@@ -518,3 +518,28 @@ describe("ContractsService reminders", () => {
 		expect(mail.sendContractSentEmail).toHaveBeenCalledTimes(3);
 	});
 });
+
+describe("Seek agreement with no deposit", () => {
+	it("says no deposit is taken and drops the scheme wording", () => {
+		const html = renderAgreement({ ...data, depositAmount: 0 });
+		expect(html).toContain("No deposit is taken");
+		expect(html).not.toContain("deposit scheme");
+		expect(html).not.toContain("Protected with");
+	});
+
+	it("createDefault sets prescribedInformationUrl only when there is a deposit", async () => {
+		const run = async (depositAmount: number) => {
+			const create = jest.fn(async (doc: any) => ({ toObject: () => doc }));
+			const tenancy = { _id: new Types.ObjectId(), landlord: new Types.ObjectId(), listing: new Types.ObjectId(), depositAmount };
+			const service = new ContractsService(
+				{ create } as any, {} as any, {} as any, {} as any,
+				{ findById: () => ({ lean: () => ({ exec: () => Promise.resolve({ nation: "ENGLAND" }) }) }) } as any,
+				{ findForLandlord: jest.fn().mockResolvedValue(tenancy) } as any,
+				{} as any, { get: () => "secret" } as any
+			);
+			return service.createDefault(tenancy._id.toString(), {} as any);
+		};
+		expect((await run(0)).prescribedInformationUrl).toBeNull();
+		expect((await run(50000)).prescribedInformationUrl).toContain("prescribed-information");
+	});
+});
