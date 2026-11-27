@@ -120,12 +120,13 @@ ${rows([
 	["Bills", data.billsIncluded ? "Included in the rent" : `Not included: the ${tenantWord}s pay energy, water, broadband and any council tax`]
 ])}
 <h2>4. Deposit</h2>
-${rows([
+${data.depositAmount ? `${rows([
 	[`Deposit per ${tenantWord}`, pounds(data.depositAmount)],
 	["Deposit for the home", pounds(data.depositAmount * count)],
 	["Protected with", scheme]
 ])}
-<p>The deposit is no more than five weeks' rent. The landlord will protect it with ${escapeHtml(scheme)} and give the ${tenantWord}s the scheme's prescribed information within 30 days of receiving it. At the end, any deductions must be agreed with the ${tenantWord}s or decided by the scheme's free dispute service.</p>
+<p>The deposit is no more than five weeks' rent. The landlord will protect it with ${escapeHtml(scheme)} and give the ${tenantWord}s the scheme's prescribed information within 30 days of receiving it. At the end, any deductions must be agreed with the ${tenantWord}s or decided by the scheme's free dispute service.</p>`
+ : "<p>No deposit is taken for this tenancy.</p>"}
 <h2>5. What the landlord agrees to</h2>
 <ul>
 <li>Keep the structure, exterior, heating, hot water, gas, electrics and sanitation in repair and working order, and keep the home fit to live in.</li>

@@ -1074,6 +1074,61 @@ describe("ApplicationService pipeline", () => {
 			);
 			expect(notifications.notify.mock.calls[0][0]).toMatchObject({ user: landlordId, kind: "OFFER_WITHDRAWN" });
 		});
+
+		it("withdraws an offer when a deleted member leaves a household smaller than the home, refunding the others", async () => {
+			const memberA = new Types.ObjectId();
+			const memberB = new Types.ObjectId();
+			const conversation = new Types.ObjectId();
+			const paid = { _id: new Types.ObjectId(), tenant: memberA, amount: 15000, status: "PAID", provider: "simulated", providerRef: "sim_paid", refundedAt: null, refundedAmount: 0 };
+			listingService.findListingById.mockResolvedValue({ _id: listingId, landlord: landlordId, propertyTitle: "Cotham Flat", numOfPeople: 3 });
+			applicationModel.find.mockReturnValue({ exec: jest.fn().mockResolvedValue([stored(ApplicationStage.OFFERED, { conversation, owner: studentId, applicants: [studentId, memberA, memberB] })]) });
+			applicationModel.findOneAndUpdate.mockReturnValue(exec(stored(ApplicationStage.WITHDRAWN)));
+			usersRepository.getUserById.mockImplementation(async (id: string) => ({ deletedAt: id === studentId.toString() ? new Date() : null }));
+			paymentModel.find.mockImplementation((filter: any) => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(filter.refundDue ? [paid] : []) }) }));
+			(service as any).converstaionModel = { updateOne: jest.fn().mockReturnValue({ exec: jest.fn() }) };
+			queue();
+
+			await service.releaseDeletedMember(studentId);
+
+			expect(applicationModel.findOneAndUpdate).toHaveBeenCalledWith(
+				{ _id: applicationId, stage: ApplicationStage.OFFERED },
+				expect.objectContaining({ $set: expect.objectContaining({ stage: ApplicationStage.WITHDRAWN }) }),
+				{ new: true }
+			);
+			// Every remaining member's holding deposit is flagged and refunded, not only the leaver's.
+			expect(paymentModel.updateMany).toHaveBeenCalledWith(
+				{ application: applicationId, kind: "HOLDING_DEPOSIT", refundDue: { $ne: true }, autoRefund: { $ne: true }, refundedAt: null },
+				{ $set: { refundDue: true, autoRefund: true } }
+			);
+			expect(paymentModel.updateOne).toHaveBeenCalledWith({ _id: paid._id, refundedAt: null }, expect.objectContaining({ $set: expect.objectContaining({ refundedAmount: 15000 }) }));
+			expect(notifications.notify.mock.calls[0][0]).toMatchObject({ user: landlordId, kind: "OFFER_WITHDRAWN", title: "Your offer for the property was withdrawn", dedupeKey: `offer-withdrawn:${applicationId}` });
+			const household = notifications.notifyMany.mock.calls.find(([inputs]) => inputs[0]?.dedupeKey === `offer-withdrawn-household:${applicationId}`);
+			expect(household?.[0].map((input: any) => input.user)).toEqual([memberA, memberB]);
+		});
+
+		it("keeps the offer open when the household still fills the home after a member leaves", async () => {
+			const memberA = new Types.ObjectId();
+			listingService.findListingById.mockResolvedValue({ _id: listingId, landlord: landlordId, numOfPeople: 1 });
+			applicationModel.find.mockReturnValue({ exec: jest.fn().mockResolvedValue([stored(ApplicationStage.OFFERED, { owner: studentId, applicants: [studentId, memberA] })]) });
+			usersRepository.getUserById.mockImplementation(async (id: string) => ({ deletedAt: id === studentId.toString() ? new Date() : null }));
+			(service as any).converstaionModel = { updateOne: jest.fn().mockReturnValue({ exec: jest.fn() }) };
+
+			await service.releaseDeletedMember(studentId);
+
+			expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
+		});
+	});
+
+	it("refuses to accept an offer once the household is smaller than the home it was offered, before any money moves", async () => {
+		listingService.findListingById.mockResolvedValue({ _id: listingId, landlord: landlordId, numOfPeople: 3 });
+		applicationModel.findById.mockReturnValue({ lean: () => exec(stored(ApplicationStage.OFFERED, { offerExpiresAt: future, applicants: [studentId, new Types.ObjectId()] })) });
+
+		const accepting = service.acceptOffer(applicationId.toString());
+		await expect(accepting).rejects.toThrow(ConflictException);
+		await expect(accepting).rejects.toThrow("Your household no longer matches the number of tenants this home was offered for.");
+		expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
+		expect(paymentModel.deleteMany).not.toHaveBeenCalled();
+		expect((service as any).tenanciesService.createFromApplication).not.toHaveBeenCalled();
 	});
 
 	describe("offer queue rules", () => {
@@ -1446,6 +1501,25 @@ describe("ApplicationService pipeline", () => {
 		const [filter] = applicationModel.findOneAndUpdate.mock.calls[0];
 		expect(filter.stage).toBe(ApplicationStage.OFFERED);
 		expect(filter.offerExpiresAt.$gt).toBeInstanceOf(Date);
+	});
+
+	it("refuses to accept, before any write, when the listing cannot be loaded", async () => {
+		applicationModel.findById.mockReturnValue({ lean: () => exec(stored(ApplicationStage.OFFERED, { offerExpiresAt: future })) });
+		listingService.findListingById.mockRejectedValueOnce(new NotFoundException("Listing not found"));
+		await expect(service.acceptOffer(applicationId.toString())).rejects.toThrow(NotFoundException);
+		expect(applicationModel.findOneAndUpdate).not.toHaveBeenCalled();
+		expect((service as any).tenanciesService.createFromApplication).not.toHaveBeenCalled();
+	});
+
+	it("guards the household size in the accept write and reports a shrink that raced it as a 409", async () => {
+		const offered = stored(ApplicationStage.OFFERED, { offerExpiresAt: future, applicants: [new Types.ObjectId(), new Types.ObjectId()] });
+		listingService.findListingById.mockResolvedValue({ _id: listingId, landlord: landlordId, numOfPeople: 2 });
+		applicationModel.findById
+			.mockReturnValueOnce({ lean: () => exec(offered) })
+			.mockReturnValueOnce({ lean: () => exec({ ...offered, applicants: [offered.applicants[0]] }) });
+		applicationModel.findOneAndUpdate.mockReturnValue(exec(null));
+		await expect(service.acceptOffer(applicationId.toString())).rejects.toThrow("no longer matches the number of tenants");
+		expect(applicationModel.findOneAndUpdate.mock.calls[0][0].$expr).toEqual({ $gte: [{ $size: "$applicants" }, 2] });
 	});
 
 	it("refuses to accept an offer once another household has accepted the property (no double let)", async () => {

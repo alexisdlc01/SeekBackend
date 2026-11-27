@@ -92,7 +92,7 @@ export class ContractsService {
 			landlord: tenancy.landlord,
 			title: wales ? "Standard occupation contract (Wales)" : "Assured periodic tenancy agreement",
 			url: this.documentUrl(_id.toString(), "agreement"),
-			prescribedInformationUrl: this.documentUrl(_id.toString(), "prescribed-information"),
+			prescribedInformationUrl: tenancy.depositAmount ? this.documentUrl(_id.toString(), "prescribed-information") : null,
 			templateKind: wales ? ContractTemplateKind.WALES_STANDARD_OCCUPATION : ContractTemplateKind.ENGLAND_ASSURED_PERIODIC,
 			source: DocumentSource.SEEK,
 			status: ContractStatus.DRAFT
