@@ -197,6 +197,7 @@ describe("AiService contract advice", () => {
 	const tenancy = {
 		startDate: new Date("2026-09-01T00:00:00Z"),
 		periodic: true,
+		status: "ACTIVE",
 		documents: [{ type: "TENANCY_AGREEMENT", confirmedByLandlord: false }]
 	};
 
@@ -221,6 +222,24 @@ describe("AiService contract advice", () => {
 		const landlord = (service as any).contractAdvice({ ...user, role: "LANDLORD_AGENCY" }, tenancy, scotland);
 		expect(landlord.advice).toContain("First-tier Tribunal");
 		expect(landlord.advice).toContain("that date doesn't end the tenancy");
+	});
+
+	it("does not tell tenants to give notice once notice is given or the tenancy has ended", () => {
+		const scotland = { propertyTitle: "4 South St", nation: "SCOTLAND", availableUntil: new Date("2099-06-30T00:00:00Z") };
+		expect((service as any).contractAdvice(user, tenancy, scotland).advice).toContain("To give notice in Seek");
+
+		const noticed = (service as any).contractAdvice(
+			user,
+			{ ...tenancy, endDate: new Date("2027-06-30T23:00:00Z"), noticeGivenAt: new Date("2027-05-01T00:00:00Z") },
+			scotland
+		).advice;
+		expect(noticed).toContain("Notice has been given: the tenancy ends on 1 July 2027.");
+		expect(noticed).not.toContain("To give notice in Seek");
+		expect(noticed).not.toContain("give your written notice");
+
+		const ended = (service as any).contractAdvice(user, { ...tenancy, status: "ENDED", endDate: new Date("2027-06-30T23:00:00Z") }, scotland).advice;
+		expect(ended).toContain("This tenancy has ended.");
+		expect(ended).not.toContain("To give notice in Seek");
 	});
 });
 

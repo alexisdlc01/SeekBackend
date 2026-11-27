@@ -1,4 +1,4 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Types } from "mongoose";
 import { ConfigService } from "@nestjs/config";
 import { ListingsGateway } from "./listings.gateway";
@@ -279,6 +279,56 @@ describe("ListingsService", () => {
 		it("changes the nation of a listing with no tenancy or accepted application", async () => {
 			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { nation: "ENGLAND", draftStep: 1 } as never);
 			expect(listingModel.findOneAndUpdate.mock.calls[0][1].$set.nation).toBe("ENGLAND");
+		});
+	});
+
+	describe("terms frozen while an offer is open", () => {
+		const stored = { isDraft: false, monthlyRent: 1000, securityDeposit: 1000, numOfPeople: 2, nation: "ENGLAND", availableFrom: new Date("2099-09-01T00:00:00Z") };
+		beforeEach(() => {
+			listingModel.findOne = jest.fn().mockReturnValue({
+				select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(stored) }) })
+			});
+			listingModel.findOneAndUpdate = jest.fn().mockResolvedValue(makeListing(false));
+		});
+
+		it.each([
+			["rent", { monthlyRent: 1200 }],
+			["deposit", { securityDeposit: 900 }],
+			["number of tenants", { numOfPeople: 3 }],
+			["available-from date", { availableFrom: "2099-10-01T00:00:00.000Z" }]
+		])("refuses to change the %s while an offer is open", async (_label, change) => {
+			applicationModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+			const saving = service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { ...change, draftStep: 3 } as never);
+			await expect(saving).rejects.toBeInstanceOf(ConflictException);
+			await expect(saving).rejects.toThrow("An offer is open on this property.");
+			expect(applicationModel.exists.mock.calls[0][0]).toMatchObject({ stage: "OFFERED", offerExpiresAt: { $gt: expect.any(Date) } });
+			expect(listingModel.findOneAndUpdate).not.toHaveBeenCalled();
+		});
+
+		it("saves when the same terms are resent with an offer open", async () => {
+			applicationModel.exists.mockResolvedValue({ _id: new Types.ObjectId() });
+			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), {
+				monthlyRent: 1000, securityDeposit: 1000, numOfPeople: 2, availableFrom: "2099-09-01T00:00:00.000Z", draftStep: 3
+			} as never);
+			expect(listingModel.findOneAndUpdate).toHaveBeenCalled();
+		});
+
+		it("saves a rent change when the offer has expired (no open offer found)", async () => {
+			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { monthlyRent: 1100, draftStep: 3 } as never);
+			expect(applicationModel.exists.mock.calls[0][0].offerExpiresAt.$gt.getTime()).toBeLessThanOrEqual(Date.now());
+			expect(listingModel.findOneAndUpdate).toHaveBeenCalled();
+		});
+
+		it("refuses while an accepted application still has no tenancy, allows once it has one", async () => {
+			const accepted = new Types.ObjectId();
+			applicationModel.distinct.mockResolvedValue([accepted]);
+			await expect(service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { monthlyRent: 1100, draftStep: 3 } as never))
+				.rejects.toThrow("An offer is open on this property.");
+			expect(applicationModel.distinct).toHaveBeenCalledWith("_id", expect.objectContaining({ stage: "ACCEPTED" }));
+
+			tenancyModel.distinct.mockReturnValue({ exec: jest.fn().mockResolvedValue([accepted]) });
+			await service.updateDraft(new Types.ObjectId().toString(), makeLandlord(), { monthlyRent: 1100, draftStep: 3 } as never);
+			expect(listingModel.findOneAndUpdate).toHaveBeenCalled();
 		});
 	});
 

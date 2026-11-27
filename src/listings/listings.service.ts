@@ -136,6 +136,21 @@ export class ListingsService {
 				throw new ConflictException("The nation cannot change once a tenancy or accepted application exists.");
 			}
 		}
+		// The tenancy takes rent, deposit and start date from the listing when the offer is accepted: freeze them meanwhile.
+		const terms = (["monthlyRent", "securityDeposit", "numOfPeople", "availableFrom"] as const).filter(key => data[key] !== undefined);
+		if (terms.length > 0) {
+			const current = await this.listingModel
+				.findOne({ _id: new Types.ObjectId(listingId), landlord: new Types.ObjectId(landlord._id) })
+				.select(terms.join(" "))
+				.lean()
+				.exec();
+			const changed = terms.some(key => key === "availableFrom"
+				? new Date(data.availableFrom!).getTime() !== current?.availableFrom?.getTime()
+				: Number(data[key]) !== Number(current?.[key]));
+			if (current && changed && await this.hasPendingTerms(new Types.ObjectId(listingId))) {
+				throw new ConflictException("An offer is open on this property. Wait until it is accepted or expires before changing the rent, deposit, number of tenants or dates.");
+			}
+		}
 		if (data.availableFrom || data.availableUntil) {
 			const current = await this.listingModel
 				.findOne({ _id: new Types.ObjectId(listingId), landlord: new Types.ObjectId(landlord._id) })
@@ -310,6 +325,15 @@ export class ListingsService {
 			this.tenancyModel.exists({ listing: listingId })
 		]);
 		return !!(let_ || tenancy);
+	}
+
+	/** An open offer, or an accepted application whose tenancy is not created yet (a retry builds it from the listing). */
+	private async hasPendingTerms(listingId: Types.ObjectId): Promise<boolean> {
+		if (await this.applicationModel.exists({ listing: listingId, stage: ApplicationStage.OFFERED, offerExpiresAt: { $gt: new Date() } })) return true;
+		const accepted: Types.ObjectId[] = await this.applicationModel.distinct("_id", { listing: listingId, stage: ApplicationStage.ACCEPTED });
+		if (accepted.length === 0) return false;
+		const withTenancy = await this.tenancyModel.distinct("application", { application: { $in: accepted } }).exec();
+		return withTenancy.length < accepted.length;
 	}
 
 	async getAllUnverifiedListings(): Promise<Listing[]> {
