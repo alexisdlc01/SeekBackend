@@ -152,13 +152,15 @@ describe("ConnectorsService store auto-filing", () => {
 		const fileBill = jest.spyOn(service as any, "fileBill").mockResolvedValue(true);
 		const { classifyEmail } = await import("./housing-filter");
 		const attachment = { name: "bill.pdf", mimeType: "application/pdf", size: 10, load: async () => null };
-		const store = (from: string) => {
-			const mail = { providerThreadId: "t", providerMessageId: from, from, to: ["maya@example.com"], subject: "Energy bill statement", body: "Total: £900.00", receivedAt: new Date(), attachments: [attachment] };
+		const store = (from: string, senderAuthenticated?: boolean) => {
+			const mail = { providerThreadId: "t", providerMessageId: from, from, to: ["maya@example.com"], subject: "Energy bill statement", body: "Total: £900.00", receivedAt: new Date(), attachments: [attachment], senderAuthenticated };
 			return (service as any).store(gmail, { _id: owner, role: "STUDENT" }, mail, classifyEmail({ ...mail, outgoing: false }, new Map()), false);
 		};
 
 		expect(classifyEmail({ from: "landlord.scam@gmail.com", to: [], subject: "Energy bill statement", outgoing: false }, new Map())).toMatchObject({ category: "BILLS", reason: "Housing keywords" });
 		await expect(store("landlord.scam@gmail.com")).resolves.toBe(0);
+		expect(fileBill).not.toHaveBeenCalled();
+		await expect(store("bills@octopus.energy", false)).resolves.toBe(0);
 		expect(fileBill).not.toHaveBeenCalled();
 		await expect(store("bills@octopus.energy")).resolves.toBe(1);
 		expect(fileBill).toHaveBeenCalledTimes(1);

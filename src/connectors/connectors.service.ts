@@ -1134,7 +1134,9 @@ export class ConnectorsService {
 				user.role !== Role.LANDLORD_AGENCY &&
 				!found && !!target && toggles.readUtilityBills && classification.category === EmailCategory.BILLS && looksLikeBill(attachment.name, mail.subject) &&
 				// Anyone can write "Energy bill" in a subject: only a known provider or council domain creates a shared bill.
-				(classification.reason === "Utility provider" || classification.reason === "Council");
+				(classification.reason === "Utility provider" || classification.reason === "Council") &&
+				// A spoofed provider From is rejected when Gmail/Outlook report SPF/DKIM misaligned; IMAP stays unverified (undefined).
+				(this.isDemo(connection) || mail.senderAuthenticated !== false);
 			// Sender must match a Seek landlord's address (From is not authenticated here, so a spoofed From could pass); housemates and *.ac.uk senders are excluded.
 			// A reply from the exact address Seek asked wins over a tenancy-document name ("AST Guarantor Agreement.pdf").
 			const canReference = toggles.addReferencesToProfile && user.role !== Role.LANDLORD_AGENCY;
