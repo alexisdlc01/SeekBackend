@@ -509,6 +509,7 @@ export class PaymentsService {
 				kind: payment.kind ?? PaymentKind.RENT,
 				tenancy: tenancy?._id?.toString() ?? (payment.tenancy ? String(payment.tenancy) : null),
 				property: listing?.propertyTitle ?? listing?.streetAddress ?? null,
+				listing: listing?._id ? String(listing._id) : null,
 				tenant: { _id: tenantDoc?._id?.toString() ?? String(payment.tenant), name: tenantDoc?.name },
 				amount: payment.amount,
 				status: payment.status,

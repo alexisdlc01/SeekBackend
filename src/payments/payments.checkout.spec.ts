@@ -858,6 +858,7 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 describe("PaymentsService.landlordMonth", () => {
 	it("shows the landlord which paid holding deposits must be refunded", async () => {
 		const landlord = new Types.ObjectId();
+		const listingId = new Types.ObjectId();
 		const query = (value: unknown) => {
 			const chain: Record<string, unknown> = { exec: () => Promise.resolve(value) };
 			for (const method of ["populate", "sort", "lean", "select", "limit"]) chain[method] = () => chain;
@@ -867,7 +868,7 @@ describe("PaymentsService.landlordMonth", () => {
 			_id: new Types.ObjectId(),
 			kind: PaymentKind.HOLDING_DEPOSIT,
 			tenancy: null,
-			application: { listing: { propertyTitle: "Cotham Flat" } },
+			application: { listing: { _id: listingId, propertyTitle: "Cotham Flat" } },
 			tenant: { _id: new Types.ObjectId(), name: "Maya" },
 			landlord,
 			amount: 15000,
@@ -894,7 +895,7 @@ describe("PaymentsService.landlordMonth", () => {
 
 		const month = await service.landlordMonth(landlord.toString());
 
-		expect(month.rows[0]).toMatchObject({ kind: PaymentKind.HOLDING_DEPOSIT, property: "Cotham Flat", refundDue: true });
+		expect(month.rows[0]).toMatchObject({ kind: PaymentKind.HOLDING_DEPOSIT, property: "Cotham Flat", listing: listingId.toString(), refundDue: true });
 		expect(month.holdingDepositsCollected).toBe(15000);
 	});
 

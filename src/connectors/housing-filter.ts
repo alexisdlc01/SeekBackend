@@ -260,12 +260,19 @@ export function billCategoryFor(fromEmail: string, subject: string): BillCategor
 	return BillCategory.OTHER;
 }
 
-/** The amount due on a bill email, in pence: "Total £214.00", "Amount due: £42.50". */
+/** The amount due on a bill email, in pence: "Total £214.00", "Amount due: £42.50". Null rather than a wrong guess: a filed bill is split between flatmates. */
 export function parseAmountPence(text: string): number | null {
-	const labelled = /(?:total|amount due|balance|to pay|you owe|due)[^£\d]{0,20}£\s?((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)(?!\d|[.,]\d)/i.exec(text);
-	const match = labelled ?? /£\s?((?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2})(?!\d|[.,]\d)/.exec(text);
-	if (!match) return null;
-	const pence = Math.round(Number(match[1].replace(/,/g, "")) * 100);
+	const AMOUNT = "£\\s?((?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d{1,2})?)(?!\\d|[.,]\\d)";
+	const toPence = (raw: string) => Math.round(Number(raw.replace(/,/g, "")) * 100);
+	const labelled = [...text.matchAll(new RegExp(`(total|amount due|new bill|balance|to pay|you owe|due)[^£\\d]{0,20}${AMOUNT}`, "gi"))]
+		.map(m => ({ strong: !/^(?:balance|due)$/i.test(m[1]), pence: toPence(m[2]) }))
+		.filter(m => Number.isFinite(m.pence) && m.pence > 0);
+	// "Previous balance £45.00 … Amount due £84.20": a strong label wins, and the last amount is the one owed now.
+	const pick = labelled.filter(m => m.strong).pop() ?? labelled.pop();
+	if (pick) return pick.pence;
+	// No label: only trust the amount when it is the only one in the email ("Your bill is £1050.20 this quarter").
+	const all = [...text.matchAll(new RegExp(AMOUNT, "g"))];
+	const pence = all.length === 1 && /\.\d{2}$/.test(all[0][1]) ? toPence(all[0][1]) : NaN;
 	return Number.isFinite(pence) && pence > 0 ? pence : null;
 }
 
