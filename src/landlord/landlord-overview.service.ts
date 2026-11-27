@@ -103,7 +103,7 @@ export class LandlordOverviewService {
 		// Older arrears still count as late even when they fell due last month.
 		const olderLate = await this.paymentModel
 			.find({ landlord, kind: { $ne: PaymentKind.HOLDING_DEPOSIT }, status: PaymentStatus.LATE, dueDate: { $lt: month.start } })
-			.select("amount tenancy dueDate remindersSent")
+			.select("amount tenancy dueDate status remindersSent")
 			.lean()
 			.exec();
 		rent.late += olderLate.length;

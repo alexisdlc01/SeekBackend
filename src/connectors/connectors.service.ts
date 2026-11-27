@@ -1134,9 +1134,11 @@ export class ConnectorsService {
 				user.role !== Role.LANDLORD_AGENCY &&
 				!found && !!target && toggles.readUtilityBills && classification.category === EmailCategory.BILLS && looksLikeBill(attachment.name, mail.subject);
 			// Sender must match a Seek landlord's address (From is not authenticated here, so a spoofed From could pass); housemates and *.ac.uk senders are excluded.
-			const reference = !found && toggles.addReferencesToProfile && user.role !== Role.LANDLORD_AGENCY
+			// A reply from the exact address Seek asked wins over a tenancy-document name ("AST Guarantor Agreement.pdf").
+			const canReference = toggles.addReferencesToProfile && user.role !== Role.LANDLORD_AGENCY;
+			const reference = canReference
 				? classification.contact?.role === "LANDLORD"
-					? referenceTypeFor(attachment.name, mail.subject)
+					? (!found ? referenceTypeFor(attachment.name, mail.subject) : null)
 					: this.askedReferenceType(connection, user, mail, attachment.mimeType)
 				: null;
 			if (!type && !isBill && !reference) continue;

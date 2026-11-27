@@ -110,6 +110,12 @@ describe("guarantor and reference requests", () => {
 		expect(passport.completed).toBe(1);
 		expect(withoutFiles(passport).sections[2].items[0].detail).toBeUndefined();
 	});
+
+	it("shows a re-sent request instead of an expired document of that type", () => {
+		const expired = { ...verified(DocumentType.GUARANTOR_AGREEMENT), status: DocumentStatus.EXPIRED };
+		const passport = buildPassport([expired], now, requested);
+		expect(item(passport, DocumentType.GUARANTOR_AGREEMENT)).toMatchObject({ status: DocumentStatus.PENDING, source: "request", detail: "Aisha Rahman" });
+	});
 });
 
 describe("document shares", () => {

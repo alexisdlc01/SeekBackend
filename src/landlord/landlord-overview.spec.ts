@@ -106,4 +106,19 @@ describe("LandlordOverviewService todo", () => {
 		const overview = await service.overview(new Types.ObjectId().toString(), now);
 		expect(overview.properties[0].arrears).toBe(62000);
 	});
+
+	it("counts a late payment from two months ago in the listing's arrears (the query selects status)", async () => {
+		const tenancy = { _id: new Types.ObjectId(), listing, tenants: [{}] };
+		const old = { amount: 62000, seekFee: 620, status: "LATE", kind: "RENT", tenancy: tenancy._id, dueDate: new Date("2026-09-01T00:00:00Z"), remindersSent: 0 };
+		const projected = (rows: Record<string, unknown>[]) => ({
+			select: (fields: string) => query(rows.map(row => Object.fromEntries(fields.split(" ").filter(f => f in row).map(f => [f, row[f]]))))
+		});
+		const paymentModel = { find: jest.fn((filter: { status?: string; dueDate?: { $lt?: Date } }) => (filter.status === "LATE" && filter.dueDate?.$lt ? projected([old]) : query([]))), countDocuments: async () => 0, distinct: () => query([]) };
+		const service = new LandlordOverviewService(
+			model([tenancy]) as never, model([listing]) as never, paymentModel as never, model() as never,
+			model() as never, model() as never, model() as never
+		);
+		const overview = await service.overview(new Types.ObjectId().toString(), now);
+		expect(overview.properties[0].arrears).toBe(62000);
+	});
 });

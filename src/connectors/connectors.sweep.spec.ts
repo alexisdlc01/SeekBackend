@@ -230,7 +230,7 @@ describe("ConnectorsService store files a referee's reply", () => {
 		role: "STUDENT",
 		referenceRequests: [{ type: "LANDLORD_REFERENCE", name: "Jo", email: "jo@oldlets.co.uk", requestedAt: new Date() }]
 	};
-	const reply = (from: string, senderAuthenticated: boolean) => ({
+	const reply = (from: string, senderAuthenticated: boolean, name = "maya.pdf") => ({
 		providerThreadId: "t",
 		providerMessageId: "m",
 		from,
@@ -239,9 +239,9 @@ describe("ConnectorsService store files a referee's reply", () => {
 		body: "Attached.",
 		receivedAt: new Date(),
 		senderAuthenticated,
-		attachments: [{ name: "maya.pdf", mimeType: "application/pdf", size: 10, load: async () => null }]
+		attachments: [{ name, mimeType: "application/pdf", size: 10, load: async () => null }]
 	});
-	const run = async (from: string, authenticated: boolean, added = true) => {
+	const run = async (from: string, authenticated: boolean, added = true, name = "maya.pdf", asked = student) => {
 		const gmail = conn(EmailProvider.GMAIL);
 		const { service, messageModel } = setup([gmail]);
 		Object.assign(messageModel, {
@@ -252,7 +252,7 @@ describe("ConnectorsService store files a referee's reply", () => {
 		jest.spyOn(service as any, "tenancyFor").mockResolvedValue(null);
 		jest.spyOn(service as any, "storeFile").mockResolvedValue({ url: "https://files/x.pdf", key: "x.pdf" });
 		const addReference = jest.spyOn(service as any, "addReference").mockResolvedValue(added);
-		const filed = await (service as any).store(gmail, student, reply(from, authenticated), { category: "OTHER", contact: null }, false);
+		const filed = await (service as any).store(gmail, asked, reply(from, authenticated, name), { category: "OTHER", contact: null }, false);
 		return { filed, addReference, messageModel };
 	};
 
@@ -304,6 +304,13 @@ describe("ConnectorsService store files a referee's reply", () => {
 		const { filed, addReference } = await run("Jo@OldLets.co.uk", true);
 		expect(filed).toBe(1);
 		expect(addReference).toHaveBeenCalledWith(student, "LANDLORD_REFERENCE", "maya.pdf", { url: "https://files/x.pdf", key: "x.pdf" });
+	});
+
+	it("files a tenancy-document-looking name as the reference when the asked guarantor sent it", async () => {
+		const guarantor = { ...student, referenceRequests: [{ type: "GUARANTOR_AGREEMENT", name: "Aisha", email: "aisha@example.com", requestedAt: new Date() }] };
+		const { filed, addReference } = await run("aisha@example.com", true, true, "AST Guarantor Agreement.pdf", guarantor);
+		expect(filed).toBe(1);
+		expect(addReference).toHaveBeenCalledWith(guarantor, "GUARANTOR_AGREEMENT", "AST Guarantor Agreement.pdf", { url: "https://files/x.pdf", key: "x.pdf" });
 	});
 
 	it("ignores the same address when SPF/DKIM did not pass", async () => {
