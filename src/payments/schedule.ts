@@ -20,6 +20,12 @@ export function feeFor(payment: { kind?: PaymentKind | string; status?: PaymentS
 	return computeFee(payment.amount);
 }
 
+/**
+ * Only Northern Ireland still has fixed-term tenancies. In England (Renters' Rights Act 2025), Scotland (private
+ * residential tenancy) and Wales (periodic occupation contract) every tenancy rolls on until ended by notice.
+ */
+export const hasFixedTerms = (nation?: Nation | null) => nation === Nation.NORTHERN_IRELAND;
+
 export const FREQUENCY_MONTHS: Record<PlanFrequency, number> = {
 	[PlanFrequency.MONTHLY]: 1,
 	[PlanFrequency.SIX_MONTHS]: 6,
@@ -94,7 +100,8 @@ export interface ScheduledInstalment {
 /**
  * Rent instalments for one tenant from `from` (inclusive) for `horizonMonths`.
  * Due dates follow the tenancy start date; each instalment covers
- * `frequency` months, shortened when the tenancy ends sooner.
+ * `frequency` months, shortened when the tenancy ends sooner. With `prorateEnd`
+ * (the tenancy really ends on endDate) the last one is also cut to the days before it.
  */
 export function buildSchedule(params: {
 	startDate: Date;
@@ -103,7 +110,9 @@ export function buildSchedule(params: {
 	frequency: PlanFrequency;
 	from: Date;
 	horizonMonths?: number;
+	prorateEnd?: boolean;
 }): ScheduledInstalment[] {
+	const prorateTo = params.prorateEnd ? params.endDate : null;
 	const period = FREQUENCY_MONTHS[params.frequency];
 	const horizonEnd = addMonths(params.from, params.horizonMonths ?? 12);
 	const limit = params.endDate && params.endDate < horizonEnd ? params.endDate : horizonEnd;
@@ -119,7 +128,7 @@ export function buildSchedule(params: {
 		const dueDate = addMonths(params.startDate, index);
 		const months = monthsBefore(params.startDate, index, next, params.endDate);
 		if (dueDate < limit && months > 0) {
-			instalments.push(instalment(dueDate, params.monthlyRent, months));
+			instalments.push(instalment(dueDate, params.monthlyRent, months, params.startDate, prorateTo));
 		}
 		index = next;
 	}
@@ -129,9 +138,10 @@ export function buildSchedule(params: {
 		if (dueDate >= limit) break;
 		const months = monthsBefore(params.startDate, index, index + period, params.endDate);
 		if (months === 0) break;
-		instalments.push(instalment(dueDate, params.monthlyRent, months));
+		instalments.push(instalment(dueDate, params.monthlyRent, months, params.startDate, prorateTo));
 	}
-	return instalments;
+	// An end date later in the day than a due date would prorate that row to nothing.
+	return instalments.filter(row => row.amount > 0);
 }
 
 function monthsBefore(
@@ -148,9 +158,27 @@ function monthsBefore(
 	return months;
 }
 
-function instalment(dueDate: Date, monthlyRent: number, months: number): ScheduledInstalment {
-	const amount = monthlyRent * months;
+function instalment(dueDate: Date, monthlyRent: number, months: number, startDate: Date, endDate?: Date | null): ScheduledInstalment {
+	const full = monthlyRent * months;
+	// endDate is exclusive: the days of the last period from it onwards aren't billed.
+	const amount = endDate ? full - earlyEndRefundAmount(full, dueDate, months, endDate, startDate) : full;
 	return { dueDate, amount, coversMonths: months, ...computeFee(amount) };
+}
+
+/** Daily pro-rata of the part of one rent period after the tenancy end. */
+export function earlyEndRefundAmount(amount: number, dueDate: Date, coversMonths: number, endDate: Date, tenancyStart: Date = dueDate): number {
+	const anchor = startOfUtcDay(tenancyStart);
+	const due = startOfUtcDay(dueDate);
+	const index = Math.max(0, (due.getUTCFullYear() - anchor.getUTCFullYear()) * 12 + due.getUTCMonth() - anchor.getUTCMonth());
+	const start = addMonths(anchor, index);
+	const end = startOfUtcDay(endDate);
+	const periodEnd = addMonths(anchor, index + Math.max(1, coversMonths));
+	if (end >= periodEnd) return 0;
+	if (end <= start) return amount;
+	const day = 24 * 60 * 60 * 1000;
+	const periodDays = Math.round((periodEnd.getTime() - start.getTime()) / day);
+	const unusedDays = Math.round((periodEnd.getTime() - end.getTime()) / day);
+	return Math.floor((amount * unusedDays) / periodDays);
 }
 
 /** Stripe's standard payout lands this many working days after the charge. */

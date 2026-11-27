@@ -4,7 +4,8 @@ import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 import { Reflector } from "@nestjs/core";
 import { Types } from "mongoose";
-import { applicationTenancyPeriod, depositReceivedDate, earliestNoticeEnd, earlyEndRefundAmount, londonCalendarDay, TenanciesService } from "./tenancies.service";
+import { applicationTenancyPeriod, depositReceivedDate, earliestNoticeEnd, londonCalendarDay, TenanciesService } from "./tenancies.service";
+import { earlyEndRefundAmount } from "../payments/schedule";
 import { InventoryStage, TenancyDocumentType, TenancyStatus } from "./tenancy.enums";
 import { ApplicationStage } from "../application/enums/application-stage.enum";
 import { Role } from "../auth/role.enum";
@@ -455,10 +456,11 @@ describe("TenanciesService create / accept", () => {
 			kind: "RENT", status: "PAID", provider: "simulated", providerRef: "sim_paid",
 			refundedAt: null, refundedAmount: 0
 		});
-		async function ending(payment: ReturnType<typeof paid>, endDate: string) {
+		// Rent defaults to an unprorated row's: amount over the months it covers.
+		async function ending(payment: ReturnType<typeof paid>, endDate: string, monthlyRent = payment.amount / payment.coversMonths) {
 			const ctx = setup();
 			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
-				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE, monthlyRent
 			} as any);
 			ctx.paymentModel.find.mockImplementation((filter: any) => lean(filter.status?.$nin ? [] : [payment]));
 			ctx.paymentModel.findOneAndUpdate.mockImplementation((_filter: any, update: any) => lean({ ...payment, ...update.$set }));
@@ -514,7 +516,7 @@ describe("TenanciesService create / accept", () => {
 			const payment = paid(62000, "2027-01-01");
 			const ctx = setup();
 			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
-				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE, monthlyRent: 62000
 			} as any);
 			ctx.paymentModel.find.mockImplementation((filter: any) => lean(filter.status?.$nin ? [] : [payment]));
 			ctx.paymentModel.findOneAndUpdate.mockReturnValue(lean(null));
@@ -704,6 +706,17 @@ describe("TenanciesService create / accept", () => {
 			expect(ctx.paymentModel.updateOne).toHaveBeenLastCalledWith(
 				{ _id: payment._id, refundedAt: null },
 				expect.objectContaining({ $set: expect.objectContaining({ refundedAmount: 52000 }) })
+			);
+		});
+
+		it("refunds a paid, already prorated last month only above the new end's share of the full rent", async () => {
+			// Fixed term to 15 June: June was billed 14 of 30 days (32434). The end moves to 10 June.
+			const payment = paid(32434, "2027-06-01");
+			const { paymentModel } = await ending(payment, "2027-06-10", 69500);
+			// Keeps 9 of 30 days of £695 (20850): refunds 32434 - 20850.
+			expect(paymentModel.updateOne).toHaveBeenLastCalledWith(
+				{ _id: payment._id, refundedAt: null },
+				expect.objectContaining({ $set: expect.objectContaining({ refundedAmount: 11584 }) })
 			);
 		});
 

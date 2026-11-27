@@ -22,7 +22,7 @@ import { RentScheduleService } from "../payments/rent-schedule.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { Payment } from "../payments/payment.schema";
 import { PaymentKind, PaymentStatus } from "../payments/payment.enums";
-import { addMonths, computeFee, startOfUtcDay } from "../payments/schedule";
+import { addMonths, computeFee, earlyEndRefundAmount, hasFixedTerms, startOfUtcDay } from "../payments/schedule";
 import { closeStripeCharge, refundPayment } from "../payments/refund";
 import { NotificationKind } from "../notifications/notification-kind.enum";
 import { notificationTarget, NotificationTargetKind } from "../notifications/links";
@@ -46,12 +46,6 @@ export function depositReceivedDate(value?: string, now: Date = new Date()): Dat
 	}
 	return date;
 }
-
-/**
- * Only Northern Ireland still has fixed-term tenancies. In England (Renters' Rights Act 2025), Scotland (private
- * residential tenancy) and Wales (periodic occupation contract) every tenancy rolls on until ended by notice.
- */
-export const hasFixedTerms = (nation?: Nation | null) => nation === Nation.NORTHERN_IRELAND;
 
 /** The first rent day (start date + whole months) on or after `from`. */
 export function nextRentDay(startDate: Date, from: Date) {
@@ -593,7 +587,10 @@ export class TenanciesService {
 			.lean()
 			.exec();
 		for (const payment of paidOrPending) {
-			const amount = earlyEndRefundAmount(payment.amount, new Date(payment.dueDate), payment.coversMonths ?? 1, end, tenancy.startDate);
+			// Refund what was paid above the new end's share of the full rent: the row may already be prorated to an earlier end.
+			const full = Math.max(0, tenancy.monthlyRent * (payment.coversMonths ?? 1) - (payment.holdingDepositCredit ?? 0));
+			const keep = full - earlyEndRefundAmount(full, new Date(payment.dueDate), payment.coversMonths ?? 1, end, tenancy.startDate);
+			const amount = Math.max(0, payment.amount - keep);
 			if (amount === 0) continue;
 			const claimed = await this.paymentModel
 				.findOneAndUpdate(
@@ -830,20 +827,4 @@ export function londonCalendarDay(value: Date = new Date()): Date {
 	}).formatToParts(value);
 	const part = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find(item => item.type === type)?.value);
 	return new Date(Date.UTC(part("year"), part("month") - 1, part("day")));
-}
-
-/** Daily pro-rata of the part of one rent period after the tenancy end. */
-export function earlyEndRefundAmount(amount: number, dueDate: Date, coversMonths: number, endDate: Date, tenancyStart: Date = dueDate): number {
-	const anchor = startOfUtcDay(tenancyStart);
-	const due = startOfUtcDay(dueDate);
-	const index = Math.max(0, (due.getUTCFullYear() - anchor.getUTCFullYear()) * 12 + due.getUTCMonth() - anchor.getUTCMonth());
-	const start = addMonths(anchor, index);
-	const end = startOfUtcDay(endDate);
-	const periodEnd = addMonths(anchor, index + Math.max(1, coversMonths));
-	if (end >= periodEnd) return 0;
-	if (end <= start) return amount;
-	const day = 24 * 60 * 60 * 1000;
-	const periodDays = Math.round((periodEnd.getTime() - start.getTime()) / day);
-	const unusedDays = Math.round((periodEnd.getTime() - end.getTime()) / day);
-	return Math.floor((amount * unusedDays) / periodDays);
 }
