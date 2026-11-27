@@ -27,6 +27,13 @@ function setup() {
 	const uploads = { deletePrivateObject: jest.fn().mockResolvedValue(undefined), deletePublicObject: jest.fn().mockResolvedValue(undefined) };
 	const listingModel = { updateMany: jest.fn().mockResolvedValue({}) };
 	const messageModel = { distinct: jest.fn().mockResolvedValue([]) };
+	const chatMessageModel = {
+		distinct: jest.fn().mockResolvedValue([]),
+		deleteMany: jest.fn().mockResolvedValue({}),
+		findOne: jest.fn((_filter: { conversation: string }): unknown => ({ sort: () => selectLean(null) }))
+	};
+	const conversationModel = { updateOne: jest.fn().mockResolvedValue({}) };
+	const applicationModel = { find: jest.fn((): unknown => selectLean([])) };
 	const contracts = {
 		referencedDocumentKeys: jest.fn().mockResolvedValue([]),
 		settleForDeletedTenant: jest.fn().mockResolvedValue(undefined)
@@ -44,11 +51,14 @@ function setup() {
 		uploads as any,
 		listingModel as any,
 		messageModel as any,
+		chatMessageModel as any,
+		conversationModel as any,
+		applicationModel as any,
 		{ get: (token: { name: string }) => (token.name === "ApplicationService" ? applications : contracts) } as any,
 		mail as any,
 		notifications as any
 	);
-	return { service, userModel, tenancyModel, paymentModel, shareModel, connectionModel, connectors, uploads, listingModel, messageModel, contracts, applications, mail, notifications };
+	return { service, userModel, tenancyModel, paymentModel, shareModel, connectionModel, connectors, uploads, listingModel, messageModel, chatMessageModel, conversationModel, applicationModel, contracts, applications, mail, notifications };
 }
 
 describe("AccountService team", () => {
@@ -321,6 +331,25 @@ describe("AccountService deleteAccount", () => {
 		userModel.findById.mockReturnValue(selectLean({ profilePicUrl: "https://lh3.googleusercontent.com/a/abc" }));
 		await service.deleteAccount(id);
 		expect(uploads.deletePublicObject).toHaveBeenCalledTimes(1);
+	});
+
+	it("erases the leaver's chat messages outside a tenancy, keeps a tenancy's chat, and repoints lastMessage", async () => {
+		const { service, chatMessageModel, conversationModel, applicationModel, tenancyModel } = setup();
+		const id = new Types.ObjectId();
+		const [leasedChat, rejectedChat, directChat] = [new Types.ObjectId(), new Types.ObjectId(), new Types.ObjectId()];
+		const [leasedApp, rejectedApp] = [new Types.ObjectId(), new Types.ObjectId()];
+		const remaining = new Types.ObjectId();
+		chatMessageModel.distinct.mockResolvedValue([leasedChat, rejectedChat, directChat]);
+		applicationModel.find.mockReturnValue(selectLean([{ _id: leasedApp, conversation: leasedChat }, { _id: rejectedApp, conversation: rejectedChat }]));
+		tenancyModel.distinct.mockImplementation(async (field: string) => (field === "application" ? [leasedApp] : []));
+		chatMessageModel.findOne.mockImplementation(({ conversation }: { conversation: string }) =>
+			({ sort: () => selectLean(conversation === rejectedChat.toString() ? { _id: remaining } : null) }));
+		await service.deleteAccount(id);
+		expect(chatMessageModel.distinct).toHaveBeenCalledWith("conversation", { sender: id });
+		expect(chatMessageModel.deleteMany).toHaveBeenCalledWith({ sender: id, conversation: { $in: [rejectedChat.toString(), directChat.toString()] } });
+		expect(conversationModel.updateOne).toHaveBeenCalledWith({ _id: rejectedChat.toString() }, { $set: { lastMessage: remaining } });
+		expect(conversationModel.updateOne).toHaveBeenCalledWith({ _id: directChat.toString() }, { $unset: { lastMessage: 1 } });
+		expect(conversationModel.updateOne).not.toHaveBeenCalledWith(expect.objectContaining({ _id: leasedChat.toString() }), expect.anything());
 	});
 
 	it("leaves the account untouched when erasing a file fails, so it can be retried", async () => {

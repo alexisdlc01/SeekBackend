@@ -21,6 +21,9 @@ import { ContractsService } from "../contracts/contracts.service";
 import { ApplicationService } from "../application/application.service";
 import { MailService } from "../auth/mail.service";
 import { EmailMessage } from "../inbox/email-message.schema";
+import { Message } from "../conversation/message.schema";
+import { Conversation } from "../conversation/converstaion.schema";
+import { Application } from "../application/application.schema";
 import { DocumentType, IDENTITY_DOCUMENT_TYPES } from "./types/document-type";
 import { NotificationsService } from "../notifications/notifications.service";
 import { NotificationKind } from "../notifications/notification-kind.enum";
@@ -54,6 +57,9 @@ export class AccountService {
 		private readonly uploads: UploadService,
 		@InjectModel(Listing.name) private readonly listingModel: Model<Listing>,
 		@InjectModel(EmailMessage.name) private readonly messageModel: Model<EmailMessage>,
+		@InjectModel(Message.name) private readonly chatMessageModel: Model<Message>,
+		@InjectModel(Conversation.name) private readonly conversationModel: Model<Conversation>,
+		@InjectModel(Application.name) private readonly applicationModel: Model<Application>,
 		// Looked up at call time: importing ContractsModule here would loop back through AuthModule to UsersModule.
 		private readonly moduleRef?: ModuleRef,
 		private readonly mail?: MailService,
@@ -303,6 +309,19 @@ export class AccountService {
 			{ landlord: userId, isDraft: false },
 			{ $set: { isVerified: false, moderationStatus: ModerationStatus.NEEDS_CHANGES, moderationReasons: ["This account was deleted."], lastUpdated: deletedAt } }
 		);
+		// Privacy policy: chat outside a tenancy is erased; a tenancy's conversation is kept 6 years. Chat has no uploaded files.
+		const chats = (await this.chatMessageModel.distinct("conversation", { sender: userId })).map(String);
+		if (chats.length) {
+			const applications = await this.applicationModel.find({ conversation: { $in: chats } }).select("_id conversation").lean().exec();
+			const leased = new Set((await this.tenancyModel.distinct("application", { application: { $in: applications.map(app => app._id) } })).map(String));
+			const kept = new Set(applications.filter(app => leased.has(String(app._id))).map(app => String(app.conversation)));
+			const erased = chats.filter(id => !kept.has(id));
+			await this.chatMessageModel.deleteMany({ sender: userId, conversation: { $in: erased } });
+			for (const conversation of erased) {
+				const latest = await this.chatMessageModel.findOne({ conversation }).sort({ createdAt: -1 }).select("_id").lean().exec();
+				await this.conversationModel.updateOne({ _id: conversation }, latest ? { $set: { lastMessage: latest._id } } : { $unset: { lastMessage: 1 } });
+			}
+		}
 		// Repair photos stay with the property's repair history (owner decision 2026-11-19); the student shows as "Deleted user".
 		const profile = await this.userModel.findById(userId).select("documents.key profilePicUrl").lean().exec();
 		const keys = [...new Set([
