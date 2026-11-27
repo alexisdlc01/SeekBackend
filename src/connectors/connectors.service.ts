@@ -140,6 +140,9 @@ function documentTitle(fileName: string) {
 	return base.charAt(0).toUpperCase() + base.slice(1);
 }
 
+/** A tenant's own paperwork (exemption certificate, Other): any sender may file it. Inventory stays the landlord's word. */
+const tenantPaperwork = (type: TenancyDocumentType) => TENANT_DOCUMENT_TYPES.has(type) && type !== TenancyDocumentType.INVENTORY;
+
 function folderFor(type: TenancyDocumentType) {
 	if (type === TenancyDocumentType.TENANCY_AGREEMENT) return "Contract";
 	if (type === TenancyDocumentType.DEPOSIT_CERTIFICATE) return "Deposit";
@@ -148,7 +151,9 @@ function folderFor(type: TenancyDocumentType) {
 
 /** "Your October statement" → that month, the most recent one not after the email. */
 function billPeriod(subject: string, receivedAt: Date): { start: Date; end: Date } | null {
-	const month = MONTHS.findIndex(name => new RegExp(`\\b${name}\\b`, "i").test(subject));
+	let month = MONTHS.findIndex(name => name !== "may" && new RegExp(`\\b${name}\\b`, "i").test(subject));
+	// "may" is also a verb: only a capitalised "May", and only when no other month is named.
+	if (month < 0 && /\bMay\b/.test(subject)) month = MONTHS.indexOf("may");
 	if (month < 0) return null;
 	let year = receivedAt.getUTCFullYear();
 	if (month > receivedAt.getUTCMonth()) year -= 1;
@@ -1118,7 +1123,7 @@ export class ConnectorsService {
 					? found
 					: null;
 			// Anyone can email "tenancy-agreement.pdf": only a proven landlord, team or deposit-scheme sender files it as the real thing.
-			if (type && target) {
+			if (type && target && !tenantPaperwork(type)) {
 				const senderTrusted = isContract
 					? (trustedContract ??= await this.trustedSender(connection, target.tenancy, mail.from, classification, this.senderAuthenticated(connection, mail), true))
 					: (trusted ??= await this.trustedSender(connection, target.tenancy, mail.from, classification, this.senderAuthenticated(connection, mail)));
@@ -1321,8 +1326,14 @@ export class ConnectorsService {
 		const attachment = email?.attachments?.[index];
 		if (!email || !attachment) throw new NotFoundException("Attachment not found.");
 		if (attachment.filedAs) return attachment;
-		if (!email.tenancy) throw new BadRequestException("Seek can't tell which home this email is about.");
-		const tenancy = (await this.tenancies.findForMember(email.tenancy.toString(), user)) as Tenancy & { _id: Types.ObjectId };
+		let tenancyId = email.tenancy;
+		// Mail stored before the tenancy existed has none; its Seek conversation still leads to it through the application.
+		if (!tenancyId && email.conversation) {
+			const application = await this.applicationModel.findOne({ conversation: email.conversation }).select("_id").lean().exec();
+			if (application) tenancyId = (await this.tenancyModel.findOne({ application: application._id }).select("_id").lean().exec())?._id ?? null;
+		}
+		if (!tenancyId) throw new BadRequestException("Seek can't tell which home this email is about.");
+		const tenancy = (await this.tenancies.findForMember(tenancyId.toString(), user)) as Tenancy & { _id: Types.ObjectId };
 		const connection = await this.ownedConnection(user, email.connection.toString());
 		if (connection.status !== ConnectionStatus.CONNECTED) throw new ServiceUnavailableException("Reconnect this mailbox to file this file.");
 
@@ -1353,7 +1364,7 @@ export class ConnectorsService {
 		// Same rule as store(): anyone can email "Re: tenancy agreement", so only a proven landlord, team or deposit-scheme sender files as the real thing.
 		const landlordMailbox = connection.user.toString() === tenancy.landlord.toString();
 		const trusted =
-			(TENANT_DOCUMENT_TYPES.has(found) && found !== TenancyDocumentType.INVENTORY) ||
+			tenantPaperwork(found) ||
 			// A tenant's SENT label proves only that the tenant sent the message; it never authenticates the landlord as its author.
 			(await this.trustedSender(
 				connection,
