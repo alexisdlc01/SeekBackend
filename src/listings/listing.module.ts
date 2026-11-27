@@ -1,3 +1,4 @@
+import { Conversation, ConversationSchema } from "../conversation/converstaion.schema";
 import { Module } from "@nestjs/common";
 import { MongooseModule } from "@nestjs/mongoose";
 import { Listing, ListingSchema } from "./listings.schema";
@@ -23,7 +24,8 @@ import { ListingModerationService } from "./listing-moderation.service";
 			},
 			{ name: User.name, schema: UserSchema },
 			{ name: Application.name, schema: ApplicationSchema },
-			{ name: Tenancy.name, schema: TenancySchema }
+			{ name: Tenancy.name, schema: TenancySchema },
+			{ name: Conversation.name, schema: ConversationSchema }
 		]),
 		SharedModule,
 		AuthModule,

@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { DocumentType } from "./types/document-type";
 import UsersService from "./users.service";
+import { renameProperty } from "../conversation/application-chat-name";
 
 describe("UsersService", () => {
 	let service: UsersService;
@@ -140,6 +141,40 @@ describe("UsersService", () => {
 		const [, update] = userModel.findByIdAndUpdate.mock.calls[0];
 		expect(update.$set).not.toHaveProperty("email");
 		expect(update.$unset).toBeUndefined();
+	});
+
+	it("renames the student's application chats when their name changes, and only those", async () => {
+		const userId = "507f1f77bcf86cd799439011";
+		const model = {
+			findById: () => ({ lean: () => ({ exec: async () => ({ name: "Jo.Smith" }) }) }),
+			findByIdAndUpdate: jest.fn().mockResolvedValue({ name: "Jo Brown", toObject: () => ({ _id: userId, name: "Jo Brown" }) })
+		};
+		const updateMany = jest.fn(() => ({ exec: async () => ({ modifiedCount: 1 }) }));
+		const users = new UsersService(model as never, {} as never, {} as never, undefined, { updateMany } as never);
+
+		await users.updateProfile(userId, { name: " Jo Brown " });
+
+		const [filter, update] = updateMany.mock.calls[0] as unknown as [{ name: { $regex: string }; createdBy: unknown }, unknown];
+		expect(String(filter.createdBy)).toBe(userId);
+		// Escaped: "JoXSmith's application to …" must not match.
+		const pattern = new RegExp(filter.name.$regex);
+		expect(pattern.test("Jo.Smith's application to Flat 2")).toBe(true);
+		expect(pattern.test("JoXSmith's application to Flat 2")).toBe(false);
+		expect(update).toEqual([{ $set: { name: { $concat: [
+			{ $literal: "Jo Brown's application to " },
+			{ $substrCP: ["$name", "Jo.Smith's application to ".length, { $strLenCP: "$name" }] }
+		] } } }]);
+
+		// Same name: no chat is touched.
+		updateMany.mockClear();
+		model.findByIdAndUpdate.mockResolvedValue({ name: "Jo.Smith", toObject: () => ({ _id: userId, name: "Jo.Smith" }) });
+		await users.updateProfile(userId, { name: "Jo.Smith" });
+		expect(updateMany).not.toHaveBeenCalled();
+
+		// The listing side matches the escaped old title at the end only.
+		const [byTitle] = renameProperty("Flat (2)", "Flat 3");
+		expect(new RegExp(byTitle.name.$regex).test("Jo's application to Flat (2)")).toBe(true);
+		expect(new RegExp(byTitle.name.$regex).test("Jo's application to Flat (2) annex")).toBe(false);
 	});
 
 	describe("addDocument", () => {

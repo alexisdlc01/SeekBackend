@@ -160,13 +160,14 @@ export async function refundPayment(
 export async function notifyHoldingRefund(
 	notifications: NotificationsService,
 	paymentModel: Model<Payment>,
-	payment: Pick<Payment, "kind" | "tenant" | "landlord" | "amount"> & { _id: Types.ObjectId },
+	payment: Pick<Payment, "kind" | "tenant" | "landlord" | "amount"> & Partial<Pick<Payment, "refundAmount">> & { _id: Types.ObjectId },
 	accepted: boolean
 ) {
 	if (payment.kind !== PaymentKind.HOLDING_DEPOSIT) return;
 	const failed = !accepted && (await paymentModel.exists({ _id: payment._id, refundFailed: true })) !== null;
 	if (!accepted && !failed) return;
-	const amount = `£${(payment.amount / 100).toFixed(2)}`;
+	// A partial refund (early tenancy end surplus) names what is actually refunded.
+	const amount = `£${((payment.refundAmount || payment.amount) / 100).toFixed(2)}`;
 	const key = `holding-refund-${failed ? "failed" : "started"}:${payment._id.toString()}`;
 	await notifications.notify({
 		user: payment.tenant,

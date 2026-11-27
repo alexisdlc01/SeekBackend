@@ -7,7 +7,7 @@ import {
 	ServiceUnavailableException
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { FilterQuery, Model, UpdateQuery } from "mongoose";
+import { FilterQuery, Model, Types, UpdateQuery } from "mongoose";
 import { User } from "./users.schema";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { hash } from "bcryptjs";
@@ -25,6 +25,8 @@ import { MailService } from "../auth/mail.service";
 import { RequestReferenceDto } from "./dto/passport.dto";
 import { PendingDocumentDto } from "./dto/pending-document.dto";
 import { UploadService } from "../upload/upload.service";
+import { Conversation } from "../conversation/converstaion.schema";
+import { renameStudent } from "../conversation/application-chat-name";
 
 const REFERENCE_ASK = "Could you write a short reference about them as a tenant (dates, whether rent was paid on time, how they looked after the property)? Please attach it to your reply as a PDF.";
 
@@ -48,8 +50,22 @@ class UsersService {
 		@InjectModel(User.name) private readonly userModel: Model<User>,
 		private readonly userRepo: UsersRepository,
 		private readonly mailService: MailService,
-		private readonly uploads?: UploadService
+		private readonly uploads?: UploadService,
+		@InjectModel(Conversation.name) private readonly conversationModel?: Model<Conversation>
 	) { }
+
+	/** The stored name before a rename, so the student's application chats can follow it. */
+	private async nameBefore(userId: string, name: string | undefined) {
+		if (name === undefined || !this.conversationModel) return null;
+		return (await this.userModel.findById(userId, { name: 1 }).lean().exec())?.name ?? null;
+	}
+
+	/** Application chats are named after the student who opened them (ApplicationService.create). */
+	private async renameApplicationChats(userId: string, from: string | null, to: string) {
+		if (!this.conversationModel || !from || from === to) return;
+		const [filter, update] = renameStudent(from, to);
+		await this.conversationModel.updateMany({ ...filter, createdBy: new Types.ObjectId(userId) }, update).exec();
+	}
 
 	private readonly logger = new Logger(UsersService.name);
 
@@ -137,6 +153,7 @@ class UsersService {
 	}
 
 	async setUsername(newName: string, user: User) {
+		const before = await this.nameBefore(String(user._id), newName);
 		const updated = await this.userModel.findByIdAndUpdate(
 			user._id,
 			{ $set: { name: newName } },
@@ -146,6 +163,7 @@ class UsersService {
 		if (!updated) {
 			throw new NotFoundException("User not found.");
 		}
+		await this.renameApplicationChats(String(user._id), before, updated.name);
 
 		return plainToInstance(UserDto, updated.toObject(), {
 			excludeExtraneousValues: true
@@ -235,6 +253,7 @@ class UsersService {
 		if (Object.keys(set).length > 0) update.$set = set;
 		if (Object.keys(unset).length > 0) update.$unset = unset;
 
+		const before = await this.nameBefore(userId, set.name as string | undefined);
 		try {
 			const updated = await this.userModel.findByIdAndUpdate(userId, update, {
 				new: true,
@@ -245,6 +264,7 @@ class UsersService {
 			if (!updated) {
 				throw new NotFoundException("User not found.");
 			}
+			await this.renameApplicationChats(userId, before, updated.name);
 
 			return plainToInstance(UserDto, updated.toObject(), {
 				excludeExtraneousValues: true
