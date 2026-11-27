@@ -1523,6 +1523,14 @@ export class ConnectorsService {
 			} catch (error) {
 				if (error instanceof ServiceUnavailableException) throw error;
 				this.logger.warn(`Sending via ${connection.provider} failed: ${(error as Error).message}`);
+				if (error instanceof ProviderError && (error.status === 400 || error.status === 401)) {
+					// Revoked token or refused login: same state as a failed sync, so the UI asks to reconnect.
+					await this.connectionModel.updateOne(
+						{ _id: connection._id, status: { $ne: ConnectionStatus.DISCONNECTED } },
+						{ $set: { status: ConnectionStatus.ERROR, lastError: `Could not send through ${PROVIDER_LABELS[connection.provider]}. Reconnect the mailbox.`, retryAt: null } }
+					);
+					throw new ServiceUnavailableException("Reconnect this mailbox to reply by email.");
+				}
 				throw new BadGatewayException(`Could not send through ${PROVIDER_LABELS[connection.provider]}. Try again.`);
 			}
 		}

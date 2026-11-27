@@ -248,7 +248,7 @@ export class InboxService {
 			const listing = listings.find(l => l._id.toString() === app.listing?.toString());
 			const title = listing?.propertyTitle || listing?.streetAddress || "the property";
 			const tenancy = tenancies.find(t => t.application?.toString() === app._id.toString());
-			const active = tenancy?.status === TenancyStatus.ACTIVE;
+			const active = tenancy?.status === TenancyStatus.ACTIVE || tenancy?.status === TenancyStatus.ENDED;
 			const tenancyId = tenancy?._id.toString() ?? null;
 			const household = (app.applicants ?? []).filter(id => id.toString() !== userId);
 

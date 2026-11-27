@@ -185,6 +185,17 @@ describe("ConnectorsService reply during a disconnect", () => {
 	});
 });
 
+describe("ConnectorsService sendReply provider failure", () => {
+	it.each([400, 401])("marks the mailbox ERROR and asks to reconnect on a provider %i", async status => {
+		const gmail = conn(EmailProvider.GMAIL);
+		const { service, connectionModel } = setup([gmail]);
+		(service as any).accessToken = jest.fn().mockRejectedValue(new ProviderError("invalid_grant", status));
+		const replyTo = { connection: gmail._id, from: "l@x.co", to: [], subject: "Hi", providerThreadId: "t", providerMessageId: "m" } as any;
+		await expect(service.sendReply({ _id: owner, name: "Maya" } as any, replyTo, "Hi")).rejects.toBeInstanceOf(ServiceUnavailableException);
+		expect((connectionModel.updateOne.mock.calls[0] as any)[1].$set).toMatchObject({ status: ConnectionStatus.ERROR, retryAt: null });
+	});
+});
+
 describe("ConnectorsService disconnect", () => {
 	it("clears lastSyncAt so a reconnect re-imports the history it deleted", async () => {
 		const imap = { ...conn(EmailProvider.IMAP), lastSyncAt: new Date("2026-11-10T00:00:00Z") };

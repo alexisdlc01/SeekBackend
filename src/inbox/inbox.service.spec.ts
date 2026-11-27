@@ -61,3 +61,21 @@ describe("InboxService.getThread (seek thread)", () => {
 		expect(notifications.markReadByKey).toHaveBeenCalledWith(userId.toString(), `message:${conversationId}`);
 	});
 });
+
+describe("InboxService.seekMeta", () => {
+	it.each([
+		["ENDED", "Tenants · Seek", "Landlord · Seek"],
+		["PENDING_ACCEPTANCE", "Applicant · Seek", "Seek group"]
+	])("labels a %s tenancy thread correctly", async (status, landlordLabel, studentLabel) => {
+		const landlord = new Types.ObjectId();
+		const student = new Types.ObjectId();
+		const conversation = new Types.ObjectId();
+		const app = { _id: new Types.ObjectId(), conversation, listing: new Types.ObjectId(), landlord, owner: student, applicants: [student] };
+		const tenancy = { _id: new Types.ObjectId(), application: app._id, tenants: [student], landlord, status };
+		const find = (value: unknown) => jest.fn(() => chain(value));
+		const service = new InboxService({} as any, {} as any, { find: find([app]) } as any, { find: find([tenancy]) } as any, { find: find([]) } as any, { find: find([]) } as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+		const meta = (viewer: object) => (service as any).seekMeta(viewer, [conversation]).then((m: Map<string, any>) => m.get(conversation.toString()));
+		expect((await meta({ _id: landlord, role: "LANDLORD_AGENCY" })).label).toBe(landlordLabel);
+		expect((await meta({ _id: student, role: "STUDENT" })).label).toBe(studentLabel);
+	});
+});
