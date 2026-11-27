@@ -568,10 +568,22 @@ export class TenanciesService {
 			})
 			.lean()
 			.exec();
+		// Holding deposit credit above the rent still owed, per tenant: it goes back on their holding deposit row.
+		const surplus = new Map<string, { tenant: Types.ObjectId; amount: number }>();
+		// Prorate the row's full rent, not its stored amount (an earlier shortening may have reduced it already),
+		// then take the holding deposit credit off what is owed: the credit itself is not prorated.
+		const keepOf = (payment: Payment) => {
+			const full = tenancy.monthlyRent * (payment.coversMonths ?? 1);
+			const owed = full - earlyEndRefundAmount(full, new Date(payment.dueDate), payment.coversMonths ?? 1, end, tenancy.startDate);
+			const credit = payment.holdingDepositCredit ?? 0;
+			if (credit > owed && payment.tenant) {
+				const key = payment.tenant.toString();
+				surplus.set(key, { tenant: payment.tenant, amount: (surplus.get(key)?.amount ?? 0) + credit - owed });
+			}
+			return Math.max(0, owed - credit);
+		};
 		for (const payment of unpaidSpanning) {
-			// Prorate the row's full rent, not its stored amount: an earlier shortening may have reduced it already.
-			const full = Math.max(0, tenancy.monthlyRent * (payment.coversMonths ?? 1) - (payment.holdingDepositCredit ?? 0));
-			const amount = full - earlyEndRefundAmount(full, new Date(payment.dueDate), payment.coversMonths ?? 1, end, tenancy.startDate);
+			const amount = keepOf(payment);
 			// Only ever lowers what is owed.
 			if (amount >= payment.amount) continue;
 			const repriced = await this.paymentModel.updateOne(
@@ -588,9 +600,7 @@ export class TenanciesService {
 			.exec();
 		for (const payment of paidOrPending) {
 			// Refund what was paid above the new end's share of the full rent: the row may already be prorated to an earlier end.
-			const full = Math.max(0, tenancy.monthlyRent * (payment.coversMonths ?? 1) - (payment.holdingDepositCredit ?? 0));
-			const keep = full - earlyEndRefundAmount(full, new Date(payment.dueDate), payment.coversMonths ?? 1, end, tenancy.startDate);
-			const amount = Math.max(0, payment.amount - keep);
+			const amount = Math.max(0, payment.amount - keepOf(payment));
 			if (amount === 0) continue;
 			const claimed = await this.paymentModel
 				.findOneAndUpdate(
@@ -630,6 +640,31 @@ export class TenanciesService {
 			if (raised?.status === PaymentStatus.PAID) {
 				await refundPayment(this.paymentModel, raised, process.env.STRIPE_SECRET_KEY, raised.refundAmount);
 			}
+		}
+
+		if (!tenancy.application) return;
+		for (const { tenant, amount } of surplus.values()) {
+			// shortcut: a later, earlier end does not raise a surplus already flagged; refund the difference by hand.
+			const flagged = await this.paymentModel
+				.findOneAndUpdate(
+					{
+						application: tenancy.application,
+						tenant,
+						kind: PaymentKind.HOLDING_DEPOSIT,
+						status: PaymentStatus.PAID,
+						refundedAt: null,
+						refundDue: { $ne: true },
+						autoRefund: { $ne: true },
+						refundAmount: { $in: [0, null] },
+						refundedAmount: { $in: [0, null] },
+						refundRef: null
+					},
+					{ $set: { refundDue: true, autoRefund: true, refundAmount: amount } },
+					{ new: true }
+				)
+				.lean()
+				.exec();
+			if (flagged) await refundPayment(this.paymentModel, flagged, process.env.STRIPE_SECRET_KEY, flagged.refundAmount);
 		}
 	}
 

@@ -14,6 +14,8 @@ import { Application } from "../application/application.schema";
 import { ApplicationStage } from "../application/enums/application-stage.enum";
 import { endedTenancyApplications, Tenancy } from "../tenancies/tenancy.schema";
 import { Model, Types } from "mongoose";
+import { Conversation } from "../conversation/converstaion.schema";
+import { renameProperty } from "../conversation/application-chat-name";
 import { CreateListingDto } from "./dto/create-listing.dto";
 import { User } from "../users/users.schema";
 import { ListingsGateway } from "./listings.gateway";
@@ -90,7 +92,9 @@ export class ListingsService {
 		private readonly applicationModel: Model<Application>,
 		@InjectModel(Tenancy.name)
 		private readonly tenancyModel: Model<Tenancy>,
-		private readonly moduleRef: ModuleRef
+		private readonly moduleRef: ModuleRef,
+		@InjectModel(Conversation.name)
+		private readonly conversationModel?: Model<Conversation>
 	) {}
 
 	/** Places left per viewing slot: capacity minus open households already booked at that time. */
@@ -167,12 +171,14 @@ export class ListingsService {
 		}
 		// By value, not key: a DTO instance carries every declared field, unset ones as undefined.
 		const reviewed = REVIEWED_FIELDS.filter(key => data[key] !== undefined);
+		let titleBefore: string | undefined;
 		if (reviewed.length > 0) {
 			const current = await this.listingModel
 				.findOne({ _id: new Types.ObjectId(listingId), landlord: new Types.ObjectId(landlord._id) })
 				.select(["isDraft", "streetAddress", "cityTown", "postcodeZIP", "country", ...reviewed].join(" "))
 				.lean()
 				.exec();
+			titleBefore = current?.propertyTitle;
 			// Stored dates come back as Date: compare by time, so resending the same date is not a change.
 			const changed = reviewed.filter(key => {
 				const stored = (current as Record<string, unknown> | null)?.[key];
@@ -259,6 +265,12 @@ export class ListingsService {
 		}
 		if (!listing) {
 			throw new NotFoundException("Listing not found");
+		}
+		// Application chats are named after the property (ApplicationService.create).
+		if (this.conversationModel && titleBefore && listing.propertyTitle && titleBefore !== listing.propertyTitle) {
+			const conversations = await this.applicationModel.distinct("conversation", { listing: listing._id }).exec();
+			const [filter, change] = renameProperty(titleBefore, listing.propertyTitle);
+			await this.conversationModel.updateMany({ ...filter, _id: { $in: conversations } }, change).exec();
 		}
 		return listing;
 	}

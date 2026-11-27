@@ -720,6 +720,54 @@ describe("TenanciesService create / accept", () => {
 			);
 		});
 
+		it("refunds a paid credited row without prorating the holding deposit credit", async () => {
+			// £1000 rent, £230 holding deposit credit, £770 paid; ends halfway through April (15 of 30 days used).
+			const payment = { ...paid(77000, "2027-04-01"), holdingDepositCredit: 23000 };
+			const { paymentModel } = await ending(payment, "2027-04-16", 100000);
+			// Owes £500 for the days used, £230 of it already covered: refunds 770 - 270.
+			expect(paymentModel.updateOne).toHaveBeenLastCalledWith(
+				{ _id: payment._id, refundedAt: null },
+				expect.objectContaining({ $set: expect.objectContaining({ refundedAmount: 50000 }) })
+			);
+		});
+
+		it("reprices an unpaid credited row to the rent owed less the whole credit", async () => {
+			const payment = { ...paid(77000, "2027-04-01"), status: "SCHEDULED", holdingDepositCredit: 23000 };
+			const ctx = setup();
+			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
+				_id: tenancyId, landlord: landlordId, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE, monthlyRent: 100000
+			} as any);
+			ctx.paymentModel.find.mockImplementation((filter: any) => lean(filter.status?.$nin && !filter.providerRef ? [payment] : []));
+
+			await ctx.service.endTenancy(tenancyId.toString(), new Date("2027-04-16"), landlord);
+
+			expect(ctx.paymentModel.updateOne).toHaveBeenCalledWith(
+				{ _id: payment._id, status: { $nin: ["PAID", "PENDING"] }, amount: 77000 },
+				{ $set: { amount: 27000, seekFee: 270, payout: 26730 } }
+			);
+		});
+
+		it("returns the credit above the rent owed on the tenant's holding deposit", async () => {
+			// Ends on 4 April: owes 3 of 30 days (£100) against a £230 credit, so the £770 paid and £130 of the deposit go back.
+			const tenant = new Types.ObjectId();
+			const application = new Types.ObjectId();
+			const payment = { ...paid(77000, "2027-04-01"), tenant, holdingDepositCredit: 23000 };
+			const ctx = setup();
+			jest.spyOn(ctx.service, "findForLandlord").mockResolvedValue({
+				_id: tenancyId, landlord: landlordId, application, startDate: new Date("2027-01-01"), status: TenancyStatus.ACTIVE, monthlyRent: 100000
+			} as any);
+			ctx.paymentModel.find.mockImplementation((filter: any) => lean(filter.status?.$nin ? [] : [payment]));
+			ctx.paymentModel.findOneAndUpdate.mockImplementation((_filter: any, update: any) => lean({ ...payment, ...update.$set }));
+
+			await ctx.service.endTenancy(tenancyId.toString(), new Date("2027-04-04"), landlord);
+
+			expect(ctx.paymentModel.findOneAndUpdate.mock.calls[0][1]).toEqual({ $set: { refundDue: true, autoRefund: true, refundAmount: 77000 } });
+			expect(ctx.paymentModel.findOneAndUpdate.mock.calls[1][0]).toMatchObject({
+				application, tenant, kind: "HOLDING_DEPOSIT", status: PaymentStatus.PAID, refundedAt: null, refundDue: { $ne: true }
+			});
+			expect(ctx.paymentModel.findOneAndUpdate.mock.calls[1][1]).toEqual({ $set: { refundDue: true, autoRefund: true, refundAmount: 13000 } });
+		});
+
 		it("uses the tenancy anchor for a short-month due date", () => {
 			expect(earlyEndRefundAmount(
 				31000,
