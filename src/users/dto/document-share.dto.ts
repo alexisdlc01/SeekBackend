@@ -44,7 +44,7 @@ export class DocumentShareDto {
 	@ApiProperty({ type: String, format: "date-time", nullable: true })
 	revokedAt: Date | null;
 
-	@ApiProperty({ enum: ["system", "student"], nullable: true, description: "Who stopped the share; only a student's own stop can be reopened." })
+	@ApiProperty({ enum: ["system", "student"], nullable: true, description: "Who stopped the share; a student's own stop (or an expired, never-revoked share) can be reopened." })
 	revokedBy: "system" | "student" | null;
 
 	@ApiProperty({ description: "Not revoked and not yet expired." })
