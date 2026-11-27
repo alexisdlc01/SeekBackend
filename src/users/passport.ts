@@ -228,7 +228,9 @@ export function buildPassport(
 			}
 
 			// No document yet but Seek emailed someone for it: show it as pending.
-			const request = best || byEmail
+			// An expired or rejected document does not hide a re-sent request.
+			const live = best && best.status !== DocumentStatus.EXPIRED && best.status !== DocumentStatus.REJECTED;
+			const request = live || byEmail
 				? undefined
 				: student?.referenceRequests?.find(item => types.includes(item.type));
 			if (request) {
