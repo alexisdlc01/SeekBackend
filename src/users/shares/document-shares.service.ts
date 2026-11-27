@@ -26,6 +26,11 @@ export function isShareActive(
 	return !share.revokedAt && new Date(share.expiresAt).getTime() > now.getTime();
 }
 
+/** The student may share again: they stopped it, or its window lapsed without anyone revoking it. Mirrors reopen()'s filter. */
+function isReopenable(share: Pick<DocumentShare, "expiresAt" | "revokedAt" | "revokedBy">, now: Date): boolean {
+	return share.revokedBy === "student" || (!share.revokedAt && !share.revokedBy && new Date(share.expiresAt).getTime() <= now.getTime());
+}
+
 /** Still open for this student: not rejected or withdrawn, and they are still an applicant. */
 function openApplicationFilter(owner: Types.ObjectId) {
 	return { applicants: owner, stage: { $nin: [ApplicationStage.REJECTED, ApplicationStage.WITHDRAWN] } };
@@ -132,12 +137,12 @@ export class DocumentSharesService {
 			.sort({ expiresAt: -1 })
 			.lean()
 			.exec();
-		// A stop on an application that has since closed can never be shared again (reopen() is 409): hide it.
-		const stopped = shares.filter(share => share.revokedBy === "student" && share.application).map(share => share.application);
+		// A stop or lapse on an application that has since closed can never be shared again (reopen() is 409): hide it.
+		const stopped = shares.filter(share => isReopenable(share, now) && share.application).map(share => share.application);
 		const open = stopped.length
 			? new Set((await this.applicationModel.distinct("_id", { _id: { $in: stopped }, ...openApplicationFilter(new Types.ObjectId(ownerId)) })).map(String))
 			: new Set<string>();
-		return shares.filter(share => share.revokedBy !== "student" || !share.application || open.has(String(share.application))).map(share => ({
+		return shares.filter(share => !isReopenable(share, now) || !share.application || open.has(String(share.application))).map(share => ({
 			_id: share._id.toString(),
 			viewer: share.viewer as unknown as ShareView["viewer"],
 			listing: (share.listing ?? null) as unknown as ShareView["listing"],
@@ -150,9 +155,13 @@ export class DocumentSharesService {
 		}));
 	}
 
-	/** The student undoes their own "Stop sharing". A share Seek closed (application over) never reopens here. */
+	/** The student undoes their own "Stop sharing" or renews a lapsed 14-day window. A share Seek closed (application over) never reopens here. */
 	async reopen(ownerId: string, shareId: string, now: Date = new Date()): Promise<ShareView> {
-		const filter = { _id: new Types.ObjectId(shareId), owner: new Types.ObjectId(ownerId), revokedBy: "student" as const };
+		const filter = {
+			_id: new Types.ObjectId(shareId),
+			owner: new Types.ObjectId(ownerId),
+			$or: [{ revokedBy: "student" as const }, { revokedAt: null, revokedBy: null, expiresAt: { $lte: now } }]
+		};
 		const share = await this.shareModel.findOne(filter).lean().exec();
 		if (!share) throw new NotFoundException("Share not found");
 		// Closed: rejected, withdrawn, deleted, or the student has left the household.

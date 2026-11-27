@@ -72,9 +72,15 @@ describe("DocumentSharesService.reopen", () => {
 
 	function build(share: Record<string, unknown> | null, applicationOpen = true) {
 		const shareModel: any = {
-			// The reopen filter carries owner + revokedBy "student": a row matching neither is "not found".
-			findOne: jest.fn((filter: { owner: Types.ObjectId; revokedBy: string }) =>
-				lean(share && String(share.owner) === String(filter.owner) && share.revokedBy === filter.revokedBy ? share : null)
+			// The reopen filter carries owner + ($or: student's stop | expired, never revoked): a row matching neither is "not found".
+			findOne: jest.fn((filter: { owner: Types.ObjectId; $or: { revokedBy?: string; expiresAt?: { $lte: Date } }[] }) =>
+				lean(
+					share &&
+						String(share.owner) === String(filter.owner) &&
+						filter.$or.some(c => (c.revokedBy ? share.revokedBy === c.revokedBy : !share.revokedAt && !share.revokedBy && (share.expiresAt as Date) <= c.expiresAt!.$lte))
+						? share
+						: null
+				)
 			),
 			updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }),
 			find: jest.fn(() => {
@@ -94,11 +100,34 @@ describe("DocumentSharesService.reopen", () => {
 		const view = await service.reopen(owner.toString(), share._id.toString(), now);
 		expect(applicationModel.exists.mock.calls[0][0]).toMatchObject({ _id: share.application, applicants: owner, stage: { $nin: ["REJECTED", "WITHDRAWN"] } });
 		const [filter, update] = shareModel.updateOne.mock.calls[0];
-		expect(filter).toEqual({ _id: share._id, owner, revokedBy: "student" });
+		expect(filter).toEqual({ _id: share._id, owner, $or: [{ revokedBy: "student" }, { revokedAt: null, revokedBy: null, expiresAt: { $lte: now } }] });
 		expect(update.$set).toMatchObject({ revokedAt: null, revokedBy: null });
 		expect(update.$set.expiresAt.getTime() - now.getTime()).toBe(14 * 24 * 3_600_000);
 		expect(userModel.updateMany).toHaveBeenCalledTimes(1);
 		expect(view).toMatchObject({ _id: share._id.toString(), revokedAt: null, revokedBy: null, active: true });
+	});
+
+	it("renews a share whose 14-day window lapsed without anyone revoking it", async () => {
+		const owner = new Types.ObjectId();
+		const share = { _id: new Types.ObjectId(), owner, viewer: new Types.ObjectId(), application: new Types.ObjectId(), revokedAt: null, revokedBy: null, expiresAt: new Date("2026-11-10") };
+		const { service, shareModel, userModel } = build(share);
+		const view = await service.reopen(owner.toString(), share._id.toString(), now);
+		const [, update] = shareModel.updateOne.mock.calls[0];
+		expect(update.$set).toMatchObject({ revokedAt: null, revokedBy: null });
+		expect(update.$set.expiresAt.getTime() - now.getTime()).toBe(14 * 24 * 3_600_000);
+		expect(userModel.updateMany).toHaveBeenCalledTimes(1);
+		expect(view).toMatchObject({ _id: share._id.toString(), active: true });
+	});
+
+	it("is 404 for a share that is still live, and for an expired share Seek closed (system)", async () => {
+		const owner = new Types.ObjectId();
+		const live = { _id: new Types.ObjectId(), owner, revokedAt: null, revokedBy: null, expiresAt: new Date("2026-11-30") };
+		const lapsedSystem = { _id: new Types.ObjectId(), owner, revokedAt: new Date("2026-11-01"), revokedBy: "system", expiresAt: new Date("2026-11-10") };
+		for (const share of [live, lapsedSystem]) {
+			const { service, shareModel } = build(share);
+			await expect(service.reopen(owner.toString(), share._id.toString(), now)).rejects.toBeInstanceOf(NotFoundException);
+			expect(shareModel.updateOne).not.toHaveBeenCalled();
+		}
 	});
 
 	it("is 404 for a share Seek closed (system) and for another student's share", async () => {
@@ -133,5 +162,19 @@ describe("DocumentSharesService.listForOwner", () => {
 		const list = await service.listForOwner(owner.toString(), now);
 		expect(applicationModel.distinct.mock.calls[0][1]).toMatchObject({ _id: { $in: [openApp, closedApp] }, applicants: owner, stage: { $nin: ["REJECTED", "WITHDRAWN"] } });
 		expect(list.map(item => item._id)).toEqual([shares[0], shares[2], shares[3]].map(share => share._id.toString()));
+	});
+
+	it("hides an expired share of a closed application, keeps an expired share of an open one", async () => {
+		const now = new Date("2026-11-22T10:00:00Z");
+		const owner = new Types.ObjectId();
+		const [openApp, closedApp] = [new Types.ObjectId(), new Types.ObjectId()];
+		const expired = (application: Types.ObjectId) => ({ _id: new Types.ObjectId(), owner, viewer: new Types.ObjectId(), application, revokedBy: null, revokedAt: null, expiresAt: new Date("2026-11-10") });
+		const shares = [expired(openApp), expired(closedApp)];
+		const query: any = { populate: () => query, sort: () => query, lean: () => ({ exec: () => Promise.resolve(shares) }) };
+		const applicationModel = { distinct: jest.fn().mockResolvedValue([openApp]) };
+		const service = new DocumentSharesService({ find: () => query } as never, {} as never, applicationModel as never);
+		const list = await service.listForOwner(owner.toString(), now);
+		expect(list.map(item => item._id)).toEqual([shares[0]._id.toString()]);
+		expect(list[0]).toMatchObject({ active: false, revokedBy: null });
 	});
 });

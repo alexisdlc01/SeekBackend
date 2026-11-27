@@ -153,7 +153,7 @@ export const ApiRevokeShareDocs = () =>
 
 export const ApiReopenShareDocs = () =>
 	applyDecorators(
-		ApiOperation({ summary: "Share the student's documents again with a landlord they stopped, for a fresh window." }),
+		ApiOperation({ summary: "Share the student's documents again with a landlord they stopped, or whose window expired, for a fresh window." }),
 		ApiResponse({ status: 200, type: DocumentShareDto }),
 		ApiResponse({ status: 401, type: ErrorDto }),
 		ApiResponse({ status: 404, type: ErrorDto }),
