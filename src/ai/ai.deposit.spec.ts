@@ -153,6 +153,7 @@ describe("AI advice privacy and abuse limits", () => {
 			const day = { _id: "u3" } as any;
 			for (let i = 0; i < 62; i++) {
 				(storage as any).storage.delete("ai-min:u3");
+				(storage as any).hitExpirations.delete("ai-min:u3"); // 6.8 keeps hits per key
 				const call = controller.searchChat({ messages: [] } as any, day);
 				if (i < 60) await call; else await expect(call).rejects.toMatchObject({ status: 429 });
 			}
