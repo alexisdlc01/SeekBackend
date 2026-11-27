@@ -1,7 +1,7 @@
 import { NotFoundException } from "@nestjs/common";
 import { Types } from "mongoose";
 import { NotificationsController } from "./notifications.controller";
-import { NotificationsService } from "./notifications.service";
+import { NotificationsService, teamNotificationKinds } from "./notifications.service";
 import { NotificationKind } from "./notification-kind.enum";
 import { TeamScope } from "../users/types/team-scope";
 
@@ -63,6 +63,11 @@ describe("team member notifications", () => {
 		await expect(controller.markRead(payment._id.toString(), member(Object.values(TeamScope)))).rejects.toBeInstanceOf(NotFoundException);
 		await expect(controller.markRead(rows[0]._id.toString(), member([TeamScope.REPAIRS]))).rejects.toBeInstanceOf(NotFoundException);
 		expect(payment.readAt).toBeNull();
+	});
+
+	it("sends OFFER_ACCEPTED (a contracts link) to TENANCIES members only", () => {
+		expect(teamNotificationKinds([TeamScope.APPLICATIONS])).not.toContain(NotificationKind.OFFER_ACCEPTED);
+		expect(teamNotificationKinds([TeamScope.TENANCIES])).toContain(NotificationKind.OFFER_ACCEPTED);
 	});
 
 	it("leaves the owner's own bell unfiltered", async () => {
