@@ -371,7 +371,7 @@ describe("ConnectorsService settings", () => {
 	describe("store() honours the toggles", () => {
 		const landlordId = new Types.ObjectId();
 		const tenancy = { _id: new Types.ObjectId(), landlord: landlordId, documents: [] };
-		const classification = { housing: true, category: "BILLS", counterpartName: "", contact: null };
+		const classification = { housing: true, category: "BILLS", counterpartName: "", contact: null, reason: "Utility provider" };
 		const fromLandlord = { ...classification, contact: { role: "LANDLORD", userId: landlordId.toString(), tenancyId: null } };
 		const withFile = (subject: string, name: string) => ({ ...mail("9", "hello@octopus.energy", subject), body: "Total: £214.00", attachments: [{ name, mimeType: "application/pdf", size: 10 }] });
 		// What Gmail/Outlook report when the From domain passed DMARC.

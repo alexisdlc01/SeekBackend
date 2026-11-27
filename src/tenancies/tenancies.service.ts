@@ -588,7 +588,8 @@ export class TenanciesService {
 			if (amount >= payment.amount) continue;
 			const repriced = await this.paymentModel.updateOne(
 				{ _id: payment._id, status: { $nin: [PaymentStatus.PAID, PaymentStatus.PENDING] }, amount: payment.amount },
-				{ $set: { amount, ...computeFee(amount) } }
+				// Credit covers it all (the surplus is refunded on the holding deposit): nothing left to pay or chase.
+				{ $set: { amount, ...computeFee(amount), ...(amount === 0 ? { status: PaymentStatus.CANCELLED } : {}) } }
 			);
 			// The open session still charges the old amount: close it so the next checkout opens one at the new amount.
 			if (repriced.modifiedCount > 0) await closeStripeCharge(process.env.STRIPE_SECRET_KEY, payment);

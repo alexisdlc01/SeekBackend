@@ -137,6 +137,34 @@ describe("ConnectorsService store auto-filing", () => {
 		expect(fileDocument.mock.calls[0][1]).toBe("COUNCIL_TAX_EXEMPTION");
 		expect(trustedSender).not.toHaveBeenCalled();
 	});
+
+	it("creates a shared bill only from a known provider domain, never from a keyword subject", async () => {
+		const gmail = conn(EmailProvider.GMAIL);
+		const { service, messageModel } = setup([gmail]);
+		Object.assign(messageModel, {
+			create: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(), toObject: () => ({ attachments: [{ name: "bill.pdf" }] }) }),
+			updateOne: jest.fn().mockResolvedValue({})
+		});
+		(service as any).connectionModel.exists = jest.fn().mockResolvedValue({ _id: gmail._id });
+		jest.spyOn(service as any, "tenancyFor").mockResolvedValue({ tenancy: { _id: new Types.ObjectId() }, listing: null, label: "My home" });
+		jest.spyOn(service as any, "askedReferenceType").mockReturnValue(null);
+		jest.spyOn(service as any, "storeFile").mockResolvedValue({ url: "https://files.example/a.pdf", key: "k" });
+		const fileBill = jest.spyOn(service as any, "fileBill").mockResolvedValue(true);
+		const { classifyEmail } = await import("./housing-filter");
+		const attachment = { name: "bill.pdf", mimeType: "application/pdf", size: 10, load: async () => null };
+		const store = (from: string, senderAuthenticated?: boolean) => {
+			const mail = { providerThreadId: "t", providerMessageId: from, from, to: ["maya@example.com"], subject: "Energy bill statement", body: "Total: £900.00", receivedAt: new Date(), attachments: [attachment], senderAuthenticated };
+			return (service as any).store(gmail, { _id: owner, role: "STUDENT" }, mail, classifyEmail({ ...mail, outgoing: false }, new Map()), false);
+		};
+
+		expect(classifyEmail({ from: "landlord.scam@gmail.com", to: [], subject: "Energy bill statement", outgoing: false }, new Map())).toMatchObject({ category: "BILLS", reason: "Housing keywords" });
+		await expect(store("landlord.scam@gmail.com")).resolves.toBe(0);
+		expect(fileBill).not.toHaveBeenCalled();
+		await expect(store("bills@octopus.energy", false)).resolves.toBe(0);
+		expect(fileBill).not.toHaveBeenCalled();
+		await expect(store("bills@octopus.energy")).resolves.toBe(1);
+		expect(fileBill).toHaveBeenCalledTimes(1);
+	});
 });
 
 describe("ConnectorsService reply during a disconnect", () => {
