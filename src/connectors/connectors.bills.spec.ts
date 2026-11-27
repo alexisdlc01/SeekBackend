@@ -50,6 +50,16 @@ describe("fileBill", () => {
 		expect(rows).toHaveLength(1);
 	});
 
+	it("reads the verb 'may' as no month, never as May", async () => {
+		const { rows, file } = setup();
+		await file({ ...email("m1", "2026-11-03T09:00:00Z"), subject: "Your October energy bill - you may pay by direct debit" });
+		await file({ ...email("m2", "2026-11-03T09:00:00Z"), subject: "Your bill: payment may take 3 days" });
+		await file({ ...email("m3", "2026-12-03T09:00:00Z"), subject: "Your bill: payment may take 3 days" });
+		expect(rows.map(r => r.periodStart?.toISOString() ?? null)).toEqual(["2026-10-01T00:00:00.000Z", null, null]);
+		await file({ ...email("m4", "2026-06-03T09:00:00Z"), subject: "Your May statement" });
+		expect(rows[3].periodStart.toISOString()).toBe("2026-05-01T00:00:00.000Z");
+	});
+
 	it("does not refile a recent bill saved before emails were keyed (reconnect)", async () => {
 		const { rows, file } = setup();
 		rows.push({ tenancy: tenancy._id, provider: "Hyperoptic", amount: 3000, periodStart: null, sourceMessageId: null, createdAt: new Date() });

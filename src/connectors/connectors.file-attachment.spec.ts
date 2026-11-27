@@ -1,4 +1,4 @@
-import { ForbiddenException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { Types } from "mongoose";
 import { Role } from "../auth/role.enum";
 import { TeamScope } from "../users/types/team-scope";
@@ -86,6 +86,30 @@ describe("ConnectorsService.fileAttachment authorisation", () => {
 		);
 		expect(filed.filedAs).toBe("My home › Documents");
 		expect(messageModel.updateOne).toHaveBeenCalled();
+	});
+
+	it("finds the home through the conversation's application for mail stored before the tenancy existed", async () => {
+		const { service, me, email, tenancies } = setup();
+		const tenancyId = email.tenancy;
+		const applicationId = new Types.ObjectId();
+		Object.assign(email, { tenancy: null, conversation: new Types.ObjectId() });
+		const applicationModel = { findOne: jest.fn(() => lean({ _id: applicationId })) };
+		const tenancyModel = { findOne: jest.fn(() => lean({ _id: tenancyId })) };
+		Object.assign(service as any, { applicationModel, tenancyModel });
+		await service.fileAttachment(me, email._id.toString(), 0);
+		expect(applicationModel.findOne).toHaveBeenCalledWith({ conversation: (email as any).conversation });
+		expect(tenancyModel.findOne).toHaveBeenCalledWith({ application: applicationId });
+		// Membership is still checked on the tenancy found.
+		expect(tenancies.findForMember).toHaveBeenCalledWith(tenancyId.toString(), me);
+		expect(tenancies.appendDocument).toHaveBeenCalled();
+	});
+
+	it("still refuses mail with neither a tenancy nor a conversation leading to one", async () => {
+		const { service, me, email, tenancies } = setup();
+		Object.assign(email, { tenancy: null, conversation: new Types.ObjectId() });
+		Object.assign(service as any, { applicationModel: { findOne: jest.fn(() => lean(null)) } });
+		await expect(service.fileAttachment(me, email._id.toString(), 0)).rejects.toBeInstanceOf(BadRequestException);
+		expect(tenancies.findForMember).not.toHaveBeenCalled();
 	});
 
 	it("does nothing for an attachment that is already filed", async () => {

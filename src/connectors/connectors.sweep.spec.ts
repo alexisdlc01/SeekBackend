@@ -116,6 +116,29 @@ describe("ConnectorsService store during a disconnect", () => {
 	});
 });
 
+describe("ConnectorsService store auto-filing", () => {
+	it("files a council tax exemption certificate from the university as such, without the landlord-sender check", async () => {
+		const gmail = conn(EmailProvider.GMAIL);
+		const { service, messageModel } = setup([gmail]);
+		Object.assign(messageModel, {
+			create: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(), toObject: () => ({ attachments: [{ name: "Council-tax-exemption.pdf" }] }) }),
+			updateOne: jest.fn().mockResolvedValue({})
+		});
+		(service as any).connectionModel.exists = jest.fn().mockResolvedValue({ _id: gmail._id });
+		const tenancy = { _id: new Types.ObjectId(), landlord: new Types.ObjectId() };
+		jest.spyOn(service as any, "tenancyFor").mockResolvedValue({ tenancy, listing: null, label: "My home" });
+		const trustedSender = jest.spyOn(service as any, "trustedSender").mockResolvedValue(false);
+		jest.spyOn(service as any, "storeFile").mockResolvedValue({ url: "https://files.example/a.pdf", key: "k" });
+		const fileDocument = jest.spyOn(service as any, "fileDocument").mockResolvedValue(undefined);
+		const attachment = { name: "Council-tax-exemption.pdf", mimeType: "application/pdf", size: 10, load: async () => null };
+		const mail = { providerThreadId: "t", providerMessageId: "m", from: "registry@st-andrews.ac.uk", to: ["maya@example.com"], subject: "Your council tax exemption certificate", body: "b", receivedAt: new Date(), attachments: [attachment] };
+
+		await expect((service as any).store(gmail, { _id: owner, role: "STUDENT" }, mail, { category: "OTHER" }, false)).resolves.toBe(1);
+		expect(fileDocument.mock.calls[0][1]).toBe("COUNCIL_TAX_EXEMPTION");
+		expect(trustedSender).not.toHaveBeenCalled();
+	});
+});
+
 describe("ConnectorsService reply during a disconnect", () => {
 	it("deletes the sent copy when the mailbox was disconnected while sending", async () => {
 		const demo = conn(EmailProvider.DEMO);
