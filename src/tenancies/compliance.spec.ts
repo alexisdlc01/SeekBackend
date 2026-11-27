@@ -88,12 +88,19 @@ describe("compliance in Scotland", () => {
 });
 
 describe("complianceComplete", () => {
-	const full = { registrationNumber: "123456/100/12345", epcRating: "C", epcExpiry: days(100), eicrExpiry: days(100), gasSafetyExpiry: days(100), bedroomsCount: 2 };
+	const full = { registrationNumber: "123456/100/12345", epcRating: "C", epcExpiry: days(100), eicrExpiry: days(100), gasSafetyExpiry: days(100) };
 
-	it("is true when everything is present", () => expect(complianceComplete({ ...full, bedroomsCount: 3, hmoLicenceExpiry: days(100) }, now)).toBe(true));
+	it("is true when everything is present", () => expect(complianceComplete({ ...full, hmoLicenceExpiry: days(100) }, now)).toBe(true));
 	it("is false without a registration number", () => expect(complianceComplete({ ...full, registrationNumber: "  " }, now)).toBe(false));
 	it("is true when the EICR expires today", () => expect(complianceComplete({ ...full, eicrExpiry: days(0) }, now)).toBe(true));
 	it("is false when the EICR expired yesterday", () => expect(complianceComplete({ ...full, eicrExpiry: days(-1) }, now)).toBe(false));
-	it("is false for 3 bedrooms without an HMO licence", () => expect(complianceComplete({ ...full, bedroomsCount: 3 }, now)).toBe(false));
-	it("is true for 2 bedrooms without an HMO licence", () => expect(complianceComplete(full, now)).toBe(true));
+	it("is true for 3 bedrooms without an HMO licence", () => expect(complianceComplete(full, now)).toBe(true));
+	it("is true with only a registration number and an in-date EICR", () => expect(complianceComplete({ registrationNumber: "123456/100/12345", eicrExpiry: days(100) }, now)).toBe(true));
+	it("is false without an EICR", () => expect(complianceComplete({ registrationNumber: "123456/100/12345", gasSafetyExpiry: days(100) }, now)).toBe(false));
+	it("is false when an entered gas date is expired", () => expect(complianceComplete({ ...full, gasSafetyExpiry: days(-1) }, now)).toBe(false));
+	it("is false when an entered EPC or HMO date is expired", () => {
+		expect(complianceComplete({ ...full, epcExpiry: days(-1) }, now)).toBe(false);
+		expect(complianceComplete({ ...full, hmoLicenceExpiry: days(-1) }, now)).toBe(false);
+	});
+	it("is true when the gas certificate expires today", () => expect(complianceComplete({ ...full, gasSafetyExpiry: days(0) }, now)).toBe(true));
 });
