@@ -853,6 +853,52 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 		expect(stripeCalls.find(call => call.url.endsWith("/pi_legacy/cancel"))!.account).toBeUndefined();
 		expect(result).toMatchObject({ clientSecret: "pi_secret", stripeAccountId: "acct_123" });
 	});
+
+	it("treats a session/intent on a connected account the landlord replaced (403/404) as dead, but never a 429/5xx", async () => {
+		// Every call on the old account answers like Stripe does for a lost account or revoked access.
+		const onOldAccount = (status: number) => {
+			const answering = global.fetch;
+			global.fetch = jest.fn(async (url: string, init?: RequestInit) =>
+				(init?.headers as Record<string, string> | undefined)?.["Stripe-Account"] === "acct_old"
+					? ({ ok: false, status, json: async () => ({ error: { message: status === 404 ? "No such account: 'acct_old'" : "Stripe is down" } }) } as Response)
+					: (answering as any)(url, init)) as never;
+		};
+		const old = { stripeAccountId: "acct_old", dueDate: new Date("2026-11-01T00:00:00Z") };
+
+		// Checkout: a new session on the current account, the old reference dropped.
+		const checkout = setup({ ...old, providerRef: "cs_gone", provider: PaymentProvider.STRIPE });
+		onOldAccount(404);
+		// This mock answers the new session as "re_1".
+		await expect(checkout.service.checkout(id.toString(), { _id: tenant } as any, {}, "mobile")).resolves.toMatchObject({ sessionId: "re_1" });
+		expect(stripeCalls.find(call => call.url.endsWith("/checkout/sessions"))!.account).toBe("acct_123");
+		expect(doc).toMatchObject({ stripeAccountId: "acct_123", providerRef: "re_1" });
+
+		// POST /pay: an intent on a revoked account (403) is not reused or cancelled; a new one opens.
+		const pay = setup({ ...old, providerRef: "pi_gone", provider: PaymentProvider.STRIPE, status: PaymentStatus.LATE });
+		onOldAccount(403);
+		await expect(pay.service.pay(id.toString(), { _id: tenant } as any)).resolves.toMatchObject({ clientSecret: "pi_secret", stripeAccountId: "acct_123" });
+		expect(doc).toMatchObject({ stripeAccountId: "acct_123", providerRef: "pi_autopay" });
+
+		// Autopay: no longer skipped for ever.
+		const autopay = setup({ ...old, providerRef: "cs_gone" });
+		onOldAccount(404);
+		await (autopay.service as any).sweepStripeAutopay(new Date("2026-11-07T00:00:00Z"));
+		expect(doc).toMatchObject({ status: PaymentStatus.PAID, stripeAccountId: "acct_123", providerRef: "pi_autopay" });
+
+		// A PENDING row on the lost account is dead (goes LATE, payable again).
+		const pending = setup({ ...old, providerRef: "pi_gone", status: PaymentStatus.PENDING });
+		onOldAccount(404);
+		await expect((pending.service as any).pendingAttemptDead({ ...doc })).resolves.toBe(true);
+
+		// A rate limit or outage is never read as "gone".
+		for (const status of [429, 503]) {
+			const busy = setup({ ...old, providerRef: "cs_gone", provider: PaymentProvider.STRIPE });
+			onOldAccount(status);
+			await expect(busy.service.checkout(id.toString(), { _id: tenant } as any, {}, "mobile")).rejects.toThrow(ServiceUnavailableException);
+			expect(stripeCalls.some(call => call.url.endsWith("/checkout/sessions"))).toBe(false);
+			await expect((busy.service as any).pendingAttemptDead({ ...doc, status: PaymentStatus.PENDING })).resolves.toBe(false);
+		}
+	});
 });
 
 describe("PaymentsService.landlordMonth", () => {

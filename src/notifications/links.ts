@@ -23,9 +23,9 @@ export enum NotificationScreen {
 	RENT = "rent",
 	/** Student deposit: web /student/home/deposit (?tenancy=<id> with an id), mobile /(app)/deposit. */
 	DEPOSIT = "deposit",
-	/** Student home: web /student/home, mobile /(app)/(tabs)/my-home. */
+	/** Student home: web /student/home (?tenancy=<id> with an id), mobile /(app)/(tabs)/my-home. */
 	HOME = "home",
-	/** Student contract: web /student/home, mobile /(app)/contract. */
+	/** Student contract: web /student/home (?tenancy=<id> with an id), mobile /(app)/contract. */
 	CONTRACT = "contract",
 	/** Student repairs: web /student/home, mobile /(app)/repairs. */
 	REPAIRS = "repairs",
@@ -104,9 +104,9 @@ export function linkFor(audience: Audience, kind: NotificationTargetKind, id?: s
 	if (kind === NotificationTargetKind.COMPLIANCE && audience === "student" && id) {
 		return `/student/home/deposit?tenancy=${encodeURIComponent(id)}`;
 	}
-	// The id is the tenancy: the contracts page opens on it instead of the first property needing action.
-	if ((kind === NotificationTargetKind.CONTRACTS || kind === NotificationTargetKind.TENANCY) && audience === "landlord" && id) {
-		return `/contracts?tenancy=${encodeURIComponent(id)}`;
+	// The id is the tenancy: the contracts page (landlord) or student home opens on it instead of the first one.
+	if ((kind === NotificationTargetKind.CONTRACTS || kind === NotificationTargetKind.TENANCY) && id) {
+		return `${audience === "landlord" ? "/contracts" : "/student/home"}?tenancy=${encodeURIComponent(id)}`;
 	}
 	if (kind === NotificationTargetKind.CONVERSATION && audience === "landlord" && id) {
 		return `/chat?conversation=${encodeURIComponent(id)}`;

@@ -17,7 +17,7 @@ import { Role } from "../auth/role.enum";
 import { CreateTenancyDto } from "./dto/create-tenancy.dto";
 import { DepositReceivedDto, PrescribedInfoDto, UpdateDepositDto } from "./dto/update-deposit.dto";
 import { AddTenancyDocumentDto } from "./dto/add-tenancy-document.dto";
-import { depositCapName, depositCapPence, listingCompliance, sortCompliance, tenancyCompliance } from "./compliance";
+import { depositCapName, depositCapPence, listingCompliance, listingDepositCompliance, sortCompliance, tenancyCompliance } from "./compliance";
 import { RentScheduleService } from "../payments/rent-schedule.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { Payment } from "../payments/payment.schema";
@@ -315,6 +315,13 @@ export class TenanciesService {
 			throw error;
 		}
 		const people =Math.max(1, application.applicants.length);
+		// Listings store whole-property pounds; tenancies store pence per tenant, rounded down so no student pays more than their share.
+		// shortcut: one share for all, so the household pays up to (people - 1)p under the listing (£1000/3 = 3 × £333.33); store per-tenant shares (splitPence) if landlords notice.
+		const monthlyRent = Math.floor(Math.round((listing.monthlyRent ?? 0) * 100) / people);
+		const share = Math.floor(Math.round((listing.securityDeposit ?? 0) * 100) / people);
+		const listingWithinCap = monthlyRent > 0 && !listingDepositCompliance(listing).some(item => item.kind === "LISTING_DEPOSIT_OVER_CAP");
+		// A lawful listing deposit can land 1p over the cap on the rounded-down rent share: a rounding artefact, trimmed.
+		const depositAmount = listingWithinCap ? Math.min(share, depositCapPence(monthlyRent, listing.nation)) : share;
 
 		try {
 			const tenancy = await this.tenancyModel.create({
@@ -325,9 +332,8 @@ export class TenanciesService {
 				startDate,
 				endDate,
 				periodic: !endDate,
-				// Listings store whole-property pounds; tenancies store pence per tenant.
-				monthlyRent: Math.round(((listing.monthlyRent ?? 0) * 100) / people),
-				depositAmount: Math.round(((listing.securityDeposit ?? 0) * 100) / people)
+				monthlyRent,
+				depositAmount
 			});
 			const value = tenancy.toObject() as TenancyLean;
 			await this.afterCreate(value, listing);
@@ -397,7 +403,10 @@ export class TenanciesService {
 			throw new ConflictException("A tenant has already signed the agreement, so the deposit amount can no longer change.");
 		}
 		const listing = await this.listingModel.findById(tenancy.listing, { nation: 1 }).lean().exec();
-		this.assertDepositWithinCap(depositAmount, tenancy.monthlyRent, listing?.nation);
+		// Only a new amount is checked: recording protection of the deposit already taken is never blocked.
+		if (dto.depositAmount !== undefined && dto.depositAmount !== tenancy.depositAmount) {
+			this.assertDepositWithinCap(depositAmount, tenancy.monthlyRent, listing?.nation);
+		}
 		this.assertSchemeForNation(dto.depositScheme, listing?.nation);
 		await this.tenancyModel.updateOne(
 			{ _id: tenancy._id },

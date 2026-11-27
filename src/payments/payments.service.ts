@@ -50,6 +50,18 @@ const canTransfer = (account: StripeAccount) => account.capabilities?.transfers 
  * restricted key missing a permission, and must never make Seek forget or replace a landlord's account.
  */
 const isGoneAccount = (error: unknown): error is StripeApiError => error instanceof StripeApiError && error.status === 404;
+/**
+ * Reads or closes an earlier session/intent; null when Stripe answers 403/404 (it, or the connected account the
+ * landlord replaced or lost, is out of reach), so it counts as dead instead of blocking the row. 429/5xx rethrow.
+ */
+async function unlessGone<T>(call: Promise<T>): Promise<T | null> {
+	try {
+		return await call;
+	} catch (error) {
+		if (error instanceof StripeApiError && (error.status === 403 || error.status === 404)) return null;
+		throw error;
+	}
+}
 
 const CARD_NOT_READY = "Your landlord hasn't finished setting up card payments on Seek yet, so this can't be paid by card. Use the bank transfer details or ask them to finish setup.";
 import {
@@ -909,8 +921,8 @@ export class PaymentsService {
 			const saveCard = Boolean(plan?.autopay) && payment.kind !== PaymentKind.HOLDING_DEPOSIT;
 			if (payment.providerRef?.startsWith("cs_")) {
 				const previous = this.stripeFor(payment);
-				const existing = await previous.retrieveCheckoutSession(payment.providerRef);
-				if (existing.status === "open" && existing.url) {
+				const existing = await unlessGone(previous.retrieveCheckoutSession(payment.providerRef));
+				if (existing?.status === "open" && existing.url) {
 					if (account && payment.stripeAccountId === account && existing.success_url === successUrl && existing.cancel_url === cancelUrl
 						// A row repriced since (early tenancy end) must not be paid at the old amount.
 						&& existing.amount_total === payment.amount
@@ -919,9 +931,9 @@ export class PaymentsService {
 						return { mode, sessionId: existing.id, url: existing.url, status: payment.status };
 					}
 					// Opened from the other client (web vs app), or its charge would land on another account (Seek's, for a legacy session).
-					await previous.expireCheckoutSession(existing.id);
+					await unlessGone(previous.expireCheckoutSession(existing.id));
 				}
-				if (existing.payment_status === "paid") {
+				if (existing?.payment_status === "paid") {
 					const done = await this.completeCheckout(existing, payment.stripeAccountId ?? null);
 					return { mode, sessionId: existing.id, url: successUrl.replace("{CHECKOUT_SESSION_ID}", existing.id), status: done?.status ?? payment.status };
 				}
@@ -929,13 +941,13 @@ export class PaymentsService {
 			// An intent from POST /pay on another account (Seek's, for a legacy one) is settled or cancelled, never left to charge too.
 			if (payment.providerRef?.startsWith("pi_") && payment.provider === PaymentProvider.STRIPE && (!account || payment.stripeAccountId !== account)) {
 				const previous = this.stripeFor(payment);
-				const existing = await previous.retrievePaymentIntent(payment.providerRef);
+				const existing = await unlessGone(previous.retrievePaymentIntent(payment.providerRef));
 				// Same guard as the webhook: a mismatched amount is left to it (it refunds).
-				if (existing.status === "succeeded" && existing.amount === payment.amount) {
+				if (existing?.status === "succeeded" && existing.amount === payment.amount) {
 					const paid = await this.markPaid(payment, PaymentProvider.STRIPE, existing.id);
 					return { mode, sessionId: null, url: successUrl.replace("{CHECKOUT_SESSION_ID}", existing.id), status: (paid ?? payment).status };
 				}
-				if (OPEN_INTENT_STATUSES.includes(existing.status)) await previous.cancelPaymentIntent(existing.id);
+				if (existing && OPEN_INTENT_STATUSES.includes(existing.status)) await unlessGone(previous.cancelPaymentIntent(existing.id));
 			}
 			if (!account) throw new BadRequestException(CARD_NOT_READY);
 			// A holding deposit's session closes with its offer. Stripe allows 30 minutes to 24 hours;
@@ -1467,12 +1479,14 @@ export class PaymentsService {
 		const stripe = this.stripeFor(payment);
 		try {
 			if (payment.providerRef.startsWith("cs_")) {
-				const session = await stripe.retrieveCheckoutSession(payment.providerRef);
+				const session = await unlessGone(stripe.retrieveCheckoutSession(payment.providerRef));
+				if (!session) return true;
 				if (session.payment_status === "paid") await this.completeCheckout(session, payment.stripeAccountId ?? null);
 				return session.status === "expired";
 			}
 			if (!payment.providerRef.startsWith("pi_")) return false;
-			const intent = await stripe.retrievePaymentIntent(payment.providerRef);
+			const intent = await unlessGone(stripe.retrievePaymentIntent(payment.providerRef));
+			if (!intent) return true;
 			// Same guard as the webhook: a mismatched amount is left to it (it refunds).
 			if (intent.status === "succeeded" && intent.amount === payment.amount) await this.markPaid(payment, PaymentProvider.STRIPE, intent.id);
 			return ["canceled", "requires_payment_method"].includes(intent.status);
@@ -1539,9 +1553,9 @@ export class PaymentsService {
 				if (payment.providerRef?.startsWith("cs_")) {
 					try {
 						const previous = this.stripeFor(payment);
-						const session = await previous.retrieveCheckoutSession(payment.providerRef);
-						if (session.status === "open") await previous.expireCheckoutSession(session.id);
-						else if (session.status !== "expired") {
+						const session = await unlessGone(previous.retrieveCheckoutSession(payment.providerRef));
+						if (session?.status === "open") await unlessGone(previous.expireCheckoutSession(session.id));
+						else if (session && session.status !== "expired") {
 							await this.completeCheckout(session, payment.stripeAccountId ?? null);
 							continue;
 						}
@@ -1721,22 +1735,24 @@ export class PaymentsService {
 			const account = await this.accountFor(new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!), payment.landlord);
 			// An open Checkout page could still be paid (on its own account): close it first, or let it settle the payment.
 			if (payment.providerRef?.startsWith("cs_")) {
-				const session = await previous.retrieveCheckoutSession(payment.providerRef);
-				if (session.status === "open") await previous.expireCheckoutSession(session.id);
-				else if (session.status !== "expired") {
+				const session = await unlessGone(previous.retrieveCheckoutSession(payment.providerRef));
+				if (session?.status === "open") await unlessGone(previous.expireCheckoutSession(session.id));
+				else if (session && session.status !== "expired") {
 					const settled = await this.completeCheckout(session, payment.stripeAccountId ?? null);
 					return this.payResponse(settled ?? payment, null);
 				}
 			}
-			if (payment.providerRef?.startsWith("pi_") && payment.provider === PaymentProvider.STRIPE) {
-				const existing = await previous.retrievePaymentIntent(payment.providerRef);
+			const existing = payment.providerRef?.startsWith("pi_") && payment.provider === PaymentProvider.STRIPE
+				? await unlessGone(previous.retrievePaymentIntent(payment.providerRef))
+				: null;
+			if (existing) {
 				if (existing.status === "succeeded") {
 					const paid = await this.markPaid(payment, PaymentProvider.STRIPE, existing.id);
 					return this.payResponse(paid ?? payment, null);
 				}
 				// An open intent on another account (Seek's, for a legacy one) is cancelled, never reused.
 				if (OPEN_INTENT_STATUSES.includes(existing.status) && (!account || payment.stripeAccountId !== account)) {
-					await previous.cancelPaymentIntent(existing.id);
+					await unlessGone(previous.cancelPaymentIntent(existing.id));
 				} else if (OPEN_INTENT_STATUSES.includes(existing.status)) {
 					await this.paymentModel.updateOne(
 						{ _id: payment._id, status: { $ne: PaymentStatus.PAID } },

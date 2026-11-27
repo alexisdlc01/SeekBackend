@@ -283,6 +283,53 @@ describe("TenanciesService create / accept", () => {
 		expect(created[0]).toMatchObject({ periodic: false, endDate: availableUntil });
 	});
 
+	it("splits rent and a deposit at the cap without any share going over (no false 'above the cap' notice)", async () => {
+		const cases = [
+			// Scotland: £1000 rent, £2000 deposit (two months), 3 tenants.
+			{ nation: "SCOTLAND", monthlyRent: 1000, securityDeposit: 2000, people: 3, rent: 33333, deposit: 66666 },
+			// England: £1200 rent, 2 tenants, deposit at the five-week cap (£1384.61).
+			{ nation: "ENGLAND", monthlyRent: 1200, securityDeposit: 1384.61, people: 2, rent: 60000, deposit: 69230 },
+			// England: £500 rent, 7 tenants, deposit at the cap (£576.92): 8241p would be 1p over the cap on 7142p, so 8240p.
+			{ nation: "ENGLAND", monthlyRent: 500, securityDeposit: 576.92, people: 7, rent: 7142, deposit: 8240 },
+			// Never more than the listing in total: 7 × £142.85 = £999.95, not £1000.02.
+			{ nation: "ENGLAND", monthlyRent: 1000, securityDeposit: 0, people: 7, rent: 14285, deposit: 0 }
+		];
+		for (const { people, rent, deposit, ...home } of cases) {
+			const { service, tenancyModel, listingModel, notifications, created } = setup();
+			(tenancyModel as any).findOne = jest.fn().mockReturnValue(lean(null));
+			listingModel.findById.mockReturnValue(lean({ ...listing, ...home }));
+			const applicants = Array.from({ length: people }, () => new Types.ObjectId());
+			await service.createFromApplication({ _id: new Types.ObjectId(), listing: listingId, landlord: landlordId, applicants });
+			expect(created[0]).toMatchObject({ monthlyRent: rent, depositAmount: deposit });
+			// afterCreate's only notify() is the landlord's "deposit above the cap" warning.
+			expect(notifications.notify).not.toHaveBeenCalled();
+		}
+	});
+
+	it("keeps the share of a listing deposit already above the cap, so the landlord is still warned", async () => {
+		const { service, tenancyModel, listingModel, notifications, created } = setup();
+		(tenancyModel as any).findOne = jest.fn().mockReturnValue(lean(null));
+		listingModel.findById.mockReturnValue(lean({ ...listing, nation: "SCOTLAND", monthlyRent: 1000, securityDeposit: 2100 }));
+		const applicants = [new Types.ObjectId(), new Types.ObjectId(), new Types.ObjectId()];
+		await service.createFromApplication({ _id: new Types.ObjectId(), listing: listingId, landlord: landlordId, applicants });
+		expect(created[0]).toMatchObject({ monthlyRent: 33333, depositAmount: 70000 });
+		expect(notifications.notify).toHaveBeenCalledWith(expect.objectContaining({ user: landlordId, title: expect.stringContaining("above the two-month cap") }), "complianceDue");
+	});
+
+	it("records deposit protection on an old row 1p over the cap, but refuses a new amount over it (400)", async () => {
+		const { service, tenancyModel, listingModel } = setup();
+		const deposit = { depositScheme: "SAFEDEPOSITS_SCOTLAND", depositReference: "S-1" } as any;
+		// Created before shares were rounded down: 66667p against a 66666p cap on 33333p rent.
+		jest.spyOn(service, "findForLandlord").mockResolvedValue({ _id: new Types.ObjectId(), listing: listingId, monthlyRent: 33333, depositAmount: 66667 } as any);
+		listingModel.findById.mockReturnValue(lean({ ...listing, nation: "SCOTLAND" }));
+		await service.updateDeposit("t", deposit, landlord);
+		expect(tenancyModel.updateOne).toHaveBeenCalledTimes(1);
+		// The same 66667p typed as a new amount (the row held 60000p) is over the cap.
+		jest.spyOn(service, "findForLandlord").mockResolvedValue({ _id: new Types.ObjectId(), listing: listingId, monthlyRent: 33333, depositAmount: 60000 } as any);
+		await expect(service.updateDeposit("t", { ...deposit, depositAmount: 66667 }, landlord)).rejects.toThrow(BadRequestException);
+		expect(tenancyModel.updateOne).toHaveBeenCalledTimes(1);
+	});
+
 	it("refuses (409) an application tenancy once the listing's availability has ended, writing nothing", async () => {
 		const { service, tenancyModel, listingModel, rentSchedule } = setup();
 		(tenancyModel as any).findOne = jest.fn().mockReturnValue(lean(null));
