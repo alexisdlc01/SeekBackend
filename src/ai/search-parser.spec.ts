@@ -86,6 +86,12 @@ describe("rule-based search parser", () => {
 			["inc bills", true],
 			["bills not included", false],
 			["excluding bills", false],
+			["not including bills", false],
+			["no bills included", false],
+			["I don't want bills included", false],
+			["dont need bills included", false],
+			["bills aren't included", false],
+			["bills excluded", false],
 			["near the park", undefined]
 		])("%s → %s", (text, expected) => {
 			expect(parseBillsIncluded(text)).toBe(expected);
@@ -148,6 +154,17 @@ describe("rule-based search parser", () => {
 			NOW
 		);
 		expect(filters).toEqual({ city: "Bristol", minBedrooms: 2, maxRent: 600, billsIncluded: true });
+	});
+
+	it("clears budget, bedrooms and date when the student lifts them", () => {
+		const filters = parseConversation(
+			[
+				{ role: "user", content: "3-bed in Bristol under £600 from September" },
+				{ role: "user", content: "actually no budget limit, any number of bedrooms and any date" }
+			],
+			NOW
+		);
+		expect(filters).toEqual({ city: "Bristol" });
 	});
 
 	it("drops the old university when the student switches city", () => {

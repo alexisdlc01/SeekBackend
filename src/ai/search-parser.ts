@@ -167,6 +167,10 @@ export function parseBillsIncluded(text: string): boolean | undefined {
 	if (/\bbills?\s+(?:are\s+)?(?:not|n't)\s+included\b|\b(?:excluding|exclusive of|without|plus|\+)\s+bills\b|\bbills\s+extra\b/i.test(text)) {
 		return false;
 	}
+	// Negations must win over the "included" pattern below ("not including bills", "no bills included").
+	if (/\b(?:not|no|don['’]?t\s+(?:want|need))\s+(?:including\s+)?bills\b|\bbills?\s+(?:aren['’]?t|are\s+not|excluded)\b/i.test(text)) {
+		return false;
+	}
 	if (/\bbills?\s+(?:are\s+)?inc(?:l(?:uded|usive)?)?\b|\b(?:including|incl\.?|inc\.?|with)\s+(?:all\s+)?bills\b|\ball[\s-]+(?:bills[\s-]+)?inclusive\b|\ball bills\b/i.test(text)) {
 		return true;
 	}
@@ -306,6 +310,9 @@ export function parseConversation(
 		if (/\b(?:any(?:where)?|don't mind|doesn't matter)\b.*\bbills\b|\bbills\b.*\b(?:don't mind|doesn't matter)\b/i.test(message.content)) {
 			delete filters.billsIncluded;
 		}
+		if (/\b(?:no|any)\s+budget\b/i.test(message.content)) delete filters.maxRent;
+		if (/\bany\s+(?:number\s+of\s+)?bed(?:room)?s?\b/i.test(message.content)) delete filters.minBedrooms;
+		if (/\bany\s?(?:date|time)\b/i.test(message.content)) delete filters.moveIn;
 	}
 	return filters;
 }

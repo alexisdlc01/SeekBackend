@@ -715,13 +715,17 @@ export class AiService {
 				tenancy.endDate && !tenancy.periodic ? ` and the agreement names ${formatDate(tenancy.endDate)} as its end date` : " and is periodic"
 			}.`
 		);
+		// Notice advice only makes sense while the tenancy is running and nobody's notice has taken effect.
+		const open = tenancy.status === TenancyStatus.ACTIVE && !tenancy.noticeGivenAt;
+		if (tenancy.status === TenancyStatus.ENDED) lines.push("This tenancy has ended.");
+		else if (tenancy.noticeGivenAt && tenancy.endDate) lines.push(`Notice has been given: the tenancy ends on ${formatDate(tenancy.endDate)}.`);
 		if (rules) {
 			lines.push(rules);
-			if (tenancy.endDate && !tenancy.periodic) {
+			if (open && tenancy.endDate && !tenancy.periodic) {
 				lines.push("That end date doesn't end the tenancy on its own: someone still has to give notice.");
 			}
-			if (hoped) lines.push(hoped);
-			if (!landlord) lines.push("To give notice in Seek, open your tenancy and give notice with your end date; every tenant on the agreement must give notice for the same date before it counts.");
+			if (open && hoped) lines.push(hoped);
+			if (open && !landlord) lines.push("To give notice in Seek, open your tenancy and give notice with your end date; every tenant on the agreement must give notice for the same date before it counts.");
 		} else {
 			lines.push("This home is in Northern Ireland, where notice rules differ; check your agreement and official guidance.");
 		}
@@ -1027,7 +1031,7 @@ export class AiService {
 					? "Log the visit as a repair in Seek so there is a dated record for the tenants."
 					: "Log it as a repair in Seek so there is a dated record if it happens again."
 				: (next[email.category] ?? "Reply here; it goes out from your own email address.");
-			if (repair) actions.push({ label: "Report a repair", link: this.homeLink(user) });
+			if (repair) actions.push({ label: "Report a repair", link: this.isLandlord(user) ? "/repairs" : "/student/home" });
 			const email_ = { subject: email.subject, from, date: formatDate(email.receivedAt) };
 			return {
 				title: `${from}: ${email.subject}`.slice(0, 120),
