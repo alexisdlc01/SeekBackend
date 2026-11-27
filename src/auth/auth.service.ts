@@ -639,7 +639,8 @@ export class AuthService {
 					password: await hash(body.newPassword, this.bcryptRounds()),
 					refreshSessions: [],
 					pushTokens: []
-				}
+				},
+				$unset: { resetPasswordToken: 1, resetPasswordExpires: 1 }
 			}
 		);
 		return {

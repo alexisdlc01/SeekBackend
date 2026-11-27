@@ -152,7 +152,9 @@ export class UsersRepository {
 						pendingEmailExpires: 1,
 						pendingEmailLastSentAt: 1,
 						pendingEmailWindowStartedAt: 1,
-						pendingEmailSendCount: 1
+						pendingEmailSendCount: 1,
+						resetPasswordToken: 1,
+						resetPasswordExpires: 1
 					}
 				}
 			);

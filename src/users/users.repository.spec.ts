@@ -34,3 +34,17 @@ describe("UsersRepository.findTeamOwner", () => {
 		expect(findOne).toHaveBeenCalledWith(expect.objectContaining({ suspendedAt: null, deletedAt: null }));
 	});
 });
+
+describe("UsersRepository.consumeEmailChange", () => {
+	it("kills any pending password-reset link", async () => {
+		const findOneAndUpdate = jest.fn().mockResolvedValue({ _id: "u1" });
+		const repo = new UsersRepository({ findOneAndUpdate } as never);
+
+		await repo.consumeEmailChange("u1", "hash", "new@example.test");
+
+		expect(findOneAndUpdate.mock.calls[0][1].$unset).toMatchObject({
+			resetPasswordToken: 1,
+			resetPasswordExpires: 1
+		});
+	});
+});
