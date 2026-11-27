@@ -351,3 +351,55 @@ describe("PaymentsService ends fixed terms on their end date", () => {
 		expect(depositQuery.$nor).toEqual([{ periodic: false, endDate: { $lte: new Date("2026-07-02T00:00:00Z") } }]);
 	});
 });
+
+describe("PaymentsService.markPaid on an auto-refund row", () => {
+	const tenant = new Types.ObjectId();
+	const landlord = new Types.ObjectId();
+	const build = (extra: Record<string, unknown>) => {
+		const paid = {
+			_id: new Types.ObjectId(), tenancy: new Types.ObjectId(), tenant, landlord, amount: 69500, payout: 68805, seekFee: 695, dueDate: new Date("2026-09-01"),
+			status: PaymentStatus.PAID, provider: "SIMULATED", providerRef: "sim_1", refundDue: true, autoRefund: true, ...extra
+		};
+		const paymentModel = {
+			findOneAndUpdate: jest.fn().mockReturnValue(lean(paid)),
+			updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
+			exists: jest.fn().mockResolvedValue(null)
+		};
+		const planModel = { findOne: jest.fn().mockReturnValue(lean({})) };
+		const userModel = { findById: jest.fn().mockReturnValue(lean({ email: "maya@seek.local", name: "Maya" })) };
+		const notifications = { notify: jest.fn().mockResolvedValue(true) };
+		const mail = { sendPaymentReceiptEmail: jest.fn().mockResolvedValue(undefined) };
+		const service = new PaymentsService(
+			paymentModel as any, planModel as any, {} as any, {} as any, userModel as any, {} as any, {} as any,
+			notifications as any, { get: () => undefined } as any, {} as any, mail as any
+		);
+		const kinds = () => notifications.notify.mock.calls.map(([n]) => n.kind);
+		return { service, paid, paymentModel, notifications, mail, kinds };
+	};
+	const refunded = (paymentModel: { updateOne: jest.Mock }, amount: number) =>
+		expect(paymentModel.updateOne).toHaveBeenCalledWith(expect.anything(), { $set: expect.objectContaining({ refundedAmount: amount, refundedAt: expect.any(Date) }) });
+
+	it("refunds a fully refunded rent row without a receipt or payout notice", async () => {
+		const { service, paid, paymentModel, mail, kinds } = build({});
+		await expect((service as any).markPaid(paid, "STRIPE", "pi_1")).resolves.toEqual(paid);
+		refunded(paymentModel, 69500);
+		expect(kinds()).toEqual([]);
+		expect(mail.sendPaymentReceiptEmail).not.toHaveBeenCalled();
+	});
+
+	it("tells the tenant a fully refunded holding deposit is being refunded, and nothing else", async () => {
+		const { service, paid, paymentModel, mail, kinds } = build({ kind: "HOLDING_DEPOSIT", application: new Types.ObjectId() });
+		await (service as any).markPaid(paid, "STRIPE", "pi_1");
+		refunded(paymentModel, 69500);
+		expect(kinds()).toEqual(["HOLDING_DEPOSIT_REFUND"]);
+		expect(mail.sendPaymentReceiptEmail).not.toHaveBeenCalled();
+	});
+
+	it("still sends the receipt and payout notice after a partial refund", async () => {
+		const { service, paid, paymentModel, mail, kinds } = build({ refundAmount: 20000 });
+		await (service as any).markPaid(paid, "STRIPE", "pi_1");
+		refunded(paymentModel, 20000);
+		expect(kinds()).toEqual(["RENT_RECEIPT", "PAYMENT_RECEIVED"]);
+		expect(mail.sendPaymentReceiptEmail).toHaveBeenCalled();
+	});
+});

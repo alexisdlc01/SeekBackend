@@ -1783,7 +1783,10 @@ export class PaymentsService {
 
 		const holding = paid.kind === PaymentKind.HOLDING_DEPOSIT;
 		if (paid.refundDue && paid.autoRefund) {
-			await refundPayment(this.paymentModel, paid as PaymentLean, this.config.get<string>("STRIPE_SECRET_KEY"), paid.refundAmount || paid.amount);
+			const accepted = await refundPayment(this.paymentModel, paid as PaymentLean, this.config.get<string>("STRIPE_SECRET_KEY"), paid.refundAmount || paid.amount);
+			await notifyHoldingRefund(this.notifications, this.paymentModel, paid as PaymentLean, accepted);
+			// Fully refunded: no receipt or "you receive" notice for money going straight back.
+			if ((paid.refundAmount || paid.amount) >= paid.amount) return paid as PaymentLean;
 		}
 		if (holding && paid.application && !paid.refundDue) {
 			// Paid after the offer was accepted: the rent schedule was built without this credit.
