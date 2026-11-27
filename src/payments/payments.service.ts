@@ -51,17 +51,27 @@ const canTransfer = (account: StripeAccount) => account.capabilities?.transfers 
  */
 const isGoneAccount = (error: unknown): error is StripeApiError => error instanceof StripeApiError && error.status === 404;
 /**
- * Reads or closes an earlier session/intent; null when Stripe answers 403/404 (it, or the connected account the
- * landlord replaced or lost, is out of reach), so it counts as dead instead of blocking the row. 429/5xx rethrow.
+ * Reads or closes an earlier session/intent; null when Stripe answers 404 (it, or the connected account the landlord
+ * replaced, is gone), so it counts as dead instead of blocking the row. A 403 (Seek lost access to an account that may
+ * still exist, where the student could still pay) is dead only when `lostIsDead` says it can no longer be paid; never for
+ * an intent, whose client secret may still confirm it. 429/5xx rethrow.
  */
-async function unlessGone<T>(call: Promise<T>): Promise<T | null> {
+async function unlessGone<T>(call: Promise<T>, lostIsDead = false): Promise<T | null> {
 	try {
 		return await call;
 	} catch (error) {
-		if (error instanceof StripeApiError && (error.status === 403 || error.status === 404)) return null;
+		if (error instanceof StripeApiError && (error.status === 404 || (error.status === 403 && lostIsDead))) return null;
 		throw error;
 	}
 }
+/**
+ * A hosted Checkout page can be paid for at most 24 hours after it was created. Writing providerRef = session.id bumps
+ * the row's updatedAt (timestamps), so updatedAt older than that means the stored session can no longer be paid.
+ */
+const checkoutLapsed = (payment: object) => {
+	const at = (payment as { updatedAt?: Date }).updatedAt;
+	return Boolean(at) && Date.now() - new Date(at!).getTime() > 24 * 3_600_000;
+};
 
 const CARD_NOT_READY = "Your landlord hasn't finished setting up card payments on Seek yet, so this can't be paid by card. Use the bank transfer details or ask them to finish setup.";
 import {
@@ -921,7 +931,7 @@ export class PaymentsService {
 			const saveCard = Boolean(plan?.autopay) && payment.kind !== PaymentKind.HOLDING_DEPOSIT;
 			if (payment.providerRef?.startsWith("cs_")) {
 				const previous = this.stripeFor(payment);
-				const existing = await unlessGone(previous.retrieveCheckoutSession(payment.providerRef));
+				const existing = await unlessGone(previous.retrieveCheckoutSession(payment.providerRef), checkoutLapsed(payment));
 				if (existing?.status === "open" && existing.url) {
 					if (account && payment.stripeAccountId === account && existing.success_url === successUrl && existing.cancel_url === cancelUrl
 						// A row repriced since (early tenancy end) must not be paid at the old amount.
@@ -1479,7 +1489,7 @@ export class PaymentsService {
 		const stripe = this.stripeFor(payment);
 		try {
 			if (payment.providerRef.startsWith("cs_")) {
-				const session = await unlessGone(stripe.retrieveCheckoutSession(payment.providerRef));
+				const session = await unlessGone(stripe.retrieveCheckoutSession(payment.providerRef), checkoutLapsed(payment));
 				if (!session) return true;
 				if (session.payment_status === "paid") await this.completeCheckout(session, payment.stripeAccountId ?? null);
 				return session.status === "expired";
@@ -1553,7 +1563,7 @@ export class PaymentsService {
 				if (payment.providerRef?.startsWith("cs_")) {
 					try {
 						const previous = this.stripeFor(payment);
-						const session = await unlessGone(previous.retrieveCheckoutSession(payment.providerRef));
+						const session = await unlessGone(previous.retrieveCheckoutSession(payment.providerRef), checkoutLapsed(payment));
 						if (session?.status === "open") await unlessGone(previous.expireCheckoutSession(session.id));
 						else if (session && session.status !== "expired") {
 							await this.completeCheckout(session, payment.stripeAccountId ?? null);
@@ -1735,7 +1745,7 @@ export class PaymentsService {
 			const account = await this.accountFor(new StripeClient(this.config.get<string>("STRIPE_SECRET_KEY")!), payment.landlord);
 			// An open Checkout page could still be paid (on its own account): close it first, or let it settle the payment.
 			if (payment.providerRef?.startsWith("cs_")) {
-				const session = await unlessGone(previous.retrieveCheckoutSession(payment.providerRef));
+				const session = await unlessGone(previous.retrieveCheckoutSession(payment.providerRef), checkoutLapsed(payment));
 				if (session?.status === "open") await unlessGone(previous.expireCheckoutSession(session.id));
 				else if (session && session.status !== "expired") {
 					const settled = await this.completeCheckout(session, payment.stripeAccountId ?? null);

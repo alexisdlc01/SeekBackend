@@ -854,7 +854,7 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 		expect(result).toMatchObject({ clientSecret: "pi_secret", stripeAccountId: "acct_123" });
 	});
 
-	it("treats a session/intent on a connected account the landlord replaced (403/404) as dead, but never a 429/5xx", async () => {
+	it("treats a session/intent on a connected account the landlord replaced (404) as dead, but never a 429/5xx", async () => {
 		// Every call on the old account answers like Stripe does for a lost account or revoked access.
 		const onOldAccount = (status: number) => {
 			const answering = global.fetch;
@@ -873,9 +873,9 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 		expect(stripeCalls.find(call => call.url.endsWith("/checkout/sessions"))!.account).toBe("acct_123");
 		expect(doc).toMatchObject({ stripeAccountId: "acct_123", providerRef: "re_1" });
 
-		// POST /pay: an intent on a revoked account (403) is not reused or cancelled; a new one opens.
+		// POST /pay: an intent on a lost account (404) is not reused or cancelled; a new one opens.
 		const pay = setup({ ...old, providerRef: "pi_gone", provider: PaymentProvider.STRIPE, status: PaymentStatus.LATE });
-		onOldAccount(403);
+		onOldAccount(404);
 		await expect(pay.service.pay(id.toString(), { _id: tenant } as any)).resolves.toMatchObject({ clientSecret: "pi_secret", stripeAccountId: "acct_123" });
 		expect(doc).toMatchObject({ stripeAccountId: "acct_123", providerRef: "pi_autopay" });
 
@@ -898,6 +898,32 @@ describe("PaymentsService confirm, webhook and duplicate charges (Stripe)", () =
 			expect(stripeCalls.some(call => call.url.endsWith("/checkout/sessions"))).toBe(false);
 			await expect((busy.service as any).pendingAttemptDead({ ...doc, status: PaymentStatus.PENDING })).resolves.toBe(false);
 		}
+
+		// 403 (access lost, the account may still exist): a Checkout page created over 24 hours ago can no longer be paid, so it is dead.
+		const lapsed = setup({ ...old, providerRef: "cs_gone", provider: PaymentProvider.STRIPE, updatedAt: new Date(Date.now() - 25 * 3_600_000) });
+		onOldAccount(403);
+		await expect(lapsed.service.checkout(id.toString(), { _id: tenant } as any, {}, "mobile")).resolves.toMatchObject({ sessionId: "re_1" });
+		expect(doc).toMatchObject({ stripeAccountId: "acct_123", providerRef: "re_1" });
+		await expect((lapsed.service as any).pendingAttemptDead({ ...doc, providerRef: "cs_gone", stripeAccountId: "acct_old", status: PaymentStatus.PENDING })).resolves.toBe(true);
+
+		// 403 on a younger page, or on an intent: it might still be paid, so the row stays blocked (no second charge opened).
+		for (const stored of [
+			{ providerRef: "cs_gone", updatedAt: new Date(Date.now() - 23 * 3_600_000) },
+			{ providerRef: "pi_gone", updatedAt: new Date(Date.now() - 25 * 3_600_000) }
+		]) {
+			const blocked = setup({ ...old, ...stored, provider: PaymentProvider.STRIPE, status: PaymentStatus.LATE });
+			onOldAccount(403);
+			await expect(blocked.service.checkout(id.toString(), { _id: tenant } as any, {}, "mobile")).rejects.toThrow(ServiceUnavailableException);
+			await expect(blocked.service.pay(id.toString(), { _id: tenant } as any)).rejects.toThrow(ServiceUnavailableException);
+			expect(stripeCalls.some(call => /\/checkout\/sessions$|\/payment_intents$/.test(call.url))).toBe(false);
+			await expect((blocked.service as any).pendingAttemptDead({ ...doc, status: PaymentStatus.PENDING })).resolves.toBe(false);
+			expect(doc.providerRef).toBe(stored.providerRef);
+		}
+		const autopayBlocked = setup({ ...old, providerRef: "cs_gone", updatedAt: new Date(Date.now() - 23 * 3_600_000) });
+		onOldAccount(403);
+		await (autopayBlocked.service as any).sweepStripeAutopay(new Date());
+		expect(doc).toMatchObject({ status: PaymentStatus.SCHEDULED, providerRef: "cs_gone" });
+		expect(stripeCalls.some(call => call.url.endsWith("/payment_intents"))).toBe(false);
 	});
 });
 
