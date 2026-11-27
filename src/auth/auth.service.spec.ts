@@ -554,7 +554,8 @@ describe("AuthService", () => {
 		expect(usersService.updateUser).toHaveBeenCalledWith(
 			{ _id: user._id },
 			expect.objectContaining({
-				$set: expect.objectContaining({ refreshSessions: [], pushTokens: [] })
+				$set: expect.objectContaining({ refreshSessions: [], pushTokens: [] }),
+				$unset: { resetPasswordToken: 1, resetPasswordExpires: 1 }
 			})
 		);
 	});

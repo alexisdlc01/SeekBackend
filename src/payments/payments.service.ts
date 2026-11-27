@@ -309,6 +309,12 @@ export class PaymentsService {
 				select: "listing",
 				populate: { path: "listing", select: "propertyTitle streetAddress cityTown" }
 			})
+			// A holding deposit has no tenancy: its property comes from the application's listing.
+			.populate({
+				path: "application",
+				select: "listing",
+				populate: { path: "listing", select: "propertyTitle streetAddress cityTown" }
+			})
 			.sort({ dueDate: 1 })
 			.lean()
 			.exec();
