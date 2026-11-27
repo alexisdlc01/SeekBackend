@@ -32,7 +32,7 @@ export function allowanceFor(bill: Bill, tenancy: Allowanced) {
 		utility: bill.category,
 		allowance,
 		used,
-		percentUsed: allowance > 0 ? Math.round((used / allowance) * 100) : 0,
+		percentUsed: allowance > 0 ? Math.round((used / allowance) * 100) : used > 0 ? 100 : 0,
 		overage,
 		overagePerMember: splitPence(overage, members)
 	};

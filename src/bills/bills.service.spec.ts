@@ -154,6 +154,19 @@ describe("BillsService energy allowance", () => {
 		expect(waterView.allowance).toBeNull();
 	});
 
+	it("shows 100% used and the whole bill as overage when the energy allowance is £0", () => {
+		const bill = {
+			category: "ENERGY",
+			amount: 5000,
+			includedInRent: true,
+			periodStart: new Date("2026-10-01"),
+			periodEnd: new Date("2026-10-31"),
+			splitBetween: [],
+			paidShares: []
+		} as any;
+		expect(allowanceFor(bill, { energyAllowance: 0, tenants: [] })).toMatchObject({ percentUsed: 100, overage: 5000 });
+	});
+
 	it("ignores a housemate's manual Energy expense", () => {
 		const expense = { category: "ENERGY", amount: 5000, includedInRent: false } as any;
 		expect(allowanceFor(expense, { energyAllowance: 20000, tenants: [] })).toBeNull();
