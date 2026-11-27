@@ -4,7 +4,8 @@ import { FilterQuery, Model, Types } from "mongoose";
 import { Payment } from "./payment.schema";
 import { RentPlan } from "./rent-plan.schema";
 import { PaymentKind, PaymentStatus, PlanFrequency } from "./payment.enums";
-import { addMonths, buildSchedule, computeFee, firstTrackedDate, ScheduledInstalment, startOfUtcDay } from "./schedule";
+import { addMonths, buildSchedule, computeFee, firstTrackedDate, hasFixedTerms, ScheduledInstalment, startOfUtcDay } from "./schedule";
+import { Listing } from "../listings/listings.schema";
 
 interface TenancyForSchedule {
 	_id: Types.ObjectId;
@@ -15,6 +16,8 @@ interface TenancyForSchedule {
 	monthlyRent: number;
 	/** Set when the tenancy came from an application: its paid holding deposits count toward rent. */
 	application?: Types.ObjectId | null;
+	listing?: Types.ObjectId | null;
+	noticeGivenAt?: Date | null;
 }
 
 /**
@@ -25,8 +28,21 @@ interface TenancyForSchedule {
 export class RentScheduleService {
 	constructor(
 		@InjectModel(RentPlan.name) private readonly planModel: Model<RentPlan>,
-		@InjectModel(Payment.name) private readonly paymentModel: Model<Payment>
+		@InjectModel(Payment.name) private readonly paymentModel: Model<Payment>,
+		@InjectModel(Listing.name) private readonly listingModel?: Model<Listing>
 	) {}
+
+	/**
+	 * Rent stops part-way through a period only when the tenancy really ends on endDate: notice given, or a
+	 * Northern Ireland fixed term. An older end date elsewhere rolls on (endFinishedTenancies), so that month stays whole.
+	 */
+	private async prorateEnd(tenancy: TenancyForSchedule): Promise<boolean> {
+		if (!tenancy.endDate) return false;
+		if (tenancy.noticeGivenAt) return true;
+		if (!tenancy.listing || !this.listingModel) return false;
+		const listing = await this.listingModel.findById(tenancy.listing, { nation: 1 }).lean().exec();
+		return hasFixedTerms(listing?.nation);
+	}
 
 	// shortcut: in-process only (one API instance runs the sweeper too); use a DB/Redis lock once there are several instances.
 	private readonly queues = new Map<string, Promise<unknown>>();
@@ -86,7 +102,7 @@ export class RentScheduleService {
 			.sort({ dueDate: -1 })
 			.lean()
 			.exec();
-		return this.insert(tenancy, tenant, this.instalmentsAfter(tenancy, latest, frequency, today), today);
+		return this.insert(tenancy, tenant, this.instalmentsAfter(tenancy, latest, frequency, today, await this.prorateEnd(tenancy)), today);
 	}
 
 	/**
@@ -103,7 +119,7 @@ export class RentScheduleService {
 			.lean()
 			.exec();
 		const credit = await this.unusedHoldingCredit(tenancy, tenant, replaced);
-		const added = withHoldingCredit(this.instalmentsAfter(tenancy, latest, frequency, today), credit)
+		const added = withHoldingCredit(this.instalmentsAfter(tenancy, latest, frequency, today, await this.prorateEnd(tenancy)), credit)
 			.map(instalment => ({ ...instalment, status: statusOn(instalment.dueDate, today) }));
 		return { replaced, added };
 	}
@@ -137,7 +153,8 @@ export class RentScheduleService {
 		tenancy: TenancyForSchedule,
 		latest: { dueDate: Date; coversMonths?: number | null } | null,
 		frequency: PlanFrequency,
-		today: Date
+		today: Date,
+		prorateEnd: boolean
 	) {
 		const from = latest
 			? new Date(Math.max(
@@ -151,7 +168,8 @@ export class RentScheduleService {
 			endDate: tenancy.endDate ? new Date(tenancy.endDate) : null,
 			monthlyRent: tenancy.monthlyRent,
 			frequency,
-			from
+			from,
+			prorateEnd
 		});
 	}
 
@@ -184,7 +202,8 @@ export class RentScheduleService {
 			endDate: tenancy.endDate ? new Date(tenancy.endDate) : null,
 			monthlyRent: tenancy.monthlyRent,
 			frequency,
-			from
+			from,
+			prorateEnd: await this.prorateEnd(tenancy)
 		}).filter(instalment => instalment.dueDate < horizon);
 		return this.insert(tenancy, tenant, instalments, today);
 	}

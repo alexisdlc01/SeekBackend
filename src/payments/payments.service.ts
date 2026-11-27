@@ -65,7 +65,8 @@ import {
 } from "./dto/payments.dto";
 import { Tenancy } from "../tenancies/tenancy.schema";
 import { TenancyStatus } from "../tenancies/tenancy.enums";
-import { earliestNoticeEnd, hasFixedTerms, londonCalendarDay, TenanciesService } from "../tenancies/tenancies.service";
+import { earliestNoticeEnd, londonCalendarDay, TenanciesService } from "../tenancies/tenancies.service";
+import { hasFixedTerms } from "./schedule";
 import { Nation } from "../listings/enums/nation.enum";
 import { listingCompliance, tenancyCompliance } from "../tenancies/compliance";
 import { Listing } from "../listings/listings.schema";
@@ -1439,7 +1440,7 @@ export class PaymentsService {
 		const tenancies = await this.tenancyModel
 			.find(
 				{ status: TenancyStatus.ACTIVE, $or: [{ endDate: null }, { endDate: { $gt: startOfUtcDay(now) } }] },
-				{ landlord: 1, tenants: 1, startDate: 1, endDate: 1, monthlyRent: 1, application: 1 }
+				{ landlord: 1, tenants: 1, startDate: 1, endDate: 1, monthlyRent: 1, application: 1, listing: 1, noticeGivenAt: 1 }
 			)
 			.lean()
 			.exec();

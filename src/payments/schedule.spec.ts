@@ -67,12 +67,71 @@ describe("rent schedule", () => {
 			endDate: new Date("2027-06-30T00:00:00Z"),
 			monthlyRent: 69500,
 			frequency: PlanFrequency.MONTHLY,
-			from: new Date("2026-11-06T00:00:00Z")
+			from: new Date("2026-11-06T00:00:00Z"),
+			prorateEnd: true
 		});
 		expect(schedule[0].dueDate.toISOString()).toBe("2026-12-01T00:00:00.000Z");
 		expect(schedule.at(-1)!.dueDate.toISOString()).toBe("2027-06-01T00:00:00.000Z");
 		expect(schedule).toHaveLength(7);
+		expect(schedule.slice(0, -1).every(i => i.amount === 69500 && i.seekFee === 695)).toBe(true);
+		// endDate is exclusive: 30 June is not occupied, so June is 29 of 30 days.
+		expect(schedule.at(-1)).toMatchObject({ amount: 69500 - Math.floor(69500 / 30), coversMonths: 1, ...computeFee(69500 - Math.floor(69500 / 30)) });
+	});
+
+	it("prorates the last month of a fixed term ending part-way through it", () => {
+		const schedule = buildSchedule({
+			startDate: new Date("2026-09-01T00:00:00Z"),
+			endDate: new Date("2027-06-15T00:00:00Z"),
+			monthlyRent: 69500,
+			frequency: PlanFrequency.MONTHLY,
+			from: new Date("2026-09-01T00:00:00Z"),
+			prorateEnd: true
+		});
+		expect(schedule).toHaveLength(10);
+		expect(schedule.slice(0, -1).every(i => i.amount === 69500)).toBe(true);
+		// 1-14 June: 14 of 30 days.
+		expect(schedule.at(-1)).toEqual({ dueDate: new Date("2027-06-01T00:00:00Z"), coversMonths: 1, amount: 32434, seekFee: 324, payout: 32110 });
+	});
+
+	it("prorates a six-month instalment only for the days after the end", () => {
+		const schedule = buildSchedule({
+			startDate: new Date("2026-09-01T00:00:00Z"),
+			endDate: new Date("2027-06-15T00:00:00Z"),
+			monthlyRent: 50000,
+			frequency: PlanFrequency.SIX_MONTHS,
+			from: new Date("2026-09-01T00:00:00Z"),
+			prorateEnd: true
+		});
+		expect(schedule.map(i => i.coversMonths)).toEqual([6, 4]);
+		expect(schedule[0].amount).toBe(300000);
+		// March-June is 122 days; 15-30 June (16 days) are not billed.
+		expect(schedule[1]).toMatchObject({ amount: 173771, ...computeFee(173771) });
+	});
+
+	it("bills the last month in full when the end date isn't a real end (no prorateEnd)", () => {
+		// An older end date outside Northern Ireland rolls on, so the month it falls in is owed whole.
+		const schedule = buildSchedule({
+			startDate: new Date("2026-09-01T00:00:00Z"),
+			endDate: new Date("2027-06-15T00:00:00Z"),
+			monthlyRent: 69500,
+			frequency: PlanFrequency.MONTHLY,
+			from: new Date("2026-09-01T00:00:00Z")
+		});
+		expect(schedule).toHaveLength(10);
 		expect(schedule.every(i => i.amount === 69500 && i.seekFee === 695)).toBe(true);
+	});
+
+	it("leaves a term ending exactly on a due date unprorated", () => {
+		const schedule = buildSchedule({
+			startDate: new Date("2026-09-01T00:00:00Z"),
+			endDate: new Date("2027-07-01T00:00:00Z"),
+			monthlyRent: 69500,
+			frequency: PlanFrequency.MONTHLY,
+			from: new Date("2026-09-01T00:00:00Z"),
+			prorateEnd: true
+		});
+		expect(schedule).toHaveLength(10);
+		expect(schedule.every(i => i.amount === 69500)).toBe(true);
 	});
 
 	it("shortens the last six-month instalment to the months left", () => {
@@ -81,10 +140,12 @@ describe("rent schedule", () => {
 			endDate: new Date("2027-06-30T00:00:00Z"),
 			monthlyRent: 50000,
 			frequency: PlanFrequency.SIX_MONTHS,
-			from: new Date("2026-09-01T00:00:00Z")
+			from: new Date("2026-09-01T00:00:00Z"),
+			prorateEnd: true
 		});
 		expect(schedule.map(i => i.coversMonths)).toEqual([6, 4]);
-		expect(schedule[1].amount).toBe(200000);
+		// endDate 30 June is exclusive: 1 of the 122 days March-June is not billed.
+		expect(schedule[1].amount).toBe(200000 - Math.floor(200000 / 122));
 	});
 
 	it("starts a schedule for a tenancy that began earlier at the next due date, never in the past", () => {
@@ -136,6 +197,23 @@ describe("RentScheduleService.regenerate", () => {
 		const ref = paymentModel.deleteMany.mock.calls[0][0].providerRef;
 		expect(ref?.$not?.test("cs_test_1")).toBe(true);
 		expect(ref.$not.test("pi_1")).toBe(false);
+	});
+
+	it("prorates the last month only for a Northern Ireland fixed term, looked up from the listing", async () => {
+		const paymentModel = {
+			deleteMany: jest.fn().mockResolvedValue({}),
+			findOne: jest.fn().mockReturnValue({ sort: () => ({ lean: () => ({ exec: () => Promise.resolve(null) }) }) }),
+			insertMany: jest.fn().mockResolvedValue([])
+		};
+		const listingModel = { findById: jest.fn().mockReturnValue({ lean: () => ({ exec: () => Promise.resolve({ nation: Nation.NORTHERN_IRELAND }) }) }) };
+		const service = new RentScheduleService({} as any, paymentModel as any, listingModel as any);
+		const tenancy = { _id: new Types.ObjectId(), landlord: new Types.ObjectId(), tenants: [], listing: new Types.ObjectId(), startDate: new Date("2026-09-01T00:00:00Z"), endDate: new Date("2027-06-15T00:00:00Z"), monthlyRent: 69500 };
+		await service.regenerate(tenancy, new Types.ObjectId(), PlanFrequency.MONTHLY, new Date("2026-11-07T00:00:00Z"));
+		expect(paymentModel.insertMany.mock.calls[0][0].at(-1)).toMatchObject({ amount: 32434 });
+
+		listingModel.findById.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve({ nation: Nation.ENGLAND }) }) });
+		await service.regenerate(tenancy, new Types.ObjectId(), PlanFrequency.MONTHLY, new Date("2026-11-07T00:00:00Z"));
+		expect(paymentModel.insertMany.mock.calls[1][0].at(-1)).toMatchObject({ amount: 69500 });
 	});
 
 	it("takes a paid holding deposit off the first rent, once", async () => {
