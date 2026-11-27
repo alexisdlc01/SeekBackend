@@ -37,6 +37,7 @@ import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 		// baseline that applies to every route; auth endpoints tighten the
 		// "auth" bucket with @Throttle. Note ttl is milliseconds in v6.
 		ThrottlerModule.forRoot({
+			errorMessage: "Too many attempts. Please wait a few minutes and try again.",
 			throttlers: [
 				{ name: "default", ttl: 60_000, limit: 120 },
 				{ name: "auth", ttl: 60_000, limit: 120 }
